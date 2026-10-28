@@ -871,8 +871,20 @@ function taskRows() {
 
 /* ---------- permissions + downloads for a session ---------- */
 const setUp = new WeakSet();
+/* Google blocks sign-in from Electron-based browsers ("this browser may not be secure").
+   Only on Google's sign-in pages we look like Firefox (which Google allows); every other site sees Chrome. */
+const FIREFOX_UA = process.platform === 'win32'
+  ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0'
+  : 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0';
+const SIGNIN_URLS = ['*://accounts.google.com/*', '*://accounts.youtube.com/*'];
 function setupSession(ses) {
   if (setUp.has(ses)) return; setUp.add(ses);
+  ses.webRequest.onBeforeSendHeaders({ urls: SIGNIN_URLS }, (d, cb) => {
+    const h = d.requestHeaders;
+    h['User-Agent'] = FIREFOX_UA;
+    for (const k of Object.keys(h)) if (/^sec-ch-ua/i.test(k)) delete h[k];   // Firefox sends no client hints
+    cb({ requestHeaders: h });
+  });
   ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (d, cb) => {
     if (!adblock || settings.data.adblock === false || d.resourceType === 'mainFrame') return cb({});
     let page = '';
@@ -986,6 +998,7 @@ function setupPasswordIpc() {
     try { await shell.trashItem(file); return true; } catch (err) { return false; }
   });
   // YouTube ad blocking: asked by the page preload before YouTube's own scripts run
+  ipcMain.on('signin:ua', e => { e.returnValue = FIREFOX_UA; });
   ipcMain.on('yt:adblock', e => {
     const t = tabOfWc(e.sender);
     e.returnValue = !!(t && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com'));

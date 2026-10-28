@@ -34,6 +34,29 @@ if (internal) {
     pwUnnever: s => ipcRenderer.invoke('pw:unnever', s)
   });
 } else if (/^https?:$/.test(location.protocol)) {
+  /* ================= Google sign-in: look like Firefox (Google blocks Electron browsers) ================= */
+  if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) {
+    let ua = '';
+    try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
+    if (ua) {
+      const code = `(() => {
+        const UA = ${JSON.stringify(ua)};
+        const N = Navigator.prototype;
+        const def = (o, k, v) => { try { Object.defineProperty(o, k, { get: () => v, configurable: true }); } catch (e) {} };
+        def(N, 'userAgent', UA); def(N, 'appVersion', UA.slice(8)); def(N, 'vendor', ''); def(N, 'userAgentData', undefined);
+        def(N, 'platform', UA.includes('Windows') ? 'Win32' : 'Linux x86_64'); def(N, 'oscpu', UA.includes('Windows') ? 'Windows NT 10.0; Win64; x64' : 'Linux x86_64');
+        try { delete window.chrome; } catch (e) {}
+        // Chrome's passkeys live inside Chrome and aren't reachable here: go straight to the password
+        try { Object.defineProperty(window, 'PublicKeyCredential', { value: undefined, configurable: true }); } catch (e) {}
+        try { const c = navigator.credentials; if (c && c.get) { const g = c.get.bind(c); c.get = o => (o && o.publicKey ? Promise.reject(new DOMException('Not allowed', 'NotAllowedError')) : g(o)); } } catch (e) {}
+      })();`;
+      try {
+        if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) });
+        else webFrame.executeJavaScript(code);
+      } catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
+    }
+  }
+
   /* ================= YouTube ad blocking ================= */
   if (/(^|\.)youtube\.com$/i.test(location.hostname)) {
     let on = false;
