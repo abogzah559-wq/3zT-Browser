@@ -24,7 +24,7 @@ const FONTS = {
   Object.assign(FONTS,tail);
 })();
 const DEF = {theme:'anime',density:160,speed:1,accent:'#8ab4f8',color:'#000000',clockOn:true,searchOn:true,clock:180,h24:false,dim:35,src:'bm',lang:'ar',dateOn:true,
-  dateSize:17,shiftX:0,clockFont:'def',dateFont:'def',fontName:'',maxTiles:999,tileSize:40,names:false,hidden:[],mine:[],order:[],aiDest:'gemini',clockOp:100,dateOp:100};
+  dateSize:24,shiftX:0,clockFont:'def',dateFont:'def',fontName:'',maxTiles:999,tileSize:40,names:false,hidden:[],mine:[],order:[],aiDest:'gemini',clockOp:100,dateOp:100};
 let S = Object.assign({}, DEF);
 try { Object.assign(S, JSON.parse(localStorage.getItem('ntp') || '{}')); } catch(e){}
 if(S.v!==2){S.clock=180;S.v=2;}
@@ -297,7 +297,12 @@ function applyFonts(){
 /* ---- shortcuts ---- */
 const norm=u=>{ try{ const x=new URL(u); return x.origin+x.pathname.replace(/\/$/,'')+x.search; }catch(e){ return u; } };
 const isHidden=u=>S.hidden.includes(norm(u));
-const fav=u=>'https://www.google.com/s2/favicons?sz=64&domain_url='+encodeURIComponent(u);
+/* icons: the browser gives us Chrome's own icons (and icons of sites you visited); otherwise ask Google's icon service */
+let favMap={};
+const fav=u=>favMap[u]||'https://www.google.com/s2/favicons?sz=64&domain_url='+encodeURIComponent(u);
+async function loadFavs(node){ const urls=[]; (function walk(n){ for(const c of (n&&n.children)||[]){ if(c.url) urls.push(c.url); if(c.children) walk(c); } })(node);
+  for(const m of S.mine) urls.push(m.url);
+  try{ favMap=(await zeus.favicons(urls))||{}; }catch(e){ favMap={}; } }
 function hideUrl(u){ const n=norm(u); const i=S.mine.findIndex(m=>norm(m.url)===n);
   if(i>=0) S.mine.splice(i,1); else if(!S.hidden.includes(n)) S.hidden.push(n);
   save(); loadTiles(); }
@@ -359,7 +364,7 @@ function showBM(node,stack){
 }
 async function sourceList(){
   try{
-    if(S.src==='bm'){ const bar=await zeus.getBookmarks();
+    if(S.src==='bm'){ const bar=await zeus.getBookmarks(); await loadFavs(bar);
       return {node:bar,list:(bar.children||[]).filter(c=>c.url).map(c=>({title:c.title,url:c.url}))}; }
   }catch(e){}
   return [];
@@ -460,6 +465,27 @@ try{ zeus.onLang(l=>{ if(l!==S.lang){ S.lang=l; apply(); } }); }catch(e){}
 $('dateOn').onchange=e=>{S.dateOn=e.target.checked;apply();};
 
 resize(); apply();
+/* ---- one-time import of the Black Chrome look from Chrome ---- */
+function syncPanel(){
+  $('density').value=S.density; $('speed').value=S.speed; $('accent').value=S.accent;
+  $('color').value=S.color; $('clockOn').checked=S.clockOn; $('searchOn').checked=S.searchOn;
+}
+async function takeImport(){
+  let imp=null; try{ imp=await zeus.takeImport(); }catch(e){}
+  if(!imp||!imp.settings) return;
+  const b=imp.blobs||{};
+  if(b.font&&b.font.data){ await put('font',new Blob([b.font.data],{type:b.font.type})); userFontLoaded=false;
+    try{ document.fonts.forEach(ff=>{ if(ff.family==='ZeusUserFont') document.fonts.delete(ff); }); }catch(err){} }
+  if(b.bg&&b.bg.data){ await put('bg',new Blob([b.bg.data],{type:b.bg.type})); }
+  const lang=S.lang;
+  S=Object.assign({},DEF,imp.settings,{shiftX:0,lang});
+  for(const k in DEF) if(S[k]===undefined) S[k]=Array.isArray(DEF[k])?[]:DEF[k];
+  shownMedia=null; lastSrc=null; save(); syncPanel(); resize(); apply(); tick();
+}
+takeImport();
+/* the toolbar grows when the tabs row shows: keep the shortcuts bar just under it */
+try{ zeus.onStrip(h=>document.documentElement.style.setProperty('--strip',h+'px')); }catch(e){}
+try{ zeus.onImportReady(takeImport); }catch(e){}
 try{ zeus.getLang().then(l=>{ if(l&&l!==S.lang){ S.lang=l; apply(); } }); }catch(e){}
 /* the new tab gets a fresh page each time; refresh shortcuts when you come back to it */
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&S.src!=='off') loadTiles(); });

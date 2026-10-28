@@ -1,8 +1,9 @@
 'use strict';
 /*
  * 3zT Browser - main process
- * One frameless window. Each tab is a WebContentsView. The floating toolbar is a
- * transparent WebContentsView laid on top of the active tab.
+ * Every window is a frameless BaseWindow. Each tab is a WebContentsView; the floating
+ * toolbar (tabs + address bar) is a transparent WebContentsView laid on top of the active tab.
+ * Tabs can be dragged out into a new window and dropped back onto another window.
  */
 const {
   app, BaseWindow, WebContentsView, ipcMain, Menu, session, dialog,
@@ -11,18 +12,22 @@ const {
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
+const CI = require('./chrome-import');
 
 app.setName('3zT Browser');
 if (process.platform === 'win32') app.setAppUserModelId('com.3zo.3ztbrowser');
 
+/* settings that must be known before the app is ready */
+const early = (() => { try { return JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8')); } catch (e) { return {}; } })();
+if (early.hwAccel === false) app.disableHardwareAcceleration();
+
 /* ---------- lighter Chromium ---------- */
-// no idle "spare" renderer process kept around for the next tab
-app.commandLine.appendSwitch('disable-features', [
-  'SpareRendererForSitePerProcess',
-  'MediaRouter',
-  'OptimizationHints',
-  'Translate'
-].join(','));
+app.commandLine.appendSwitch('disable-features', ['SpareRendererForSitePerProcess', 'MediaRouter', 'OptimizationHints'].join(','));
+if (early.hwAccel !== false) {
+  // GPU work like Chrome: rasterize pages and decode video on the graphics card
+  app.commandLine.appendSwitch('enable-gpu-rasterization');
+  app.commandLine.appendSwitch('enable-zero-copy');
+}
 
 /* a plain Chrome user agent (no "Electron/x" token) so sites treat us like Chrome */
 (() => {
@@ -34,20 +39,30 @@ app.commandLine.appendSwitch('disable-features', [
 
 if (!app.requestSingleInstanceLock()) { app.quit(); }
 
+/* never block the browser with an error box: log it and keep going */
+process.on('uncaughtException', err => { console.error('[3zT] uncaught', err && err.stack || err); });
+process.on('unhandledRejection', err => { console.error('[3zT] unhandled', err && err.stack || err); });
+
 /* ---------- paths ---------- */
 const SRC = __dirname;
 const NEWTAB_FILE = path.join(SRC, 'newtab', 'newtab.html');
+const HISTORY_FILE = path.join(SRC, 'newtab', 'history.html');
 const NEWTAB_URL = pathToFileURL(NEWTAB_FILE).href;
+const HISTORY_URL = pathToFileURL(HISTORY_FILE).href;
 const UI_FILE = path.join(SRC, 'ui', 'toolbar.html');
 const PRELOAD_UI = path.join(SRC, 'preload-ui.js');
 const PRELOAD_TAB = path.join(SRC, 'preload-newtab.js');
 const ICON = path.join(SRC, '..', 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
+const ICON_OPT = fs.existsSync(ICON) ? { icon: ICON } : {};
 
-const STRIP = 56;            // height of the toolbar strip
-const isNewtab = u => !u || u === NEWTAB_URL || u.startsWith(NEWTAB_URL + '#') || u.startsWith(NEWTAB_URL + '?');
+const STRIP = 56;
+const same = (u, base) => !!u && (u === base || u.startsWith(base + '#') || u.startsWith(base + '?'));
+const isNewtab = u => !u || same(u, NEWTAB_URL);
+const isHistory = u => same(u, HISTORY_URL);
+const isInternal = u => isNewtab(u) || isHistory(u);
+const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : u);
 
-/* ---------- tiny JSON store (data + debounced, atomic save) ---------- */
-let settings, bookmarks, history, sessionStore;
+/* ---------- tiny JSON stores (debounced, atomic save) ---------- */
 function makeStore(name, def) {
   const f = () => path.join(app.getPath('userData'), name);
   let data;
@@ -60,133 +75,272 @@ function makeStore(name, def) {
     try { fs.writeFileSync(f() + '.tmp', JSON.stringify(data)); fs.renameSync(f() + '.tmp', f()); }
     catch (e) { console.error('save failed', name, e.message); }
   };
-  return {
-    get data() { return data; },
-    set data(v) { data = v; this.save(); },
-    save() { if (!t) t = setTimeout(flush, 800); },
-    flush
-  };
+  return { get data() { return data; }, set data(v) { data = v; this.save(); }, save() { if (!t) t = setTimeout(flush, 800); }, flush };
 }
+let settings, bookmarks, history, sessionStore, favStore;
+const stores = () => [settings, bookmarks, history, sessionStore, favStore].filter(Boolean);
 
-/* ---------- state ---------- */
-let win = null, ui = null;
-let tabs = [];               // {id, view, url, title, favicon, loading, discarded, lastActive}
-let activeId = null;
-let nextId = 1;
-let uiExpanded = false;
-let htmlFullscreen = false;
+const T = (ar, en) => (settings && settings.data.lang === 'en' ? en : ar);
+
+/* ---------- windows + tabs ---------- */
+const wins = [];
+let lastFocused = null;
+let nextTabId = 1, nextWinId = 1;
+let quitting = false;
 const closedStack = [];
-let stateTimer = null;
+const allTabs = () => wins.flatMap(w => w.tabs);
+const winOfUi = wc => wins.find(w => w.ui.webContents === wc);
+const tabOfWc = wc => allTabs().find(t => t.view && t.view.webContents === wc);
+const focusedWin = () => wins.find(w => !w.win.isDestroyed() && w.win.isFocused()) || lastFocused || wins[0];
 
-const T = (ar, en) => (settings.data.lang === 'en' ? en : ar);
-const active = () => tabs.find(t => t.id === activeId) || null;
-const byWc = wc => tabs.find(t => t.view && t.view.webContents === wc);
+class Win {
+  constructor(opts = {}) {
+    this.id = nextWinId++;
+    this.private = !!opts.private;
+    this.partition = this.private ? `incog-${this.id}` : undefined;
+    this.tabs = [];
+    this.activeId = null;
+    this.uiExpanded = false;
+    this.stripH = 56;
+    this.htmlFs = false;
+    this.stateTimer = null;
 
-/* ---------- layout ---------- */
-function layout() {
-  if (!win || win.isDestroyed()) return;
-  const { width: w, height: h } = win.getContentBounds();
-  const t = active();
-  const full = htmlFullscreen;
-  if (t && t.view) {
-    const flush = full || isNewtab(t.url);
-    t.view.setBounds(flush ? { x: 0, y: 0, width: w, height: h } : { x: 0, y: STRIP, width: w, height: Math.max(0, h - STRIP) });
-  }
-  if (ui) {
-    ui.setVisible(!full);
-    const uh = uiExpanded === true ? h : typeof uiExpanded === 'number' ? Math.min(h, uiExpanded) : STRIP;
-    ui.setBounds({ x: 0, y: 0, width: w, height: uh });
-  }
-}
+    const b = opts.bounds && onScreen(opts.bounds) ? opts.bounds : null;
+    this.win = new BaseWindow(Object.assign({
+      width: 1280, height: 800, minWidth: 560, minHeight: 320,
+      frame: false, backgroundColor: '#000000', show: false, title: '3zT Browser'
+    }, b || {}, ICON_OPT));
 
-/* ---------- state sent to the toolbar ---------- */
-function pushState() {
-  if (stateTimer) return;
-  stateTimer = setTimeout(() => {
-    stateTimer = null;
-    if (!ui || ui.webContents.isDestroyed()) return;
-    const t = active();
-    const wc = t && t.view ? t.view.webContents : null;
-    const url = t ? t.url : '';
-    ui.webContents.send('state', {
-      tabs: tabs.map(x => ({
-        id: x.id, title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : x.url),
-        url: isNewtab(x.url) ? '' : x.url, favicon: x.favicon || '', loading: !!x.loading,
-        discarded: !!x.discarded, audible: !!(x.view && !x.view.webContents.isDestroyed() && x.view.webContents.isCurrentlyAudible())
-      })),
-      activeId,
-      url: isNewtab(url) ? '' : url,
-      isNewtab: isNewtab(url),
-      loading: !!(t && t.loading),
-      canGoBack: !!(wc && wc.navigationHistory.canGoBack()),
-      canGoForward: !!(wc && wc.navigationHistory.canGoForward()),
-      bookmarked: !!(url && !isNewtab(url) && findBookmark(url)),
-      maximized: win ? win.isMaximized() : false,
-      fullscreen: win ? win.isFullScreen() : false,
-      lang: settings.data.lang,
-      memorySaverMin: settings.data.memorySaverMin,
-      restoreTabs: settings.data.restoreTabs,
-      zoom: wc ? Math.round(wc.getZoomFactor() * 100) : 100,
-      closedCount: closedStack.length,
-      versions: { app: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome }
+    this.ui = new WebContentsView({
+      webPreferences: { preload: PRELOAD_UI, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, partition: 'zeus-ui' }
     });
-  }, 16);
+    this.ui.setBackgroundColor('#00000000');
+    this.win.contentView.addChildView(this.ui);
+    this.ui.webContents.loadFile(UI_FILE);
+    this.ui.webContents.on('before-input-event', (e, input) => { if (handleKey(this, input)) e.preventDefault(); });
+    this.ui.webContents.once('did-finish-load', () => {
+      if (opts.maximized) this.win.maximize();
+      if (opts.show !== false) this.win.show();
+      this.pushState();
+      const t = this.active(); if (t && isNewtab(t.url)) this.focusAddress();
+    });
+
+    const w = this.win;
+    w.on('focus', () => { lastFocused = this; });
+    w.on('resize', () => this.layout());
+    for (const ev of ['maximize', 'unmaximize', 'enter-full-screen']) w.on(ev, () => { this.layout(); this.pushState(); });
+    w.on('leave-full-screen', () => { this.htmlFs = false; this.layout(); this.pushState(); });
+    w.on('close', () => {
+      if (!quitting && wins.length === 1) { quitting = true; saveSession(); }
+    });
+    w.on('closed', () => {
+      clearTimeout(this.stateTimer); this.stateTimer = null;
+      for (const t of this.tabs) if (t.view) destroyView(t.view);
+      this.tabs = [];
+      destroyView(this.ui);   // a closed BaseWindow does not free its views by itself
+      const i = wins.indexOf(this); if (i >= 0) wins.splice(i, 1);
+      if (lastFocused === this) lastFocused = wins[0] || null;
+      if (!quitting) saveSessionSoon();
+      if (!wins.length) app.quit();
+    });
+    wins.push(this);
+    lastFocused = this;
+  }
+
+  active() { return this.tabs.find(t => t.id === this.activeId) || null; }
+  tab(id) { return this.tabs.find(t => t.id === id) || null; }
+
+  layout() {
+    const w = this.win; if (w.isDestroyed() || this.ui.webContents.isDestroyed()) return;
+    const { width, height } = w.getContentBounds();
+    const t = this.active();
+    if (t && t.view) {
+      const flush = this.htmlFs || isNewtab(t.url);
+      const top = this.stripH;
+      t.view.setBounds(flush ? { x: 0, y: 0, width, height } : { x: 0, y: top, width, height: Math.max(0, height - top) });
+    }
+    this.ui.setVisible(!this.htmlFs);
+    const uh = this.uiExpanded === true ? height : typeof this.uiExpanded === 'number' ? Math.min(height, this.uiExpanded) : this.stripH;
+    this.ui.setBounds({ x: 0, y: 0, width, height: uh });
+  }
+
+  pushState() {
+    if (this.stateTimer || this.win.isDestroyed()) return;
+    this.stateTimer = setTimeout(() => {
+      this.stateTimer = null;
+      if (this.win.isDestroyed() || this.ui.webContents.isDestroyed()) return;
+      const t = this.active();
+      const wc = t && t.view ? t.view.webContents : null;
+      const url = t ? t.url : '';
+      this.ui.webContents.send('state', {
+        winId: this.id,
+        private: this.private,
+        tabs: this.tabs.map(x => ({
+          id: x.id,
+          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : shownUrl(x.url)),
+          url: shownUrl(x.url), favicon: isNewtab(x.url) || isHistory(x.url) ? 'app' : (x.favicon || ''),
+          loading: !!x.loading, discarded: !!x.discarded, muted: !!x.muted,
+          audible: !!(x.view && !x.view.webContents.isDestroyed() && x.view.webContents.isCurrentlyAudible())
+        })),
+        activeId: this.activeId,
+        url: shownUrl(url),
+        isNewtab: isNewtab(url),
+        isWeb: /^https?:/i.test(url),
+        translated: /\.translate\.goog$/i.test(hostOf(url)),
+        loading: !!(t && t.loading),
+        canGoBack: !!(wc && wc.navigationHistory.canGoBack()),
+        canGoForward: !!(wc && wc.navigationHistory.canGoForward()),
+        bookmarked: !!(url && /^https?:/i.test(url) && findBookmark(url)),
+        maximized: this.win.isMaximized(),
+        fullscreen: this.win.isFullScreen(),
+        lang: settings.data.lang,
+        memorySaverMin: settings.data.memorySaverMin,
+        restoreTabs: settings.data.restoreTabs,
+        hwAccel: settings.data.hwAccel !== false,
+        hwAccelActive: early.hwAccel !== false,
+        zoom: wc ? Math.round(wc.getZoomFactor() * 100) : 100,
+        closedCount: closedStack.length,
+        versions: { app: app.getVersion(), chrome: process.versions.chrome }
+      });
+    }, 16);
+  }
+
+  createTab(url, opts = {}) {
+    const tab = {
+      id: nextTabId++, view: null, url: url || NEWTAB_URL, title: '', favicon: '', loading: false,
+      discarded: false, muted: false, lastActive: Date.now(), win: this
+    };
+    if (opts.discarded) { tab.discarded = true; tab.title = opts.title || ''; tab.favicon = cachedFavicon(tab.url); }
+    else { makeView(tab); loadInto(tab, tab.url); }
+    this.insertTab(tab, opts);
+    if (opts.activate !== false) this.activate(tab.id); else this.pushState();
+    saveSessionSoon();
+    return tab;
+  }
+  insertTab(tab, opts = {}) {
+    let at = this.tabs.length;
+    if (typeof opts.index === 'number') at = Math.max(0, Math.min(this.tabs.length, opts.index));
+    else if (opts.after) { const i = this.tabs.findIndex(t => t.id === opts.after); if (i >= 0) at = i + 1; }
+    this.tabs.splice(at, 0, tab);
+    tab.win = this;
+  }
+
+  activate(id) {
+    const t = this.tab(id); if (!t) return;
+    const prev = this.active();
+    if (prev && prev.view && prev !== t) { try { this.win.contentView.removeChildView(prev.view); } catch (e) {} prev.lastActive = Date.now(); }
+    this.activeId = id;
+    if (t.discarded || !t.view) { makeView(t); loadInto(t, t.url); }
+    this.win.contentView.addChildView(t.view, 0);   // below the toolbar
+    t.lastActive = Date.now();
+    this.layout();
+    if (isNewtab(t.url)) this.focusAddress(); else t.view.webContents.focus();
+    this.pushState(); saveSessionSoon();
+  }
+
+  /* take a tab out of this window without destroying it (it is moving to another window) */
+  releaseTab(tab) {
+    const i = this.tabs.indexOf(tab); if (i < 0) return;
+    this.tabs.splice(i, 1);
+    if (tab.view) { try { this.win.contentView.removeChildView(tab.view); } catch (e) {} }
+    if (this.activeId === tab.id) {
+      this.activeId = null;
+      const next = this.tabs[i] || this.tabs[i - 1];
+      if (next) this.activate(next.id);
+    }
+    this.pushState();
+  }
+  adoptTab(tab, index) {
+    this.insertTab(tab, typeof index === 'number' ? { index } : {});
+    this.activate(tab.id);
+  }
+
+  closeTab(id) {
+    const t = this.tab(id); if (!t) return;
+    if (!isInternal(t.url) && !this.private) { closedStack.push({ url: t.url, title: t.title }); if (closedStack.length > 25) closedStack.shift(); }
+    this.releaseTab(t);
+    if (t.view) destroyView(t.view);
+    if (!this.tabs.length) { this.win.close(); return; }
+    saveSessionSoon();
+  }
+
+  focusAddress() { if (!this.ui.webContents.isDestroyed()) { this.ui.webContents.focus(); this.ui.webContents.send('focus-address'); } }
 }
 
-/* ---------- tabs ---------- */
+function onScreen(b) {
+  return screen.getAllDisplays().some(d => {
+    const a = d.workArea; return b.x < a.x + a.width - 40 && b.x + b.width > a.x + 40 && b.y < a.y + a.height - 40 && b.y + 30 > a.y;
+  });
+}
+function newWindow(opts = {}) {
+  const w = new Win(opts);
+  if (opts.url !== null) w.createTab(opts.url || NEWTAB_URL);
+  return w;
+}
+
+/* ---------- tab views ---------- */
+function destroyView(view) { try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {} }
+
 function makeView(tab) {
   const view = new WebContentsView({
     webPreferences: {
-      preload: PRELOAD_TAB,            // only exposes its API on the new tab page (checked inside)
-      contextIsolation: true,
-      sandbox: true,
-      nodeIntegration: false,
-      spellcheck: false,
-      backgroundThrottling: true
+      preload: PRELOAD_TAB,            // gives an API only to our own internal pages (checked inside)
+      partition: tab.win.partition,
+      contextIsolation: true, sandbox: true, nodeIntegration: false,
+      plugins: true,                   // built-in PDF viewer
+      spellcheck: true, backgroundThrottling: true
     }
   });
+  if (tab.win.private) setupSession(view.webContents.session);
   view.setBackgroundColor(isNewtab(tab.url) ? '#000000' : '#ffffff');
   const wc = view.webContents;
+  if (tab.muted) wc.setAudioMuted(true);
 
   wc.setWindowOpenHandler(d => {
-    // real popups (sign-in windows etc.) keep their opener; normal "_blank" links become tabs
+    // real popups (sign-in windows...) keep their opener; normal "_blank" links become tabs
     if (d.disposition === 'new-window' && d.features) {
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: { autoHideMenuBar: true, backgroundColor: '#111', icon: fs.existsSync(ICON) ? ICON : undefined }
-      };
+      return { action: 'allow', overrideBrowserWindowOptions: Object.assign({ autoHideMenuBar: true, backgroundColor: '#111' }, ICON_OPT) };
     }
-    createTab(d.url, { activate: d.disposition !== 'background-tab', after: tab.id });
+    tab.win.createTab(d.url, { activate: d.disposition !== 'background-tab', after: tab.id });
     return { action: 'deny' };
   });
 
-  const upd = () => { pushState(); };
+  const upd = () => tab.win.pushState();
   wc.on('did-start-loading', () => { tab.loading = true; upd(); });
   wc.on('did-stop-loading', () => { tab.loading = false; upd(); });
   wc.on('page-title-updated', (e, title) => {
     tab.title = title; upd();
+    if (tab.win.private) return;
     const h = history.data; if (h.length && h[h.length - 1].url === tab.url) { h[h.length - 1].title = title; history.save(); }
   });
-  wc.on('page-favicon-updated', (e, favs) => { tab.favicon = favs && favs[0] || ''; upd(); });
+  wc.on('page-favicon-updated', (e, favs) => {
+    const u = favs && favs[0]; if (!u) return;
+    if (!tab.favicon) tab.favicon = u;
+    upd();
+    storeFavicon(tab, u);
+  });
   const nav = (e, url) => {
-    const was = isNewtab(tab.url);
+    const wasFlush = isNewtab(tab.url);
     tab.url = url;
     view.setBackgroundColor(isNewtab(url) ? '#000000' : '#ffffff');
-    if (isNewtab(url)) { tab.favicon = ''; tab.title = ''; }
-    addHistory(url, wc.getTitle());
-    if (was !== isNewtab(url) && tab.id === activeId) layout();
+    if (isInternal(url)) { tab.favicon = ''; tab.title = ''; }
+    else tab.favicon = cachedFavicon(url) || '';
+    if (!tab.win.private) addHistory(url, wc.getTitle());
+    if (wasFlush !== isNewtab(url) && tab.id === tab.win.activeId) tab.win.layout();
     upd(); saveSessionSoon();
   };
   wc.on('did-navigate', nav);
+  wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); });
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) nav(e, url); });
   wc.on('audio-state-changed', upd);
   wc.on('context-menu', (e, p) => contextMenu(tab, p));
-  wc.on('before-input-event', (e, input) => { if (handleKey(input)) e.preventDefault(); });
-  wc.on('enter-html-full-screen', () => { htmlFullscreen = true; win.setFullScreen(true); layout(); });
-  wc.on('leave-html-full-screen', () => { htmlFullscreen = false; win.setFullScreen(false); layout(); });
+  wc.on('before-input-event', (e, input) => { if (handleKey(tab.win, input)) e.preventDefault(); });
+  wc.on('found-in-page', (e, r) => { const w = tab.win; if (w.ui && !w.ui.webContents.isDestroyed()) w.ui.webContents.send('found', { active: r.activeMatchOrdinal, matches: r.matches }); });
+  wc.on('enter-html-full-screen', () => { const w = tab.win; w.htmlFs = true; w.win.setFullScreen(true); w.layout(); });
+  wc.on('leave-html-full-screen', () => { const w = tab.win; w.htmlFs = false; w.win.setFullScreen(false); w.layout(); });
   wc.on('render-process-gone', (e, d) => { if (d.reason !== 'clean-exit') { tab.title = T('تعطلت الصفحة، حدّثها', 'Page crashed, reload it'); upd(); } });
   wc.on('did-fail-load', (e, code, desc, url, isMain) => {
-    if (!isMain || code === -3) return; // -3 = aborted
+    if (!isMain || code === -3) return;
     tab.title = T('تعذّر فتح الصفحة', 'Could not open page'); upd();
   });
   tab.view = view;
@@ -194,78 +348,44 @@ function makeView(tab) {
   return view;
 }
 
-function createTab(url, opts = {}) {
-  const tab = { id: nextId++, view: null, url: url || NEWTAB_URL, title: '', favicon: '', loading: false, discarded: false, lastActive: Date.now() };
-  if (opts.discarded) { tab.discarded = true; tab.title = opts.title || ''; }
-  else { makeView(tab); loadInto(tab, tab.url); }
-  const i = opts.after ? tabs.findIndex(t => t.id === opts.after) : -1;
-  if (i >= 0) tabs.splice(i + 1, 0, tab); else tabs.push(tab);
-  if (opts.activate !== false) activate(tab.id); else pushState();
-  saveSessionSoon();
-  return tab;
-}
-
 function loadInto(tab, url) {
   const wc = tab.view.webContents;
-  // pages without their own background must be white (like Chrome); the new tab is black
   tab.view.setBackgroundColor(isNewtab(url) ? '#000000' : '#ffffff');
   if (isNewtab(url)) wc.loadFile(NEWTAB_FILE).catch(() => {});
+  else if (isHistory(url)) wc.loadFile(HISTORY_FILE).catch(() => {});
   else wc.loadURL(url).catch(() => {});
 }
 
-function activate(id) {
-  const t = tabs.find(x => x.id === id); if (!t) return;
-  const prev = active();
-  if (prev && prev.view && prev !== t) { try { win.contentView.removeChildView(prev.view); } catch (e) {} prev.lastActive = Date.now(); }
-  activeId = id;
-  if (t.discarded || !t.view) { makeView(t); loadInto(t, t.url); }
-  win.contentView.addChildView(t.view, 0);   // under the toolbar
-  t.lastActive = Date.now();
-  layout();
-  if (isNewtab(t.url)) { focusAddress(); } else t.view.webContents.focus();
-  pushState(); saveSessionSoon();
-}
-
-function closeTab(id) {
-  const i = tabs.findIndex(t => t.id === id); if (i < 0) return;
-  const t = tabs[i];
-  if (!isNewtab(t.url)) { closedStack.push({ url: t.url, title: t.title }); if (closedStack.length > 25) closedStack.shift(); }
-  tabs.splice(i, 1);
-  if (t.view) { try { win.contentView.removeChildView(t.view); } catch (e) {} destroyView(t.view); }
-  if (!tabs.length) { createTab(); return; }
-  if (activeId === id) activate((tabs[i] || tabs[i - 1]).id); else pushState();
-  saveSessionSoon();
-}
-
-function destroyView(view) {
-  try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {}
-}
-
-/* memory saver: put tabs you haven't looked at for a while to sleep (frees their RAM) */
+/* memory saver: tabs you haven't looked at for a while go to sleep (their RAM is freed) */
 function discard(t) {
-  if (!t.view || t.id === activeId) return;
+  if (!t.view || t.id === t.win.activeId) return;
   const wc = t.view.webContents;
   if (wc.isCurrentlyAudible() || wc.isDevToolsOpened()) return;
   destroyView(t.view);
   t.view = null; t.discarded = true; t.loading = false;
-  pushState();
+  t.win.pushState();
 }
 setInterval(() => {
   const min = settings && settings.data.memorySaverMin;
   if (!min) return;
   const limit = Date.now() - min * 60000;
-  for (const t of tabs) if (t.id !== activeId && t.view && t.lastActive < limit) discard(t);
+  for (const t of allTabs()) if (t.id !== t.win.activeId && t.view && t.lastActive < limit) discard(t);
 }, 30000);
 
-/* ---------- session restore ---------- */
+/* ---------- session restore (all normal windows) ---------- */
 let sessTimer = null;
-function saveSessionSoon() { clearTimeout(sessTimer); sessTimer = setTimeout(saveSession, 1000); }
+function saveSessionSoon() { if (quitting) return; clearTimeout(sessTimer); sessTimer = setTimeout(saveSession, 1000); }
 function saveSession() {
   if (!sessionStore) return;
   sessionStore.data = {
-    tabs: tabs.map(t => ({ url: isNewtab(t.url) ? '' : t.url, title: t.title })),
-    active: Math.max(0, tabs.findIndex(t => t.id === activeId))
+    windows: wins.filter(w => !w.private && !w.win.isDestroyed()).map(w => ({
+      bounds: w.win.isMaximized() || w.win.isFullScreen() ? (w.win.getNormalBounds ? w.win.getNormalBounds() : w.win.getBounds()) : w.win.getBounds(),
+      maximized: w.win.isMaximized(),
+      tabs: w.tabs.map(t => ({ url: isNewtab(t.url) ? '' : t.url, title: t.title })),
+      active: Math.max(0, w.tabs.findIndex(t => t.id === w.activeId))
+    }))
   };
+  sessionStore.flush();
 }
 
 /* ---------- history ---------- */
@@ -274,12 +394,49 @@ function addHistory(url, title) {
   const h = history.data;
   if (h.length && h[h.length - 1].url === url) { h[h.length - 1].t = Date.now(); }
   else h.push({ url, title: title || '', t: Date.now() });
-  if (h.length > 5000) h.splice(0, h.length - 5000);
+  if (h.length > 8000) h.splice(0, h.length - 8000);
   history.save();
 }
 
-/* ---------- bookmarks (one "bar" folder, like Chrome's bookmarks bar) ---------- */
-const normUrl = u => { try { const x = new URL(u); return x.origin + x.pathname.replace(/\/$/, '') + x.search; } catch (e) { return u; } };
+/* ---------- favicons: Chrome's own icons + icons of pages you visit ---------- */
+const normUrl = CI.normUrl;
+const hostOf = CI.hostOf;
+function cachedFavicon(url) {
+  if (!favStore || !/^https?:/i.test(url || '')) return '';
+  return favStore.data['u:' + normUrl(url)] || favStore.data['h:' + hostOf(url)] || '';
+}
+async function storeFavicon(tab, iconUrl) {
+  if (tab.win.private || !/^https?:|^data:/i.test(iconUrl) || !/^https?:/i.test(tab.url)) return;
+  try {
+    let data = iconUrl;
+    if (!/^data:/i.test(iconUrl)) {
+      const r = await tab.view.webContents.session.fetch(iconUrl);
+      if (!r.ok) return;
+      const type = (r.headers.get('content-type') || '').split(';')[0].trim() || 'image/x-icon';
+      if (!/^image\//i.test(type)) return;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (!buf.length || buf.length > 150000) return;
+      data = `data:${type};base64,${buf.toString('base64')}`;
+    }
+    favStore.data['u:' + normUrl(tab.url)] = data;
+    favStore.data['h:' + hostOf(tab.url)] = data;
+    const keys = Object.keys(favStore.data);
+    if (keys.length > 1500) for (const k of keys.slice(0, keys.length - 1500)) delete favStore.data[k];
+    favStore.save();
+    tab.favicon = data; tab.win && tab.win.pushState();
+  } catch (e) {}
+}
+function bookmarkUrls(node = bookmarks.data, out = []) {
+  for (const c of node.children || []) { if (c.url) out.push(c.url); if (c.children) bookmarkUrls(c, out); }
+  return out;
+}
+function importChromeFavicons() {
+  const got = CI.readFavicons(app, bookmarkUrls());
+  Object.assign(favStore.data, got); favStore.save();
+  return Object.keys(got).length;
+}
+
+/* ---------- bookmarks (one "bar" folder like Chrome's bookmarks bar) ---------- */
 function findBookmark(url, node = bookmarks.data) {
   const n = normUrl(url);
   for (const c of node.children || []) {
@@ -288,47 +445,45 @@ function findBookmark(url, node = bookmarks.data) {
   }
   return null;
 }
-function chromeBookmarkFiles() {
-  const base = process.platform === 'win32' ? path.join(process.env.LOCALAPPDATA || '', 'Google', 'Chrome', 'User Data')
-    : process.platform === 'darwin' ? path.join(app.getPath('home'), 'Library/Application Support/Google/Chrome')
-    : path.join(app.getPath('home'), '.config/google-chrome');
-  const out = [];
-  try {
-    for (const d of ['Default', ...fs.readdirSync(base).filter(n => /^Profile \d+$/.test(n))]) {
-      const f = path.join(base, d, 'Bookmarks'); if (fs.existsSync(f)) out.push(f);
-    }
-  } catch (e) {}
-  return out;
-}
 function importChromeBookmarks() {
-  const files = chromeBookmarkFiles();
-  if (!files.length) return 0;
-  const conv = n => n.type === 'folder' ? { title: n.name, children: (n.children || []).map(conv).filter(Boolean) }
-    : n.type === 'url' ? { title: n.name, url: n.url } : null;
+  const items = CI.readBookmarksBar(app);
+  const have = new Set(bookmarkUrls().map(normUrl));
+  let added = 0;
+  for (const it of items) { if (it.url && have.has(normUrl(it.url))) continue; bookmarks.data.children.push(it); added++; }
+  bookmarks.save();
+  try { importChromeFavicons(); } catch (e) {}
+  return added;
+}
+
+/* ---------- Black Chrome look (new tab settings + uploaded font/background) ---------- */
+let pendingImport = null;
+function prepareNewtabImport() {
   try {
-    const j = JSON.parse(fs.readFileSync(files[0], 'utf8'));
-    const bar = (j.roots && j.roots.bookmark_bar && j.roots.bookmark_bar.children) || [];
-    const items = bar.map(conv).filter(Boolean);
-    // keep anything already added here, add the Chrome ones that are missing
-    const have = new Set();
-    (function walk(n) { for (const c of n.children || []) { if (c.url) have.add(normUrl(c.url)); if (c.children) walk(c); } })(bookmarks.data);
-    let added = 0;
-    for (const it of items) { if (it.url && have.has(normUrl(it.url))) continue; bookmarks.data.children.push(it); added++; }
-    bookmarks.save();
-    return added;
-  } catch (e) { return 0; }
+    const r = CI.readNewtabSettings(app);
+    if (!r) return false;
+    const s = Object.assign({}, r.settings);
+    s.shiftX = 0;   // our bar is exactly centered, Chrome's needed an offset
+    const blobs = CI.readNewtabBlobs(r.profile, r.extId);
+    pendingImport = { settings: s, blobs: {} };
+    for (const k of ['font', 'bg']) {
+      const b = blobs[k]; if (!b) continue;
+      try { pendingImport.blobs[k] = { type: b.type, data: fs.readFileSync(b.file) }; } catch (e) {}
+    }
+    for (const w of wins) for (const t of w.tabs) if (t.view && isNewtab(t.url)) t.view.webContents.send('import-ready');
+    return true;
+  } catch (e) { return false; }
 }
 
 /* ---------- extensions ---------- */
 const extApi = () => session.defaultSession.extensions || session.defaultSession;
 async function loadExtensionDir(dir) {
-  // accept a folder that has manifest.json, or one level above it (e.g. "بلاك كروم/extension")
   let d = dir;
   if (!fs.existsSync(path.join(d, 'manifest.json'))) {
     const sub = fs.readdirSync(d).map(n => path.join(d, n)).find(p => fs.existsSync(path.join(p, 'manifest.json')));
     if (!sub) throw new Error('no manifest.json');
     d = sub;
   }
+  // websites only: never our new tab / toolbar (file:// pages)
   return extApi().loadExtension(d, { allowFileAccess: false });
 }
 function extIcon(ext) {
@@ -337,8 +492,7 @@ function extIcon(ext) {
     const icons = m.icons || (m.action && m.action.default_icon) || (m.browser_action && m.browser_action.default_icon) || {};
     const pick = typeof icons === 'string' ? icons : icons[Object.keys(icons).sort((a, b) => b - a)[0]];
     if (!pick) return '';
-    const p = path.join(ext.path, pick);
-    const img = nativeImage.createFromPath(p);
+    const img = nativeImage.createFromPath(path.join(ext.path, pick));
     return img.isEmpty() ? '' : img.resize({ width: 32 }).toDataURL();
   } catch (e) { return ''; }
 }
@@ -351,69 +505,106 @@ function listExtensions() {
 }
 
 /* ---------- keyboard ---------- */
-function handleKey(i) {
-  if (i.type !== 'keyDown') return false;
+function handleKey(w, i) {
+  if (i.type !== 'keyDown' || !w) return false;
   const c = i.control || i.meta, k = (i.key || '').toLowerCase();
-  const t = active(); const wc = t && t.view && t.view.webContents;
-  if (c && !i.shift && k === 't') { createTab(); return true; }
-  if (c && i.shift && k === 't') { reopenClosed(); return true; }
-  if (c && k === 'w') { if (t) closeTab(t.id); return true; }
-  if (c && k === 'tab') { cycle(i.shift ? -1 : 1); return true; }
-  if (c && /^[1-8]$/.test(k)) { const x = tabs[+k - 1]; if (x) activate(x.id); return true; }
-  if (c && k === '9') { activate(tabs[tabs.length - 1].id); return true; }
-  if ((c && k === 'l') || k === 'f6' || (i.alt && k === 'd')) { focusAddress(); return true; }
-  if (k === 'f5' || (c && k === 'r')) { if (wc) (i.shift || c && k === 'f5') ? wc.reloadIgnoringCache() : wc.reload(); return true; }
+  const t = w.active(); const wc = t && t.view && t.view.webContents;
+  if (c && !i.shift && k === 't') { w.createTab(); return true; }
+  if (c && i.shift && k === 't') { reopenClosed(w); return true; }
+  if (c && !i.shift && k === 'n') { newWindow(); return true; }
+  if (c && i.shift && k === 'n') { newWindow({ private: true }); return true; }
+  if (c && k === 'w') { if (t) w.closeTab(t.id); return true; }
+  if (c && k === 'tab') { cycle(w, i.shift ? -1 : 1); return true; }
+  if (c && /^[1-8]$/.test(k)) { const x = w.tabs[+k - 1]; if (x) w.activate(x.id); return true; }
+  if (c && k === '9') { w.activate(w.tabs[w.tabs.length - 1].id); return true; }
+  if ((c && k === 'l') || k === 'f6' || (i.alt && k === 'd')) { w.focusAddress(); return true; }
+  if (k === 'f5' || (c && k === 'r')) {
+    const hard = (k === 'f5' && (i.shift || c)) || (c && i.shift && k === 'r');
+    if (wc) hard ? wc.reloadIgnoringCache() : wc.reload();
+    return true;
+  }
   if ((i.alt && k === 'arrowleft') || k === 'browserback') { if (wc && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); return true; }
   if ((i.alt && k === 'arrowright') || k === 'browserforward') { if (wc && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward(); return true; }
-  if (k === 'f11') { win.setFullScreen(!win.isFullScreen()); return true; }
+  if (k === 'f11') { w.win.setFullScreen(!w.win.isFullScreen()); return true; }
   if (k === 'f12' || (c && i.shift && k === 'i')) { if (wc) wc.toggleDevTools(); return true; }
-  if (c && (k === '=' || k === '+')) { zoom(wc, 0.1); return true; }
-  if (c && k === '-') { zoom(wc, -0.1); return true; }
-  if (c && k === '0') { if (wc) { wc.setZoomFactor(1); pushState(); } return true; }
-  if (c && k === 'd') { toggleBookmark(); return true; }
-  if (k === 'escape' && uiExpanded === true && ui) { ui.webContents.send('close-menus'); return false; }
+  if (c && (k === '=' || k === '+')) { zoom(w, 0.1); return true; }
+  if (c && k === '-') { zoom(w, -0.1); return true; }
+  if (c && k === '0') { if (wc) { wc.setZoomFactor(1); w.pushState(); } return true; }
+  if (c && k === 'd') { toggleBookmark(w); return true; }
+  if (c && k === 'f') { w.ui.webContents.focus(); w.ui.webContents.send('find-open'); return true; }
+  if (c && k === 'p') { if (wc) wc.print({}, () => {}); return true; }
+  if (c && k === 'h') { w.createTab(HISTORY_URL); return true; }
+  if (c && k === 'u') { if (t && /^https?:/.test(t.url)) w.createTab('view-source:' + t.url, { after: t.id }); return true; }
+  if (k === 'escape' && w.uiExpanded === true) { w.ui.webContents.send('close-menus'); return false; }
   return false;
 }
-function zoom(wc, d) { if (!wc) return; wc.setZoomFactor(Math.min(3, Math.max(0.3, Math.round((wc.getZoomFactor() + d) * 10) / 10))); pushState(); }
-function cycle(dir) { if (tabs.length < 2) return; const i = tabs.findIndex(t => t.id === activeId); activate(tabs[(i + dir + tabs.length) % tabs.length].id); }
-function reopenClosed() { const c = closedStack.pop(); if (c) createTab(c.url); }
-function focusAddress() { if (ui && !ui.webContents.isDestroyed()) { ui.webContents.focus(); ui.webContents.send('focus-address'); } }
-function toggleBookmark() {
-  const t = active(); if (!t || isNewtab(t.url)) return;
+function zoom(w, d) {
+  const t = w.active(), wc = t && t.view && t.view.webContents; if (!wc) return;
+  wc.setZoomFactor(Math.min(3, Math.max(0.3, Math.round((wc.getZoomFactor() + d) * 10) / 10))); w.pushState();
+}
+function cycle(w, dir) { if (w.tabs.length < 2) return; const i = w.tabs.findIndex(t => t.id === w.activeId); w.activate(w.tabs[(i + dir + w.tabs.length) % w.tabs.length].id); }
+function reopenClosed(w) { const c = closedStack.pop(); if (c) w.createTab(c.url); }
+function toggleBookmark(w) {
+  const t = w.active(); if (!t || !/^https?:/.test(t.url)) return;
   const f = findBookmark(t.url);
   if (f) f.parent.children.splice(f.parent.children.indexOf(f.item), 1);
   else bookmarks.data.children.push({ title: t.title || t.url, url: t.url });
-  bookmarks.save(); pushState();
+  bookmarks.save(); w.pushState();
 }
 
-/* ---------- navigation from the address bar ---------- */
+/* ---------- address bar ---------- */
 function toUrl(text) {
   const t = (text || '').trim();
   if (!t) return null;
+  if (/^zeus:\/\/history/i.test(t)) return HISTORY_URL;
   if (/^(https?|file|chrome-extension|about|view-source):/i.test(t)) return t;
   if (/^localhost(:\d+)?(\/|$)/i.test(t) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(t)) return 'http://' + t;
   if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return 'https://' + t;
   return 'https://www.google.com/search?q=' + encodeURIComponent(t);   // always Google
 }
-function navigate(text, newTab) {
+function navigate(w, text, newTab) {
   const url = toUrl(text); if (!url) return;
-  const t = active();
-  if (newTab || !t) { createTab(url); return; }
+  const t = w.active();
+  if (newTab || !t) { w.createTab(url); return; }
   if (!t.view) makeView(t);
-  t.url = url; loadInto(t, url); t.view.webContents.focus(); layout(); pushState();
+  t.url = url; loadInto(t, url); t.view.webContents.focus(); w.layout(); w.pushState();
 }
 
-/* ---------- right-click menu ---------- */
+/* ---------- page translation (Google Translate) ---------- */
+function translateUrl(url) {
+  const tl = settings.data.lang === 'en' ? 'en' : 'ar';
+  return `https://translate.google.com/translate?sl=auto&tl=${tl}&hl=${tl}&u=${encodeURIComponent(url)}`;
+}
+function untranslateUrl(url) {
+  try {
+    const x = new URL(url);
+    const host = x.hostname.replace(/\.translate\.goog$/i, '').replace(/--/g, '\u0000').replace(/-/g, '.').replace(/\u0000/g, '-');
+    for (const k of [...x.searchParams.keys()]) if (k.startsWith('_x_tr_')) x.searchParams.delete(k);
+    return `https://${host}${x.pathname}${x.search}${x.hash}`;
+  } catch (e) { return url; }
+}
+function translate(w) {
+  const t = w.active(); if (!t || !/^https?:/i.test(t.url)) return;
+  navigate(w, /\.translate\.goog$/i.test(hostOf(t.url)) ? untranslateUrl(t.url) : translateUrl(t.url));
+}
+
+/* ---------- right-click menus ---------- */
 function contextMenu(tab, p) {
-  const wc = tab.view.webContents;
+  const wc = tab.view.webContents, w = tab.win;
   const items = [];
+  if (p.misspelledWord) {
+    for (const s of (p.dictionarySuggestions || []).slice(0, 5)) items.push({ label: s, click: () => wc.replaceMisspelling(s) });
+    if (items.length) items.push({ type: 'separator' });
+  }
   if (p.linkURL) {
-    items.push({ label: T('فتح الرابط في تبويب جديد', 'Open link in new tab'), click: () => createTab(p.linkURL, { activate: false, after: tab.id }) });
+    items.push({ label: T('فتح الرابط في تبويب جديد', 'Open link in new tab'), click: () => w.createTab(p.linkURL, { activate: false, after: tab.id }) });
+    items.push({ label: T('فتح الرابط في نافذة جديدة', 'Open link in new window'), click: () => newWindow({ url: p.linkURL }) });
+    if (!w.private) items.push({ label: T('فتح الرابط في نافذة متخفية', 'Open link in incognito window'), click: () => newWindow({ url: p.linkURL, private: true }) });
     items.push({ label: T('نسخ الرابط', 'Copy link'), click: () => clipboard.writeText(p.linkURL) });
     items.push({ type: 'separator' });
   }
   if (p.mediaType === 'image' && p.srcURL) {
-    items.push({ label: T('فتح الصورة في تبويب جديد', 'Open image in new tab'), click: () => createTab(p.srcURL, { activate: false, after: tab.id }) });
+    items.push({ label: T('فتح الصورة في تبويب جديد', 'Open image in new tab'), click: () => w.createTab(p.srcURL, { activate: false, after: tab.id }) });
     items.push({ label: T('نسخ الصورة', 'Copy image'), click: () => wc.copyImageAt(p.x, p.y) });
     items.push({ label: T('حفظ الصورة', 'Save image'), click: () => wc.downloadURL(p.srcURL) });
     items.push({ type: 'separator' });
@@ -427,84 +618,91 @@ function contextMenu(tab, p) {
   } else if (p.selectionText && p.selectionText.trim()) {
     const s = p.selectionText.trim();
     items.push({ label: T('نسخ', 'Copy'), role: 'copy' });
-    items.push({ label: T('ابحث في Google عن "', 'Search Google for "') + (s.length > 24 ? s.slice(0, 24) + '…' : s) + '"', click: () => createTab(toUrl(s), { after: tab.id }) });
+    items.push({ label: T('ابحث في Google عن "', 'Search Google for "') + (s.length > 24 ? s.slice(0, 24) + '…' : s) + '"', click: () => w.createTab(toUrl(s), { after: tab.id }) });
     items.push({ type: 'separator' });
   }
   items.push({ label: T('رجوع', 'Back'), enabled: wc.navigationHistory.canGoBack(), click: () => wc.navigationHistory.goBack() });
   items.push({ label: T('للأمام', 'Forward'), enabled: wc.navigationHistory.canGoForward(), click: () => wc.navigationHistory.goForward() });
   items.push({ label: T('تحديث', 'Reload'), click: () => wc.reload() });
   items.push({ type: 'separator' });
-  items.push({ label: T('فحص العنصر', 'Inspect'), click: () => wc.inspectElement(p.x, p.y) });
-  Menu.buildFromTemplate(items).popup({ window: win });
-}
-
-/* ---------- window ---------- */
-function createWindow() {
-  const s = settings.data;
-  const b = s.bounds && screen.getAllDisplays().some(d => {
-    const a = d.workArea; return s.bounds.x < a.x + a.width && s.bounds.x + s.bounds.width > a.x && s.bounds.y < a.y + a.height && s.bounds.y + 30 > a.y;
-  }) ? s.bounds : null;
-  win = new BaseWindow(Object.assign({
-    width: 1280, height: 800, minWidth: 520, minHeight: 320,
-    frame: false, backgroundColor: '#000000', show: false, title: '3zT Browser'
-  }, b || {}, fs.existsSync(ICON) ? { icon: ICON } : {}));
-
-  ui = new WebContentsView({
-    webPreferences: { preload: PRELOAD_UI, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, partition: 'zeus-ui' }
-  });
-  ui.setBackgroundColor('#00000000');
-  win.contentView.addChildView(ui);
-  ui.webContents.loadFile(UI_FILE);
-  ui.webContents.on('before-input-event', (e, input) => { if (handleKey(input)) e.preventDefault(); });
-  ui.webContents.once('did-finish-load', () => {
-    if (s.maximized) win.maximize();
-    win.show(); pushState();
-    const t = active(); if (t && isNewtab(t.url)) focusAddress();
-  });
-
-  win.on('resize', layout);
-  win.on('maximize', () => { layout(); pushState(); });
-  win.on('unmaximize', () => { layout(); pushState(); });
-  win.on('enter-full-screen', () => { layout(); pushState(); });
-  win.on('leave-full-screen', () => { htmlFullscreen = false; layout(); pushState(); });
-  win.on('close', () => {
-    settings.data.maximized = win.isMaximized();
-    if (!win.isMaximized() && !win.isFullScreen()) settings.data.bounds = win.getBounds();
-    settings.save(); saveSession();
-    for (const st of [settings, bookmarks, history, sessionStore]) st.flush();
-  });
-  win.on('closed', () => { win = null; app.quit(); });
-
-  // first tabs
-  const sess = sessionStore.data;
-  if (s.restoreTabs && sess.tabs && sess.tabs.length) {
-    const act = Math.min(sess.active || 0, sess.tabs.length - 1);
-    sess.tabs.forEach((t, i) => createTab(t.url || NEWTAB_URL, i === act ? { activate: false } : { activate: false, discarded: true, title: t.title }));
-    activate(tabs[act].id);
-  } else createTab();
-}
-
-/* ---------- window dragging (frameless) ---------- */
-let drag = null;
-function dragTick() {
-  if (!drag || !win) return;
-  const p = screen.getCursorScreenPoint();
-  const dx = p.x - drag.cx, dy = p.y - drag.cy;
-  if (win.isMaximized()) {
-    if (Math.abs(dx) + Math.abs(dy) < 6) return;
-    const ratio = drag.ratio;
-    win.unmaximize();
-    const nb = win.getBounds();
-    drag.wx = Math.round(p.x - nb.width * ratio); drag.wy = p.y - drag.offY; drag.cx = p.x; drag.cy = p.y;
-    win.setPosition(drag.wx, drag.wy);
-    return;
+  if (/^https?:/i.test(tab.url)) {
+    items.push({ label: T('ترجمة الصفحة', 'Translate page'), click: () => translate(w) });
+    items.push({ label: T('طباعة…', 'Print…'), click: () => wc.print({}, () => {}) });
+    items.push({ label: T('عرض مصدر الصفحة', 'View page source'), click: () => w.createTab('view-source:' + tab.url, { after: tab.id }) });
   }
-  win.setPosition(drag.wx + dx, drag.wy + dy);
+  items.push({ label: T('فحص العنصر', 'Inspect'), click: () => wc.inspectElement(p.x, p.y) });
+  Menu.buildFromTemplate(items).popup({ window: w.win });
+}
+function tabMenu(w, id) {
+  const t = w.tab(id); if (!t) return;
+  const i = w.tabs.indexOf(t);
+  const wc = t.view && t.view.webContents;
+  const right = T('على اليسار', 'to the right'); // RTL: "after" is to the left
+  Menu.buildFromTemplate([
+    { label: T('تبويب جديد بجانبه', 'New tab next to it'), click: () => w.createTab(NEWTAB_URL, { after: t.id }) },
+    { type: 'separator' },
+    { label: T('تحديث', 'Reload'), enabled: !!wc, click: () => wc && wc.reload() },
+    { label: T('تكرار', 'Duplicate'), click: () => w.createTab(t.url, { after: t.id }) },
+    { label: t.muted ? T('تشغيل صوت الموقع', 'Unmute site') : T('كتم صوت الموقع', 'Mute site'), click: () => toggleMute(t) },
+    { label: T('نقل إلى نافذة جديدة', 'Move to new window'), enabled: w.tabs.length > 1, click: () => detachToNewWindow(t) },
+    { type: 'separator' },
+    { label: T('إغلاق', 'Close'), click: () => w.closeTab(t.id) },
+    { label: T('إغلاق التبويبات الأخرى', 'Close other tabs'), enabled: w.tabs.length > 1, click: () => { for (const x of w.tabs.slice()) if (x !== t) w.closeTab(x.id); } },
+    { label: T('إغلاق التبويبات ', 'Close tabs ') + right, enabled: i < w.tabs.length - 1, click: () => { for (const x of w.tabs.slice(i + 1)) w.closeTab(x.id); } }
+  ]).popup({ window: w.win });
+}
+function toggleMute(t) {
+  t.muted = !t.muted;
+  if (t.view) t.view.webContents.setAudioMuted(t.muted);
+  t.win.pushState();
+}
+function detachToNewWindow(t, at) {
+  const from = t.win;
+  const nb = from.win.isMaximized() || from.win.isFullScreen() ? (from.win.getNormalBounds ? from.win.getNormalBounds() : from.win.getBounds()) : from.win.getBounds();
+  const bounds = { width: nb.width, height: nb.height, x: at ? at.x : nb.x + 40, y: at ? at.y : nb.y + 40 };
+  const nw = new Win({ bounds, private: from.private });
+  if (from.private) nw.partition = from.partition;   // keep the same incognito session
+  from.releaseTab(t);
+  nw.adoptTab(t);
+  if (!from.tabs.length) from.win.close();
+  return nw;
 }
 
-/* ---------- permissions: ask before camera / mic / location / notifications ---------- */
-function setupSession() {
-  const ses = session.defaultSession;
+/* ---------- dragging a tab out of the strip / onto another window ---------- */
+let tabDrag = null;
+function stripHit(p, except) {
+  for (const w of [lastFocused, ...wins]) {
+    if (!w || w === except || w.win.isDestroyed() || !w.win.isVisible() || w.win.isMinimized()) continue;
+    if (w.private !== (except && except.private)) continue;   // never mix incognito and normal tabs
+    const b = w.win.getContentBounds();
+    if (p.x >= b.x && p.x < b.x + b.width && p.y >= b.y && p.y < b.y + Math.max(w.stripH, 56)) return w;
+  }
+  return null;
+}
+function dragTick() {
+  if (!tabDrag) return;
+  const p = screen.getCursorScreenPoint();
+  const mw = tabDrag.mover;
+  if (mw.win.isDestroyed()) { stopTabDrag(); return; }
+  mw.win.setPosition(Math.round(p.x - tabDrag.offX), Math.round(p.y - tabDrag.offY));
+  const hit = stripHit(p, mw);
+  if (hit !== tabDrag.hover) {
+    if (tabDrag.hover && !tabDrag.hover.ui.webContents.isDestroyed()) tabDrag.hover.ui.webContents.send('drop-hint', null);
+    tabDrag.hover = hit;
+  }
+  if (hit) hit.ui.webContents.send('drop-hint', p.x - hit.win.getContentBounds().x);
+}
+function stopTabDrag() {
+  if (!tabDrag) return null;
+  clearInterval(tabDrag.timer);
+  if (tabDrag.hover && !tabDrag.hover.ui.webContents.isDestroyed()) tabDrag.hover.ui.webContents.send('drop-hint', null);
+  const d = tabDrag; tabDrag = null; return d;
+}
+
+/* ---------- permissions + downloads for a session ---------- */
+const setUp = new WeakSet();
+function setupSession(ses) {
+  if (setUp.has(ses)) return; setUp.add(ses);
   const always = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'window-management']);
   const asked = new Map();
   ses.setPermissionRequestHandler((wc, perm, cb, details) => {
@@ -518,85 +716,141 @@ function setupSession() {
       midi: 'MIDI', midiSysex: 'MIDI', hid: 'HID', serial: 'Serial', usb: 'USB'
     };
     if (!names[perm]) return cb(false);
-    dialog.showMessageBox(win, {
+    const t = tabOfWc(wc), parent = (t ? t.win : focusedWin());
+    dialog.showMessageBox(parent ? parent.win : undefined, {
       type: 'question', buttons: [T('سماح', 'Allow'), T('رفض', 'Block')], defaultId: 1, cancelId: 1,
       title: '3zT Browser', message: `${origin}\n${T('يطلب الوصول إلى', 'wants to use')}: ${names[perm]}`
     }).then(r => { const ok = r.response === 0; asked.set(key, ok); cb(ok); }).catch(() => cb(false));
   });
-
-  // downloads go straight to the Downloads folder, the toolbar shows a small notice
-  ses.on('will-download', (e, item) => {
+  ses.on('will-download', (e, item, wc) => {
     const dir = app.getPath('downloads');
     let name = item.getFilename() || 'download', p = path.join(dir, name), n = 1;
     const ext = path.extname(name), base = path.basename(name, ext);
     while (fs.existsSync(p)) p = path.join(dir, `${base} (${n++})${ext}`);
     item.setSavePath(p);
-    const send = st => ui && !ui.webContents.isDestroyed() && ui.webContents.send('download', { name: path.basename(p), path: p, state: st,
-      received: item.getReceivedBytes(), total: item.getTotalBytes() });
+    const t = wc && tabOfWc(wc); const w = (t && t.win) || focusedWin();
+    const send = st => w && !w.ui.webContents.isDestroyed() && w.ui.webContents.send('download', {
+      name: path.basename(p), path: p, state: st, received: item.getReceivedBytes(), total: item.getTotalBytes() });
     send('progressing');
-    item.on('updated', (ev, st) => send(st));
     item.once('done', (ev, st) => send(st));
   });
 }
 
 /* ---------- IPC ---------- */
-const fromUi = e => ui && e.sender === ui.webContents;
-const fromNewtab = e => { try { return isNewtab(e.senderFrame.url); } catch (x) { return false; } };
+const uiWin = e => winOfUi(e.sender);
+const internalPage = e => { try { return isInternal(e.senderFrame.url); } catch (x) { return false; } };
 
 function setupIpc() {
-  ipcMain.on('ui:expand', (e, on) => { if (!fromUi(e)) return; uiExpanded = typeof on === 'number' ? on : !!on; layout(); });
+  ipcMain.on('ui:height', (e, h) => {
+    const w = uiWin(e); if (!w) return;
+    w.stripH = Math.max(40, Math.min(140, +h || 56));
+    w.layout();
+    // the new tab page moves its shortcuts bar under the toolbar
+    for (const t of w.tabs) if (t.view && isNewtab(t.url)) t.view.webContents.send('strip', w.stripH);
+  });
+  ipcMain.on('ui:expand', (e, on) => { const w = uiWin(e); if (!w) return; w.uiExpanded = typeof on === 'number' ? on : !!on; w.layout(); });
   ipcMain.on('win', (e, cmd) => {
-    if (!fromUi(e) || !win) return;
-    if (cmd === 'min') win.minimize();
-    else if (cmd === 'max') win.isMaximized() ? win.unmaximize() : win.maximize();
-    else if (cmd === 'close') win.close();
+    const w = uiWin(e); if (!w) return;
+    if (cmd === 'min') w.win.minimize();
+    else if (cmd === 'max') w.win.isMaximized() ? w.win.unmaximize() : w.win.maximize();
+    else if (cmd === 'close') w.win.close();
   });
-  ipcMain.on('drag:start', (e, offY) => {
-    if (!fromUi(e) || !win || win.isFullScreen()) return;
-    const p = screen.getCursorScreenPoint(), b = win.getBounds();
-    drag = { cx: p.x, cy: p.y, wx: b.x, wy: b.y, ratio: (p.x - b.x) / b.width, offY: Math.max(8, Math.min(40, offY || 20)) };
-    clearInterval(drag.t); drag.t = setInterval(dragTick, 10);
-  });
-  ipcMain.on('drag:end', e => { if (drag) { clearInterval(drag.t); drag = null; } });
 
   ipcMain.on('tab', (e, cmd, arg) => {
-    if (!fromUi(e)) return;
-    const t = active(), wc = t && t.view && t.view.webContents;
+    const w = uiWin(e); if (!w) return;
+    const t = w.active(), wc = t && t.view && t.view.webContents;
     switch (cmd) {
-      case 'new': createTab(); break;
-      case 'activate': activate(arg); break;
-      case 'close': closeTab(arg); break;
-      case 'reopen': reopenClosed(); break;
+      case 'new': w.createTab(); break;
+      case 'activate': w.activate(arg); break;
+      case 'close': w.closeTab(arg); break;
+      case 'reopen': reopenClosed(w); break;
       case 'back': if (wc && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); break;
       case 'forward': if (wc && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward(); break;
       case 'reload': if (wc) wc.reload(); break;
       case 'stop': if (wc) wc.stop(); break;
-      case 'go': navigate(arg && arg.text, arg && arg.newTab); break;
-      case 'bookmark': toggleBookmark(); break;
-      case 'zoom': zoom(wc, arg); break;
-      case 'zoomReset': if (wc) { wc.setZoomFactor(1); pushState(); } break;
+      case 'go': navigate(w, arg && arg.text, arg && arg.newTab); break;
+      case 'bookmark': toggleBookmark(w); break;
+      case 'zoom': zoom(w, arg); break;
+      case 'zoomReset': if (wc) { wc.setZoomFactor(1); w.pushState(); } break;
       case 'focusPage': if (wc) wc.focus(); break;
-      case 'move': { // reorder: arg = {id, to}
-        const i = tabs.findIndex(x => x.id === arg.id); if (i < 0) break;
-        const [x] = tabs.splice(i, 1); tabs.splice(Math.max(0, Math.min(tabs.length, arg.to)), 0, x); pushState(); saveSessionSoon(); break;
+      case 'translate': translate(w); break;
+      case 'mute': { const x = w.tab(arg); if (x) toggleMute(x); break; }
+      case 'menu': tabMenu(w, arg); break;
+      case 'history': w.createTab(HISTORY_URL); break;
+      case 'print': if (wc) wc.print({}, () => {}); break;
+      case 'newWindow': newWindow(); break;
+      case 'incognito': newWindow({ private: true }); break;
+      case 'move': {   // reorder inside this window: arg = {id, to}
+        const i = w.tabs.findIndex(x => x.id === arg.id); if (i < 0) break;
+        const [x] = w.tabs.splice(i, 1); w.tabs.splice(Math.max(0, Math.min(w.tabs.length, arg.to)), 0, x);
+        w.pushState(); saveSessionSoon(); break;
       }
     }
   });
 
+  /* find in page */
+  ipcMain.on('find', (e, a) => {
+    const w = uiWin(e); const t = w && w.active(); const wc = t && t.view && t.view.webContents; if (!wc) return;
+    if (!a || !a.text) { wc.stopFindInPage('clearSelection'); w.ui.webContents.send('found', { active: 0, matches: 0 }); return; }
+    wc.findInPage(a.text, { forward: a.forward !== false, findNext: !!a.next });
+  });
+  ipcMain.on('find:stop', e => { const w = uiWin(e); const t = w && w.active(); if (t && t.view) t.view.webContents.stopFindInPage('clearSelection'); });
+
+  /* tab dragged out of the strip: split into its own window, follow the mouse */
+  ipcMain.on('tab:dragout', (e, a) => {
+    const w = uiWin(e);
+    if (process.env.ZEUS_DEBUG) console.log('[drag] out', a, !!w, !!tabDrag);
+    if (!w || tabDrag) return;
+    const t = w.tab(a.id); if (!t) return;
+    const p = screen.getCursorScreenPoint();
+    let mover;
+    if (w.tabs.length === 1) {
+      mover = w;                       // only tab: the whole window moves
+      if (w.win.isMaximized()) w.win.unmaximize();
+      if (w.win.isFullScreen()) w.win.setFullScreen(false);
+    } else {
+      mover = detachToNewWindow(t, { x: p.x - 200, y: p.y - 20 });
+    }
+    const b = mover.win.getBounds();
+    // keep the mouse over the tab's spot in the new window (roughly the strip, near the middle)
+    const offX = Math.min(b.width - 60, Math.max(60, a.offX != null ? a.offX : b.width / 2));
+    tabDrag = { mover, tabId: t.id, offX, offY: 22, hover: null, source: w };
+    tabDrag.timer = setInterval(dragTick, 8);
+    dragTick();
+  });
+  ipcMain.on('tab:dragend', async () => {
+    const d = stopTabDrag(); if (!d) return;
+    const p = screen.getCursorScreenPoint();
+    const target = stripHit(p, d.mover);
+    const t = d.mover.tab(d.tabId);
+    if (target && t && d.mover.tabs.length === 1) {
+      let index = target.tabs.length;
+      try { index = await target.ui.webContents.executeJavaScript(`tabIndexAt(${p.x - target.win.getContentBounds().x})`); } catch (err) {}
+      d.mover.releaseTab(t);
+      target.adoptTab(t, index);
+      d.mover.win.close();
+      target.win.focus();
+    } else if (!d.mover.win.isDestroyed()) {
+      d.mover.win.show(); d.mover.win.focus();
+    }
+    saveSessionSoon();
+  });
+
   ipcMain.on('set', (e, key, val) => {
-    if (!fromUi(e) && !(fromNewtab(e) && key === 'lang')) return;
+    if (!uiWin(e) && !(internalPage(e) && key === 'lang')) return;
     if (key === 'lang' && (val === 'ar' || val === 'en')) settings.data.lang = val;
     if (key === 'memorySaverMin' && [0, 5, 15, 30, 60].includes(+val)) settings.data.memorySaverMin = +val;
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
-    settings.save(); pushState();
-    // tell every open new tab page about the language
-    if (key === 'lang') for (const t of tabs) if (t.view && isNewtab(t.url)) t.view.webContents.send('lang', settings.data.lang);
+    if (key === 'hwAccel') settings.data.hwAccel = !!val;
+    settings.save(); settings.flush();
+    for (const w of wins) w.pushState();
+    if (key === 'lang') for (const t of allTabs()) if (t.view && isInternal(t.url)) t.view.webContents.send('lang', settings.data.lang);
   });
 
-  ipcMain.handle('ext:list', e => (fromUi(e) ? listExtensions() : []));
+  ipcMain.handle('ext:list', e => (uiWin(e) ? listExtensions() : []));
   ipcMain.handle('ext:add', async e => {
-    if (!fromUi(e)) return { ok: false };
-    const r = await dialog.showOpenDialog(win, { title: T('اختر مجلد الإضافة', 'Choose the extension folder'), properties: ['openDirectory'] });
+    const w = uiWin(e); if (!w) return { ok: false };
+    const r = await dialog.showOpenDialog(w.win, { title: T('اختر مجلد الإضافة', 'Choose the extension folder'), properties: ['openDirectory'] });
     if (r.canceled || !r.filePaths[0]) return { ok: false };
     try {
       const ext = await loadExtensionDir(r.filePaths[0]);
@@ -606,47 +860,60 @@ function setupIpc() {
     } catch (err) { return { ok: false, error: String(err.message || err) }; }
   });
   ipcMain.handle('ext:remove', (e, id) => {
-    if (!fromUi(e)) return false;
+    if (!uiWin(e)) return false;
     const ext = extApi().getExtension(id); if (!ext) return false;
     extApi().removeExtension(id);
     settings.data.extensions = settings.data.extensions.filter(p => p !== ext.path); settings.save();
     return true;
   });
-  ipcMain.on('ext:options', (e, url) => { if (fromUi(e) && /^chrome-extension:\/\//.test(url)) createTab(url); });
+  ipcMain.on('ext:options', (e, url) => { const w = uiWin(e); if (w && /^chrome-extension:\/\//.test(url)) w.createTab(url); });
 
-  ipcMain.handle('bm:import', e => (fromUi(e) ? importChromeBookmarks() : 0));
-  ipcMain.handle('bm:get', e => (fromNewtab(e) || fromUi(e) ? bookmarks.data : { children: [] }));
+  ipcMain.handle('bm:import', e => (uiWin(e) ? importChromeBookmarks() : 0));
+  ipcMain.handle('bm:get', e => (internalPage(e) || uiWin(e) ? bookmarks.data : { children: [] }));
+  ipcMain.handle('fav:get', (e, urls) => {
+    if (!internalPage(e) || !Array.isArray(urls)) return {};
+    const out = {}; for (const u of urls.slice(0, 500)) { const f = cachedFavicon(u); if (f) out[u] = f; }
+    return out;
+  });
+  ipcMain.handle('ntp:take', e => { if (!internalPage(e) || !pendingImport) return null; const p = pendingImport; pendingImport = null; return p; });
+  ipcMain.handle('ntp:import', e => (uiWin(e) ? prepareNewtabImport() : false));
 
   ipcMain.handle('history:search', (e, text, max) => {
-    if (!fromNewtab(e) && !fromUi(e)) return [];
+    if (!internalPage(e) && !uiWin(e)) return [];
     const q = String(text || '').toLowerCase(), out = [], seen = new Set();
     const h = history.data;
     for (let i = h.length - 1; i >= 0 && out.length < (max || 600); i--) {
       const it = h[i];
       if (q && !(it.url.toLowerCase().includes(q) || (it.title || '').toLowerCase().includes(q))) continue;
       if (seen.has(it.url)) continue; seen.add(it.url);
-      out.push({ url: it.url, title: it.title, lastVisitTime: it.t });
+      out.push({ url: it.url, title: it.title, lastVisitTime: it.t, favicon: cachedFavicon(it.url) });
     }
     return out;
   });
+  ipcMain.handle('history:delete', (e, url) => {
+    if (!internalPage(e)) return false;
+    history.data = history.data.filter(x => x.url !== url); return true;
+  });
+  ipcMain.handle('history:clear', e => { if (!internalPage(e)) return false; history.data = []; history.flush(); return true; });
 
   ipcMain.handle('suggest', async (e, q, hl) => {
-    if (!fromNewtab(e) && !fromUi(e)) return [];
+    if (!internalPage(e) && !uiWin(e)) return [];
     try {
       const r = await net.fetch('https://suggestqueries.google.com/complete/search?client=firefox&hl=' + (hl === 'en' ? 'en' : 'ar') + '&q=' + encodeURIComponent(String(q || '')));
       const j = await r.json(); return Array.isArray(j[1]) ? j[1].slice(0, 8) : [];
     } catch (err) { return []; }
   });
-
   ipcMain.handle('lang:get', () => settings.data.lang);
 
   ipcMain.on('misc', async (e, cmd) => {
-    if (!fromUi(e)) return;
+    const w = uiWin(e); if (!w) return;
+    const t = w.active();
     if (cmd === 'downloads') shell.openPath(app.getPath('downloads'));
-    if (cmd === 'devtools') { const t = active(); if (t && t.view) t.view.webContents.toggleDevTools(); }
-    if (cmd === 'fullscreen') win.setFullScreen(!win.isFullScreen());
+    if (cmd === 'devtools' && t && t.view) t.view.webContents.toggleDevTools();
+    if (cmd === 'fullscreen') w.win.setFullScreen(!w.win.isFullScreen());
+    if (cmd === 'relaunch') { quitting = true; saveSession(); for (const s of stores()) s.flush(); app.relaunch(); app.exit(0); }
     if (cmd === 'clearData') {
-      const r = await dialog.showMessageBox(win, {
+      const r = await dialog.showMessageBox(w.win, {
         type: 'warning', buttons: [T('مسح', 'Clear'), T('إلغاء', 'Cancel')], defaultId: 1, cancelId: 1, title: '3zT Browser',
         message: T('مسح السجل والكاش والكوكيز؟ (بيطلعك من حساباتك في المواقع)', 'Clear history, cache and cookies? (signs you out of sites)')
       });
@@ -656,34 +923,57 @@ function setupIpc() {
       await session.defaultSession.clearStorageData({ storages: ['cookies', 'cachestorage', 'serviceworkers', 'shadercache', 'websql'] });
     }
   });
-  ipcMain.on('download:show', (e, p) => { if (fromUi(e) && typeof p === 'string') shell.showItemInFolder(p); });
+  ipcMain.on('download:show', (e, p) => { if (uiWin(e) && typeof p === 'string') shell.showItemInFolder(p); });
 }
 
 /* ---------- start ---------- */
 app.on('second-instance', (e, argv) => {
-  if (!win) return;
-  if (win.isMinimized()) win.restore();
-  win.focus();
-  const u = argv.find(a => /^https?:\/\//i.test(a)); if (u) createTab(u);
+  const w = focusedWin();
+  const u = argv.find(a => /^https?:\/\//i.test(a));
+  if (!w) { newWindow({ url: u }); return; }
+  if (w.win.isMinimized()) w.win.restore();
+  w.win.focus();
+  if (u) w.createTab(u);
 });
+app.on('before-quit', () => { if (!quitting) { quitting = true; saveSession(); } for (const s of stores()) s.flush(); });
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   settings = makeStore('settings.json', {
-    lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false, bounds: null, maximized: false
+    lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
+    favImported: false, ntpImported: false, hwAccel: true
   });
   bookmarks = makeStore('bookmarks.json', { children: [] });
   history = makeStore('history.json', []);
-  sessionStore = makeStore('session.json', { tabs: [], active: 0 });
+  sessionStore = makeStore('session.json', { windows: [] });
+  favStore = makeStore('favicons.json', {});
 
-  if (!settings.data.bookmarksImported) { importChromeBookmarks(); settings.data.bookmarksImported = true; settings.save(); }
+  // first run (or first run of this version): bring things over from Chrome
+  if (!settings.data.bookmarksImported) { try { importChromeBookmarks(); } catch (e) {} settings.data.bookmarksImported = true; settings.data.favImported = true; }
+  if (!settings.data.favImported) { try { importChromeFavicons(); } catch (e) {} settings.data.favImported = true; }
+  if (!settings.data.ntpImported) { prepareNewtabImport(); settings.data.ntpImported = true; }
+  settings.save();
 
-  setupSession();
+  setupSession(session.defaultSession);
   setupIpc();
   for (const p of settings.data.extensions.slice()) {
     try { await loadExtensionDir(p); } catch (e) { console.warn('extension failed', p, e.message); }
   }
-  createWindow();
+
+  // restore windows (old single-window format supported too)
+  let saved = sessionStore.data.windows;
+  if (!saved && sessionStore.data.tabs) saved = [{ tabs: sessionStore.data.tabs, active: sessionStore.data.active, bounds: settings.data.bounds, maximized: settings.data.maximized }];
+  if (settings.data.restoreTabs && saved && saved.length && saved.some(s => s.tabs && s.tabs.length)) {
+    for (const s of saved) {
+      if (!s.tabs || !s.tabs.length) continue;
+      const w = new Win({ bounds: s.bounds, maximized: s.maximized });
+      const act = Math.min(s.active || 0, s.tabs.length - 1);
+      s.tabs.forEach((t, i) => w.createTab(t.url || NEWTAB_URL, i === act ? { activate: false } : { activate: false, discarded: true, title: t.title }));
+      w.activate(w.tabs[act].id);
+    }
+  } else {
+    newWindow({ bounds: settings.data.bounds, maximized: settings.data.maximized });
+  }
 });
 
 app.on('window-all-closed', () => app.quit());

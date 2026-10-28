@@ -4,84 +4,134 @@ html,body{margin:0;height:100%;overflow:hidden;background:transparent;color:#fff
 button{font:inherit;color:inherit}
 svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
-/* the whole top strip: transparent on the new tab (video shows through), dark on websites */
-#strip{position:fixed;top:0;left:0;right:0;height:56px;transition:background .2s}
+:root{--glass:rgba(12,12,16,.42);--glassBorder:rgba(255,255,255,.15);--hover:rgba(255,255,255,.12)}
+
+/* top strip: transparent on the new tab (the video shows through), dark on websites.
+   Its empty parts move the window like a normal title bar (Windows snap works too). */
+#strip{position:fixed;top:0;left:0;right:0;height:var(--strip,56px);-webkit-app-region:drag;transition:background .2s,height .28s cubic-bezier(.2,.8,.2,1)}
 body.web #strip{background:#0d0d11;border-bottom:1px solid rgba(255,255,255,.06)}
+body.private #strip{background:#1a1424}
+button,input,#tabList .tab,#omni,#winctl,#incog{-webkit-app-region:no-drag}
 
-/* window buttons: left corner in Arabic, right corner in English */
-#winctl{position:absolute;top:0;display:flex;z-index:3}
-html[dir=rtl] #winctl{left:0}
-html[dir=ltr] #winctl{right:0}
-.wb{width:46px;height:34px;border:0;background:transparent;display:grid;place-items:center;cursor:default;color:rgba(255,255,255,.85)}
-.wb svg{width:11px;height:11px;stroke-width:1.1}
-.wb:hover{background:rgba(255,255,255,.12)}
-#wClose:hover{background:#c42b1c;color:#fff}
+/* ---------- window buttons: small, translucent black, in the corner of the language ---------- */
+#winctl{position:absolute;top:11px;transition:top .28s cubic-bezier(.2,.8,.2,1);display:flex;align-items:center;gap:2px;height:34px;padding:0 4px;border-radius:17px;
+  background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.13)}
+html[dir=rtl] #winctl{left:10px}
+html[dir=ltr] #winctl{right:10px}
+.wb{width:30px;height:26px;border:0;border-radius:13px;background:transparent;display:grid;place-items:center;cursor:pointer;color:rgba(255,255,255,.92)}
+.wb svg{width:10px;height:10px;stroke-width:1.4}
+.wb:hover{background:rgba(255,255,255,.16)}
+#wClose:hover{background:#e0433b;color:#fff}
 
-/* the floating bar, exactly in the middle */
-#bar{position:absolute;top:8px;left:50%;transform:translateX(-50%);
-  width:min(780px,calc(100vw - 340px));min-width:420px;height:40px;
-  display:flex;align-items:center;gap:2px;padding:0 6px;border-radius:20px;
-  background:rgba(12,12,16,.42);border:1px solid rgba(255,255,255,.16);
-  box-shadow:0 4px 18px rgba(0,0,0,.25)}
-body.web #bar{background:rgba(255,255,255,.05)}
+/* ---------- centered column: tabs on top, the bar under them ----------
+   New tab with one tab: only the bar. Once you open a site (or have more tabs) the bar
+   slides down and the tabs row fades in above it. */
+#row{position:absolute;top:0;left:50%;transform:translateX(-50%);width:min(860px,calc(100vw - 300px));height:100%}
+body.full #winctl{top:6px}
+
+#tabs{position:absolute;top:6px;inset-inline-start:0;max-width:100%;min-width:84px;height:36px;display:flex;align-items:center;gap:2px;padding:0 4px;border-radius:18px;
+  background:var(--glass);border:1px solid var(--glassBorder);box-shadow:0 4px 18px rgba(0,0,0,.25);overflow:hidden;
+  opacity:0;transform:translateY(-10px) scale(.98);pointer-events:none;
+  transition:opacity .25s ease,transform .3s cubic-bezier(.2,.8,.2,1)}
+body.full #tabs{opacity:1;transform:none;pointer-events:auto}
+body.full #bar{top:48px}
+#tabList{display:flex;align-items:center;gap:2px;min-width:0;overflow-x:auto;scrollbar-width:none;flex:0 1 auto}
+#tabList::-webkit-scrollbar{display:none}
+.tab{position:relative;flex:0 1 auto;width:190px;min-width:36px;height:28px;display:flex;align-items:center;gap:7px;padding:0 9px;border-radius:15px;
+  cursor:default;color:rgba(255,255,255,.82);transition:background .12s}
+.tab:hover{background:rgba(255,255,255,.08)}
+.tab.on{background:rgba(255,255,255,.17);color:#fff;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+.tab.zz{opacity:.55}
+.tab.drag{background:rgba(138,180,248,.28);z-index:2}
+.tab .fi{flex:none;width:16px;height:16px;display:grid;place-items:center}
+.tab .fi img{width:16px;height:16px;border-radius:3px;object-fit:contain}
+.tab .fi .glyph{width:16px;height:16px;border-radius:50%;background:rgba(255,255,255,.18);display:grid;place-items:center;font-size:9px;font-weight:700}
+.tab .spin{width:14px;height:14px;border-radius:50%;border:2px solid rgba(255,255,255,.2);border-top-color:#8ab4f8;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.tab .tt{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12.5px;
+  -webkit-mask-image:linear-gradient(to left,transparent 0,#000 14px)}
+html[dir=rtl] .tab .tt{-webkit-mask-image:linear-gradient(to right,transparent 0,#000 14px)}
+.tab .snd,.tab .x{flex:none;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;border:0;background:transparent;padding:0;cursor:pointer}
+.tab .snd svg{width:13px;height:13px}
+.tab .x svg{width:11px;height:11px;stroke-width:2}
+.tab .snd:hover,.tab .x:hover{background:rgba(255,255,255,.18)}
+.tab .x{opacity:0}
+.tab:hover .x,.tab.on .x{opacity:.85}
+.tab.narrow{padding:0;justify-content:center}
+.tab.narrow .tt,.tab.narrow .snd{display:none}
+.tab.narrow:not(.on) .x{display:none}
+.tab.narrow.on .fi{display:none}
+#newTab{flex:none}
+#dropMark{position:absolute;top:6px;bottom:6px;width:3px;border-radius:2px;background:#8ab4f8;pointer-events:none}
+#tabs.dropping{border-color:rgba(138,180,248,.8);box-shadow:0 0 0 2px rgba(138,180,248,.35)}
+
+/* ---------- the bar ---------- */
+#bar{position:absolute;left:0;right:0;top:8px;transition:top .3s cubic-bezier(.2,.8,.2,1);height:40px;display:flex;align-items:center;gap:2px;padding:0 5px;border-radius:20px;
+  background:var(--glass);border:1px solid var(--glassBorder);box-shadow:0 4px 18px rgba(0,0,0,.25)}
+body.web #bar,body.web #tabs{background:rgba(255,255,255,.05)}
 .ib{flex:none;width:32px;height:32px;border-radius:50%;border:0;background:transparent;display:grid;place-items:center;cursor:pointer;color:rgba(255,255,255,.9)}
-.ib:hover{background:rgba(255,255,255,.14)}
+.ib:hover{background:var(--hover)}
 .ib:active{background:rgba(255,255,255,.22)}
 .ib:disabled{opacity:.3;cursor:default;background:transparent}
-.ib.sm{width:28px;height:28px}
-.ib.sm svg{width:16px;height:16px}
+.ib.sm{width:26px;height:26px}
+.ib.sm svg{width:15px;height:15px}
 html[dir=rtl] .flip svg{transform:scaleX(-1)}
 #icoStop{display:none}
 body.loading #icoStop{display:block}
 body.loading #icoReload{display:none}
+#incog{flex:none;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:rgba(168,120,255,.25);color:#d7c2ff}
+#incog svg{width:16px;height:16px}
+#incog[hidden]{display:none}
 
-#omni{position:relative;flex:1;min-width:0;height:30px;display:flex;align-items:center;gap:6px;margin:0 6px;padding:0 4px 0 10px;
+#omni{position:relative;flex:1;min-width:0;height:30px;display:flex;align-items:center;gap:4px;margin:0 4px;padding:0 4px;
   border-radius:15px;background:rgba(0,0,0,.32);border:1px solid transparent}
-html[dir=rtl] #omni{padding:0 10px 0 4px}
 #omni:focus-within{border-color:rgba(138,180,248,.8);background:rgba(0,0,0,.55)}
-#gIco{flex:none;display:grid;place-items:center}
-#gIco svg{width:15px;height:15px}
-#addr{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:#fff;font:inherit;font-size:13.5px;direction:ltr;text-align:left}
+#act #icoTr{display:none}
+body.isweb #act #icoTr{display:block}
+body.isweb #act #icoSearch{display:none}
+body:not(.isweb) #act{pointer-events:none;opacity:.6}
+body.translated #act{color:#8ab4f8;background:rgba(138,180,248,.18)}
+#addr,#findq{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:#fff;font:inherit;font-size:13.5px}
+#addr{direction:ltr;text-align:left}
 #addr:placeholder-shown{direction:inherit;text-align:start}
-#addr::placeholder{color:rgba(255,255,255,.55)}
+#addr::placeholder,#findq::placeholder{color:rgba(255,255,255,.55)}
+#findq,#findCount,.fbtn{display:none}
+#omni.finding #addr,#omni.finding #star,#omni.finding #act{display:none}
+#omni.finding #findq{display:block}
+#omni.finding #findCount{display:block;flex:none;font-size:12px;opacity:.7;padding:0 4px;direction:ltr}
+#omni.finding .fbtn{display:grid}
 #star.on{color:#8ab4f8}
 #star.on svg{fill:#8ab4f8}
-body.newtab #star{display:none}
+body:not(.isweb) #star{display:none}
 #load{position:absolute;left:14px;right:14px;bottom:-1px;height:2px;border-radius:2px;overflow:hidden;opacity:0}
 body.loading #load{opacity:1}
 #load::after{content:"";position:absolute;top:0;bottom:0;width:30%;background:#8ab4f8;animation:ld 1s linear infinite}
 @keyframes ld{from{left:-30%}to{left:100%}}
 
-#tabCount{min-width:20px;height:20px;padding:0 4px;border:1.6px solid currentColor;border-radius:6px;font-size:11px;font-weight:600;display:grid;place-items:center}
-
-/* menus */
+/* ---------- menus ---------- */
 #backdrop{position:fixed;inset:0;background:transparent}
-#drop{position:fixed;top:52px;width:340px;max-height:calc(100vh - 70px);overflow:auto;padding:6px;border-radius:14px;
+#drop{position:fixed;top:calc(var(--strip,56px) - 4px);width:340px;max-height:calc(100vh - 70px);overflow:auto;padding:6px;border-radius:14px;
   background:rgba(22,22,28,.97);border:1px solid rgba(255,255,255,.12);box-shadow:0 14px 40px rgba(0,0,0,.55);
   color-scheme:dark;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.25) transparent}
-#drop[hidden],#backdrop[hidden],#toast[hidden]{display:none}
-#drop.wide{width:auto}
+#drop[hidden],#backdrop[hidden],#toast[hidden],#dropMark[hidden]{display:none}
 .mi{display:flex;align-items:center;gap:10px;width:100%;min-height:34px;padding:6px 10px;border:0;border-radius:9px;background:transparent;cursor:pointer;text-align:start;color:#eee}
 .mi:hover,.mi.sel{background:rgba(255,255,255,.09)}
-.mi.on{background:rgba(138,180,248,.16)}
-.mi img,.mi>svg{flex:none;width:16px;height:16px;opacity:.85}
-.mi .ph svg{width:11px;height:11px}
-.mi .ph{flex:none;width:16px;height:16px;border-radius:3px}
-.mi .ph{display:grid;place-items:center;background:rgba(255,255,255,.12);font-size:10px}
+.mi img,.mi .ph{flex:none;width:16px;height:16px;border-radius:3px}
+.mi>svg{flex:none;width:16px;height:16px;opacity:.85}
+.mi .ph{display:grid;place-items:center;background:rgba(255,255,255,.12)}
 .mi .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mi .sub{flex:none;font-size:11px;opacity:.55}
+.mi .sub{flex:none;font-size:11px;opacity:.55;direction:ltr}
 .mi .x{flex:none;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;opacity:.6}
 .mi .x:hover{opacity:1;background:rgba(255,255,255,.15)}
 .mi .x svg{width:12px;height:12px}
-.mi.zz{opacity:.6}
 .sep{height:1px;margin:5px 6px;background:rgba(255,255,255,.1)}
 .hd{padding:6px 10px 4px;font-size:11px;opacity:.55}
-.row{display:flex;align-items:center;gap:6px;padding:4px 10px}
+.row{display:flex;align-items:center;gap:6px;padding:4px 10px;flex-wrap:wrap}
 .row .lbl{flex:1}
 .chip{padding:4px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:transparent;cursor:pointer;font-size:12px}
 .chip.on{background:#8ab4f8;color:#111;border-color:#8ab4f8}
 .note{padding:6px 10px;font-size:11.5px;line-height:1.6;opacity:.6}
 
-#toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:12px;
-  background:rgba(22,22,28,.97);border:1px solid rgba(255,255,255,.12);box-shadow:0 10px 30px rgba(0,0,0,.5);font-size:13px}
+#toast{position:fixed;top:calc(var(--strip,56px) + 6px);left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:12px;
+  background:rgba(22,22,28,.97);border:1px solid rgba(255,255,255,.12);box-shadow:0 10px 30px rgba(0,0,0,.5);font-size:13px;white-space:nowrap}
 #toast button{padding:4px 10px;border-radius:8px;border:0;background:#8ab4f8;color:#111;cursor:pointer}

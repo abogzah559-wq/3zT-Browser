@@ -2,9 +2,9 @@
 // Bridge for the floating toolbar only.
 const { contextBridge, ipcRenderer } = require('electron');
 
-const SEND = new Set(['ui:expand', 'win', 'drag:start', 'drag:end', 'tab', 'set', 'ext:options', 'misc', 'download:show']);
-const INVOKE = new Set(['ext:list', 'ext:add', 'ext:remove', 'bm:import', 'history:search', 'suggest']);
-const ON = new Set(['state', 'focus-address', 'close-menus', 'download']);
+const SEND = new Set(['ui:expand', 'ui:height', 'win', 'tab', 'set', 'ext:options', 'misc', 'download:show', 'find', 'find:stop', 'tab:dragout', 'tab:dragend']);
+const INVOKE = new Set(['ext:list', 'ext:add', 'ext:remove', 'bm:import', 'ntp:import', 'history:search', 'suggest']);
+const ON = new Set(['state', 'focus-address', 'close-menus', 'download', 'found', 'find-open', 'drop-hint']);
 
 contextBridge.exposeInMainWorld('ui', {
   send: (ch, ...a) => { if (SEND.has(ch)) ipcRenderer.send(ch, ...a); },
