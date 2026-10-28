@@ -32,6 +32,10 @@ const ICO = {
   brush: '<svg viewBox="0 0 24 24"><path d="M18.5 3.5l2 2-9 9-2-2zM9.5 12.5c-2 0-3.5 1.5-3.5 3.5 0 1.2-.8 2-2 2.5 1 1 2.5 1.5 4 1.5 2.5 0 4-1.8 4-4z"/></svg>',
   globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.6 2.5 14.4 0 17M12 3.5c-2.5 2.6-2.5 14.4 0 17"/></svg>',
   vol: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
+  pin: '<svg viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 4H6l4-4zM12 14v7"/></svg>',
+  key: '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M14 9l2 2"/></svg>',
+  yt: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="3.5"/><path d="M10.5 9.5v5l4-2.5z"/></svg>',
+  dl: '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></svg>',
   mute: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>'
 };
 
@@ -63,6 +67,7 @@ ui.on('state', st => {
   if (langChanged) applyTips();
   if (!dragging) renderTabs();
   updateFull();
+  renderPins();
   if (!$('drop').hidden && openKind && openKind !== 'sug') renderMenu(openKind);
 });
 function applyTips() {
@@ -191,6 +196,20 @@ list.addEventListener('auxclick', e => { const t = e.target.closest('.tab'); if 
 list.addEventListener('contextmenu', e => { const t = e.target.closest('.tab'); if (t) { e.preventDefault(); ui.send('tab', 'menu', +t.dataset.id); } });
 $('tabs').addEventListener('dblclick', e => { if (e.target === $('tabs') || e.target === list) ui.send('tab', 'new'); });
 
+/* ---------- pinned extensions + popups ---------- */
+function renderPins() {
+  const box = $('pins'), list = S.pinned || [];
+  const html = list.map(x => `<button class="ib" data-pin="${esc(x.id)}" title="${esc(x.name)}">${x.icon ? `<img src="${esc(x.icon)}" alt="">` : ICO.pin}</button>`).join('');
+  if (box._html !== html) { box.innerHTML = html; box._html = html; }
+}
+function openExt(id, anchor) {
+  const r = (anchor || $('ext')).getBoundingClientRect();
+  ui.send('ext:popup', { id, rect: { x: r.left, y: r.top, w: r.width, h: r.height } });
+}
+$('pins').addEventListener('click', e => { const b = e.target.closest('[data-pin]'); if (b) openExt(b.dataset.pin, b); });
+// any click in the toolbar (except on a pinned icon) closes an open extension popup
+document.addEventListener('pointerdown', e => { if (!e.target.closest('[data-pin],[data-ext]')) ui.send('ext:popupClose'); }, true);
+
 /* ---------- window buttons ---------- */
 $('wMin').onclick = () => ui.send('win', 'min');
 $('wMax').onclick = () => ui.send('win', 'max');
@@ -256,11 +275,14 @@ async function renderMenu(kind) {
     let h = `<div class="hd">${L('الإضافات', 'Extensions')}</div>`;
     if (!items.length) h += `<div class="note">${L('ما فيه إضافات. أضف مجلد إضافة (فيه manifest.json).', 'No extensions yet. Add an unpacked extension folder (with manifest.json).')}</div>`;
     for (const x of items) {
-      h += `<div class="mi" ${x.options ? `data-opt="${esc(x.options)}"` : ''} title="${esc(x.name)} ${esc(x.version)}">
+      h += `<div class="mi" data-ext="${esc(x.id)}" title="${esc(x.name)} ${esc(x.version)}">
         ${x.icon ? `<img src="${esc(x.icon)}" alt="">` : '<span class="ph"></span>'}<span class="t">${esc(x.name)}</span>
-        ${x.options ? `<span class="sub">${L('إعدادات', 'options')}</span>` : ''}<span class="x" data-rm="${esc(x.id)}" title="${L('إزالة', 'Remove')}">${ICO.x}</span></div>`;
+        ${x.options ? `<span class="sub" data-opt="${esc(x.options)}" title="${L('الإعدادات', 'Options')}">⚙</span>` : ''}
+        <button class="pin${x.pinned ? ' on' : ''}" data-pinx="${esc(x.id)}" title="${x.pinned ? L('إلغاء التثبيت من الشريط', 'Unpin from the bar') : L('تثبيت في الشريط', 'Pin to the bar')}">${ICO.pin}</button>
+        <span class="x" data-rm="${esc(x.id)}" title="${L('إزالة', 'Remove')}">${ICO.x}</span></div>`;
     }
-    h += `<div class="sep"></div><button class="mi" data-a="extAdd">${ICO.plus}<span class="t">${L('إضافة مجلد إضافة…', 'Add extension folder…')}</span></button>
+    h += `<div class="sep"></div><button class="mi" data-a="extImport">${ICO.down}<span class="t">${L('استيراد إضافاتي من كروم', 'Import my Chrome extensions')}</span></button>
+      <button class="mi" data-a="extAdd">${ICO.plus}<span class="t">${L('إضافة مجلد إضافة…', 'Add extension folder…')}</span></button>
       <div class="note">${L('متجر كروم ما يشتغل هنا. نزّل الإضافة كمجلد وفكّه، وبعدين أضفه.', 'The Chrome Web Store does not work here. Get the extension as a folder, unzip it, then add it.')}</div>`;
     d.innerHTML = h;
   } else if (kind === 'menu') {
@@ -276,6 +298,7 @@ async function renderMenu(kind) {
       <div class="sep"></div>
       <button class="mi" data-a="history">${ICO.hist}<span class="t">${L('السجل', 'History')}</span><span class="sub">Ctrl+H</span></button>
       <button class="mi" data-a="downloads">${ICO.down}<span class="t">${L('التنزيلات', 'Downloads')}</span></button>
+      <button class="mi" data-a="passwords">${ICO.key}<span class="t">${L('كلمات السر', 'Passwords')}</span></button>
       ${S.closedCount ? `<button class="mi" data-a="reopen">${ICO.clock}<span class="t">${L('إرجاع آخر تبويب مغلق', 'Reopen closed tab')}</span><span class="sub">Ctrl+Shift+T</span></button>` : ''}
       <div class="sep"></div>
       <button class="mi" data-a="find">${ICO.find}<span class="t">${L('بحث في الصفحة', 'Find in page')}</span><span class="sub">Ctrl+F</span></button>
@@ -289,6 +312,10 @@ async function renderMenu(kind) {
       <button class="mi" data-a="tasks">${ICO.chip}<span class="t">${L('مدير المهام (الرام والمعالج)', 'Task manager (RAM and CPU)')}</span><span class="sub">Shift+Esc</span></button>
       <div class="row"><span class="lbl">${L('مانع الإعلانات', 'Ad blocker')}</span>
         <button class="chip${S.adblock ? ' on' : ''}" data-a="adAll">${S.adblock ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
+      <div class="row"><span class="lbl">${L('حظر إعلانات يوتيوب', 'Block YouTube ads')}</span>
+        <button class="chip${S.ytAds ? ' on' : ''}" data-a="ytAds">${S.ytAds ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
+      ${S.fdmFound ? `<div class="row"><span class="lbl">${L('التنزيل عبر Free Download Manager (تجريبي)', 'Download with Free Download Manager (beta)')}</span>
+        <button class="chip${S.fdm ? ' on' : ''}" data-a="fdm">${S.fdm ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>` : ''}
       <div class="row"><span class="lbl">${L('توفير الذاكرة (دقايق)', 'Memory saver (minutes)')}</span></div>
       <div class="row">${chips}</div>
       <div class="note">${L('التبويبات اللي ما فتحتها من هالمدة تنام وتفضّي الرام، وترجع تشتغل لما تفتحها.', 'Tabs you have not opened for this long go to sleep to free RAM, and wake up when you open them.')}</div>
@@ -316,13 +343,15 @@ $('drop').addEventListener('click', async e => {
   const rm = t.closest('[data-rm]'); if (rm) { await ui.invoke('ext:remove', rm.dataset.rm); renderMenu('ext'); return; }
   const sg = t.closest('[data-sg]'); if (sg) { go(sg.dataset.sg); return; }
   const opt = t.closest('[data-opt]'); if (opt) { ui.send('ext:options', opt.dataset.opt); closeDrop(); return; }
+  const pinx = t.closest('[data-pinx]'); if (pinx) { ui.send('ext:pin', pinx.dataset.pinx); setTimeout(() => renderMenu('ext'), 80); return; }
+  const exi = t.closest('[data-ext]'); if (exi) { const id = exi.dataset.ext; closeDrop(); setTimeout(() => openExt(id, $('ext')), 30); return; }
   const z = t.closest('[data-z]'); if (z) { ui.send('tab', 'zoom', +z.dataset.z); return; }
   const ms = t.closest('[data-ms]'); if (ms) { ui.send('set', 'memorySaverMin', +ms.dataset.ms); return; }
   const lg = t.closest('[data-lang]'); if (lg) { ui.send('set', 'lang', lg.dataset.lang); return; }
   const a = t.closest('[data-a]'); if (!a) return;
   const cmd = a.dataset.a;
   const simple = { new: ['tab', 'new'], newWindow: ['tab', 'newWindow'], incognito: ['tab', 'incognito'], history: ['tab', 'history'],
-    reopen: ['tab', 'reopen'], translate: ['tab', 'translate'], print: ['tab', 'print'], tasks: ['tab', 'tasks'],
+    reopen: ['tab', 'reopen'], translate: ['tab', 'translate'], print: ['tab', 'print'], tasks: ['tab', 'tasks'], passwords: ['tab', 'passwords'],
     downloads: ['misc', 'downloads'], fullscreen: ['misc', 'fullscreen'], devtools: ['misc', 'devtools'] };
   if (simple[cmd]) { ui.send(...simple[cmd]); closeDrop(); return; }
   switch (cmd) {
@@ -342,6 +371,18 @@ $('drop').addEventListener('click', async e => {
       break;
     }
     case 'import': { const n = await ui.invoke('bm:import'); closeDrop(); toast(n ? L(`انضافت ${n} من مفضلة كروم`, `Imported ${n} bookmarks from Chrome`) : L('تم تحديث الأيقونات، وما فيه مفضلة جديدة', 'Icons updated, no new bookmarks')); break; }
+    case 'extImport': {
+      $('drop').innerHTML = `<div class="note">${L('جاري نقل الإضافات من كروم…', 'Importing extensions from Chrome…')}</div>`;
+      const r = await ui.invoke('ext:importChrome');
+      if (r) toast(L(`انضافت ${r.imported.length} إضافة من كروم`, `Imported ${r.imported.length} extensions from Chrome`) + (r.imported.length ? ': ' + r.imported.join('، ') : ''));
+      if (openKind === 'ext') renderMenu('ext');
+      break;
+    }
+    case 'pwImport': {
+      closeDrop(); ui.send('tab', 'passwords'); break;
+    }
+    case 'ytAds': ui.send('set', 'ytAds', !S.ytAds); break;
+    case 'fdm': ui.send('set', 'fdm', !S.fdm); break;
     case 'importLook': { const ok = await ui.invoke('ntp:import'); closeDrop(); toast(ok ? L('تم. افتح تبويب جديد عشان تشوف الشكل', 'Done. Open a new tab to see it') : L('ما لقيت إعدادات بلاك كروم في كروم', 'Black Chrome settings not found in Chrome')); break; }
   }
 });
@@ -403,17 +444,28 @@ ui.on('found', r => { $('findCount').textContent = fq.value ? `${r.active || 0}/
 
 /* ---------- notices (downloads etc.) ---------- */
 let toastOn = false, toastT = 0;
-function toast(text, btn) {
+function toast(text, btn, opts = {}) {
   const t = $('toast');
-  t.innerHTML = `<span>${esc(text)}</span>` + (btn ? `<button>${esc(btn.label)}</button>` : '');
-  if (btn) t.querySelector('button').onclick = () => { btn.fn(); hideToast(); };
+  const btns = Array.isArray(btn) ? btn : btn ? [btn] : [];
+  t.innerHTML = (opts.sub ? `<span class="t2"><span>${esc(text)}</span><small>${esc(opts.sub)}</small></span>` : `<span>${esc(text)}</span>`)
+    + btns.map((b, i) => `<button class="${b.alt ? 'alt' : ''}" data-i="${i}">${esc(b.label)}</button>`).join('');
+  t.querySelectorAll('button').forEach(b => { b.onclick = () => { const x = btns[+b.dataset.i]; hideToast(); x.fn && x.fn(); }; });
   t.hidden = false; toastOn = true;
-  if (!openKind) ui.send('ui:expand', stripH + 64);
-  clearTimeout(toastT); toastT = setTimeout(hideToast, 5000);
+  if (!openKind) ui.send('ui:expand', stripH + 80);
+  clearTimeout(toastT); toastT = setTimeout(() => { hideToast(); opts.onTimeout && opts.onTimeout(); }, opts.ms || 5000);
 }
+ui.on('pw-offer', o => {
+  const answer = choice => ui.send('pw:answer', { id: o.id, choice });
+  toast(o.update ? L('تحديث كلمة السر المحفوظة؟', 'Update saved password?') : L('حفظ كلمة السر؟', 'Save password?'),
+    [{ label: o.update ? L('تحديث', 'Update') : L('حفظ', 'Save'), fn: () => answer('save') },
+     { label: L('لا', 'No'), alt: true, fn: () => answer('no') },
+     ...(o.update ? [] : [{ label: L('أبداً لهذا الموقع', 'Never for this site'), alt: true, fn: () => answer('never') }])],
+    { sub: `${o.username || L('(بدون اسم مستخدم)', '(no username)')} · ${o.host}`, ms: 20000 });
+});
 function hideToast() { $('toast').hidden = true; toastOn = false; if (!openKind) ui.send('ui:expand', false); }
 ui.on('download', d => {
   if (d.state === 'completed') toast(L('تم التنزيل: ', 'Downloaded: ') + d.name, { label: L('عرض', 'Show'), fn: () => ui.send('download:show', d.path) });
   else if (d.state === 'interrupted' || d.state === 'cancelled') toast(L('فشل التنزيل: ', 'Download failed: ') + d.name);
   else if (d.state === 'progressing' && d.received === 0) toast(L('جاري التنزيل: ', 'Downloading: ') + d.name);
+  else if (d.state === 'fdm') toast(L('انرسل التنزيل إلى Free Download Manager', 'Sent to Free Download Manager'));
 });
