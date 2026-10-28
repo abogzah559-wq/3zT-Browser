@@ -8,7 +8,13 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 
 /* top strip: transparent on the new tab (the video shows through), dark on websites.
    Its empty parts move the window like a normal title bar (Windows snap works too). */
-#strip{position:fixed;top:0;left:0;right:0;height:var(--strip,56px);-webkit-app-region:drag;transition:background .2s,height .28s cubic-bezier(.2,.8,.2,1)}
+#strip{position:fixed;top:0;left:0;right:0;height:var(--strip,56px);-webkit-app-region:drag;transition:background .2s,height .28s cubic-bezier(.2,.8,.2,1),transform .14s ease-out,opacity .14s ease-out}
+/* auto-hide: slides up out of sight; comes back the moment the mouse touches the top edge */
+body.hid #strip{transform:translateY(-100%);opacity:0;pointer-events:none;-webkit-app-region:no-drag}
+body.hid #strip *{-webkit-app-region:no-drag}
+/* the thin edge left at the top must be hit-testable: an almost invisible tint */
+html:has(body.hid){background:rgba(0,0,0,.01)}
+body.hid{background:rgba(0,0,0,.01)}
 body.web #strip{background:#0d0d11;border-bottom:1px solid rgba(255,255,255,.06)}
 body.private #strip{background:#1a1424}
 button,input,#tabList .tab,#omni,#winctl,#incog{-webkit-app-region:no-drag}

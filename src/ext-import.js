@@ -82,8 +82,8 @@ function rmDir(p) { try { fs.rmSync(p, { recursive: true, force: true }); } catc
 function patch(dir, shimSource) {
   fs.writeFileSync(path.join(dir, 'zeus_shim.js'), shimSource);
   const m = readManifest(dir);
-  // background: load the shim first
-  if (m.background && m.background.service_worker) {
+  // background: load the shim first (skip if this copy was already patched)
+  if (m.background && m.background.service_worker && m.background.service_worker !== 'zeus_bg.js') {
     const orig = m.background.service_worker.replace(/^\//, '');
     const isModule = m.background.type === 'module';
     fs.writeFileSync(path.join(dir, 'zeus_bg.js'), isModule
@@ -91,6 +91,12 @@ function patch(dir, shimSource) {
       : `importScripts('zeus_shim.js', '${orig}');\n`);
     m.background = Object.assign({}, m.background, { service_worker: 'zeus_bg.js' });
     delete m.background.scripts;              // MV3 + leftover MV2 "scripts" confuses Electron
+  }
+  // content scripts (the part that runs inside websites): shim first too, so they read the
+  // same storage the popup writes to. MAIN-world scripts have no chrome.* APIs: leave them.
+  for (const cs of m.content_scripts || []) {
+    if (cs.world === 'MAIN' || !Array.isArray(cs.js) || !cs.js.length) continue;
+    if (cs.js[0] !== 'zeus_shim.js') cs.js = ['zeus_shim.js', ...cs.js.filter(j => j !== 'zeus_shim.js')];
   }
   // extension pages (popup, options...): shim before their own scripts
   (function walk(d) {

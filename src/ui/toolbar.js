@@ -68,6 +68,8 @@ ui.on('state', st => {
   if (!dragging) renderTabs();
   updateFull();
   renderPins();
+  if (!S.autoHide) setHidden(false); else if (!hoverBar) scheduleHide(firstState ? 1500 : 400);
+  firstState = false;
   if (!$('drop').hidden && openKind && openKind !== 'sug') renderMenu(openKind);
 });
 function applyTips() {
@@ -78,6 +80,32 @@ function applyTips() {
   });
 }
 applyTips();
+
+/* ---------- auto-hide: hide when the mouse leaves, show instantly when it comes back ---------- */
+let barHidden = false, hoverBar = false, hideT = 0, firstState = true;
+function busy() {
+  return !!(openKind || toastOn || dragging || $('omni').classList.contains('finding') ||
+    (document.hasFocus() && (document.activeElement === $('addr') || document.activeElement === $('findq'))));
+}
+function setHidden(h) {
+  if (h === barHidden) return;
+  barHidden = h;
+  if (h) {
+    document.body.classList.add('hid');
+    setTimeout(() => { if (barHidden) ui.send('ui:hidden', true); }, 150);   // shrink after the slide-out
+  } else {
+    ui.send('ui:hidden', false);
+    requestAnimationFrame(() => document.body.classList.remove('hid'));
+  }
+}
+function scheduleHide(ms) {
+  clearTimeout(hideT);
+  hideT = setTimeout(() => { if (S.autoHide && !hoverBar && !busy()) setHidden(true); }, ms == null ? 300 : ms);
+}
+document.documentElement.addEventListener('mouseenter', () => { hoverBar = true; clearTimeout(hideT); setHidden(false); });
+document.documentElement.addEventListener('mouseleave', () => { hoverBar = false; scheduleHide(250); });
+addEventListener('blur', () => scheduleHide(300));
+document.addEventListener('focusout', () => scheduleHide(400));
 
 /* ---------- compact (bar only) or full (tabs row above the bar) ---------- */
 let stripH = 56, dropHinting = false;
@@ -245,6 +273,7 @@ function closeDrop() {
   if ($('drop').hidden) return;
   $('drop').hidden = true; $('backdrop').hidden = true; openKind = null; sugSel = -1;
   expand(false);
+  scheduleHide(600);
 }
 ui.on('close-menus', closeDrop);
 $('backdrop').addEventListener('mousedown', e => { e.preventDefault(); closeDrop(); if (document.activeElement === $('addr')) $('addr').blur(); });
@@ -324,6 +353,8 @@ async function renderMenu(kind) {
       <div class="sep"></div>
       <div class="row"><span class="lbl">${L('اللغة', 'Language')}</span>
         <button class="chip${!en() ? ' on' : ''}" data-lang="ar">عربي</button><button class="chip${en() ? ' on' : ''}" data-lang="en">English</button></div>
+      <div class="row"><span class="lbl">${L('إخفاء الشريط تلقائياً', 'Auto-hide the bar')}</span>
+        <button class="chip${S.autoHide ? ' on' : ''}" data-a="autoHide">${S.autoHide ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
       <div class="row"><span class="lbl">${L('رجّع تبويباتي عند الفتح', 'Restore my tabs on start')}</span>
         <button class="chip${S.restoreTabs ? ' on' : ''}" data-a="restore">${S.restoreTabs ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
       <div class="sep"></div>
@@ -382,6 +413,7 @@ $('drop').addEventListener('click', async e => {
       closeDrop(); ui.send('tab', 'passwords'); break;
     }
     case 'ytAds': ui.send('set', 'ytAds', !S.ytAds); break;
+    case 'autoHide': ui.send('set', 'autoHide', !S.autoHide); break;
     case 'fdm': ui.send('set', 'fdm', !S.fdm); break;
     case 'importLook': { const ok = await ui.invoke('ntp:import'); closeDrop(); toast(ok ? L('تم. افتح تبويب جديد عشان تشوف الشكل', 'Done. Open a new tab to see it') : L('ما لقيت إعدادات بلاك كروم في كروم', 'Black Chrome settings not found in Chrome')); break; }
   }
@@ -425,13 +457,13 @@ function drawSug() {
   $('drop').innerHTML = sugItems.map((s, i) =>
     `<div class="mi${i === sugSel ? ' sel' : ''}" data-sg="${esc(s.v)}">${s.ico}<span class="t">${esc(s.label)}</span>${s.sub ? `<span class="sub">${esc(s.sub)}</span>` : ''}</div>`).join('');
 }
-ui.on('focus-address', () => { closeFind(); addr.focus(); addr.select(); });
+ui.on('focus-address', () => { setHidden(false); closeFind(); addr.focus(); addr.select(); });
 
 /* ---------- find in page (inside the bar) ---------- */
 const fq = $('findq');
 function openFind() { $('omni').classList.add('finding'); fq.focus(); fq.select(); if (fq.value) ui.send('find', { text: fq.value }); }
 function closeFind() { if (!$('omni').classList.contains('finding')) return; $('omni').classList.remove('finding'); $('findCount').textContent = ''; ui.send('find:stop'); }
-ui.on('find-open', openFind);
+ui.on('find-open', () => { setHidden(false); openFind(); });
 fq.addEventListener('input', () => { ui.send('find', { text: fq.value }); if (!fq.value) $('findCount').textContent = ''; });
 fq.addEventListener('keydown', e => {
   if (e.key === 'Escape') { e.preventDefault(); closeFind(); ui.send('tab', 'focusPage'); }
@@ -445,6 +477,7 @@ ui.on('found', r => { $('findCount').textContent = fq.value ? `${r.active || 0}/
 /* ---------- notices (downloads etc.) ---------- */
 let toastOn = false, toastT = 0;
 function toast(text, btn, opts = {}) {
+  setHidden(false);
   const t = $('toast');
   const btns = Array.isArray(btn) ? btn : btn ? [btn] : [];
   t.innerHTML = (opts.sub ? `<span class="t2"><span>${esc(text)}</span><small>${esc(opts.sub)}</small></span>` : `<span>${esc(text)}</span>`)
@@ -462,7 +495,7 @@ ui.on('pw-offer', o => {
      ...(o.update ? [] : [{ label: L('أبداً لهذا الموقع', 'Never for this site'), alt: true, fn: () => answer('never') }])],
     { sub: `${o.username || L('(بدون اسم مستخدم)', '(no username)')} · ${o.host}`, ms: 20000 });
 });
-function hideToast() { $('toast').hidden = true; toastOn = false; if (!openKind) ui.send('ui:expand', false); }
+function hideToast() { $('toast').hidden = true; toastOn = false; if (!openKind) ui.send('ui:expand', false); scheduleHide(800); }
 ui.on('download', d => {
   if (d.state === 'completed') toast(L('تم التنزيل: ', 'Downloaded: ') + d.name, { label: L('عرض', 'Show'), fn: () => ui.send('download:show', d.path) });
   else if (d.state === 'interrupted' || d.state === 'cancelled') toast(L('فشل التنزيل: ', 'Download failed: ') + d.name);

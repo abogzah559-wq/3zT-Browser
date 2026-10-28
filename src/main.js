@@ -118,6 +118,7 @@ class Win {
     this.activeId = null;
     this.uiExpanded = false;
     this.stripH = 56;
+    this.barHidden = false;   // auto-hide: the bar is tucked away, only a thin edge at the top is left to bring it back
     this.htmlFs = false;
     this.stateTimer = null;
 
@@ -173,12 +174,13 @@ class Win {
     const { width, height } = w.getContentBounds();
     const t = this.active();
     if (t && t.view) {
-      const flush = this.htmlFs || isNewtab(t.url);
+      const flush = this.htmlFs || isNewtab(t.url) || settings.data.autoHide !== false;
       const top = this.stripH;
       t.view.setBounds(flush ? { x: 0, y: 0, width, height } : { x: 0, y: top, width, height: Math.max(0, height - top) });
     }
     this.ui.setVisible(!this.htmlFs);
-    const uh = this.uiExpanded === true ? height : typeof this.uiExpanded === 'number' ? Math.min(height, this.uiExpanded) : this.stripH;
+    const uh = this.uiExpanded === true ? height : typeof this.uiExpanded === 'number' ? Math.min(height, this.uiExpanded)
+      : (this.barHidden && settings.data.autoHide !== false) ? 10 : this.stripH;
     this.ui.setBounds({ x: 0, y: 0, width, height: uh });
   }
 
@@ -224,6 +226,7 @@ class Win {
         blockedTotal: settings.data.adBlockedTotal || 0,
         adRules: adblock ? adblock.ruleCount : 0,
         ytAds: settings.data.ytAds !== false,
+        autoHide: settings.data.autoHide !== false,
         fdm: !!settings.data.fdm, fdmFound: !!fdmPath(),
         pinned: pinnedExtensions(),
         versions: { app: app.getVersion(), chrome: process.versions.chrome }
@@ -1014,6 +1017,7 @@ const uiWin = e => winOfUi(e.sender);
 const internalPage = e => { try { return isInternal(e.senderFrame.url); } catch (x) { return false; } };
 
 function setupIpc() {
+  ipcMain.on('ui:hidden', (e, v) => { const w = uiWin(e); if (!w) return; w.barHidden = !!v; w.layout(); });
   ipcMain.on('ui:height', (e, h) => {
     const w = uiWin(e); if (!w) return;
     w.stripH = Math.max(40, Math.min(140, +h || 56));
@@ -1124,6 +1128,7 @@ function setupIpc() {
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
     if (key === 'hwAccel') settings.data.hwAccel = !!val;
     if (key === 'adblock') settings.data.adblock = !!val;
+    if (key === 'autoHide') { settings.data.autoHide = !!val; for (const w of wins) { if (!val) w.barHidden = false; w.layout(); } }
     if (key === 'ytAds') settings.data.ytAds = !!val;
     if (key === 'fdm') settings.data.fdm = !!val;
     settings.save(); settings.flush();
@@ -1255,7 +1260,7 @@ app.whenReady().then(async () => {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
     favImported: false, ntpImported: false, hwAccel: true,
     adblock: true, adAllow: [], adBlockedTotal: 0,
-    ytAds: true, fdm: false, pinnedExt: [], extImported: false, pwNever: []
+    ytAds: true, fdm: false, autoHide: true, pinnedExt: [], extImported: false, pwNever: []
   });
   bookmarks = makeStore('bookmarks.json', { children: [] });
   history = makeStore('history.json', []);
@@ -1277,6 +1282,17 @@ app.whenReady().then(async () => {
   setupIpc();
   passwords = new PW.PasswordStore(path.join(app.getPath('userData'), 'passwords.json'), safeStorage);
   setupPasswordIpc();
+  // re-patch the copies already on disk when the patcher improves (also refreshes the shim)
+  if ((settings.data.extPatchLevel || 0) < 2) {
+    try {
+      for (const sub of ['', 'manual']) {
+        const base = path.join(extRoot(), sub);
+        let names = []; try { names = fs.readdirSync(base); } catch (e) {}
+        for (const n of names) { const d = path.join(base, n); if (fs.existsSync(path.join(d, 'manifest.json'))) { try { EXT.patch(d, SHIM); } catch (e) {} } }
+      }
+    } catch (e) {}
+    settings.data.extPatchLevel = 2; settings.save();
+  }
   if (!settings.data.extImported) {
     try { const r = importChromeExtensions(); console.log('[3zT] extensions imported:', r.imported.map(x => x.name).join(', ')); } catch (e) { console.warn('extension import failed', e.message); }
     settings.data.extImported = true; settings.save();
