@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>تبويب جديد</title>
+<link rel="icon" href="icons/tab32.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&family=Reem+Kufi:wght@400;600&family=Orbitron:wght@500;700&display=swap">
+<link rel="stylesheet" href="newtab.css">
+</head>
+<body>
+<div id="bgm"><video id="bgv" muted loop autoplay playsinline></video><img id="bgi" alt=""><div id="dim"></div></div>
+<canvas id="c"></canvas>
+<nav id="tiles"></nav>
+<main id="ui">
+  <div id="clock"></div>
+  <div id="date"></div>
+  <form id="search"><input id="q" type="text" placeholder="ابحث في Google أو اكتب رابط" autocomplete="off"><button type="button" id="ai">✦ وضع AI</button><div id="sug" hidden></div><div id="thumb" hidden><img id="thumbImg" alt=""><button type="button" id="thumbX">✕</button></div></form>
+</main>
+<button id="gear" title="تخصيص">⚙</button>
+<aside id="panel" hidden>
+  <h3>الثيم</h3>
+  <label>اللغة / Language <select id="lang"><option value="ar">عربي</option><option value="en">English</option></select></label>
+  <div id="themes"></div>
+  <label class="file">⬆ ارفع صورة أو فيديو متحرك<input type="file" id="file" accept="image/*,video/*" hidden></label>
+  <label>تعتيم الصورة <input type="range" id="dimR" min="0" max="90"></label>
+  <label>عدد النجوم / الكثافة <input type="range" id="density" min="30" max="400"></label>
+  <label>السرعة <input type="range" id="speed" min="0" max="4" step="0.1"></label>
+  <label>لون التمييز <input type="color" id="accent"></label>
+  <label>لون الخلفية (لون مخصص) <input type="color" id="color"></label>
+
+  <h3>الساعة والتاريخ</h3>
+  <label>حجم الساعة <input type="range" id="clockSize" min="40" max="320"></label>
+  <label>حجم التاريخ <input type="range" id="dateSize" min="10" max="90"></label>
+  <label>شفافية الساعة <input type="range" id="clockOp" min="0" max="100"></label>
+  <label>شفافية التاريخ <input type="range" id="dateOp" min="0" max="100"></label>
+  <label>إزاحة أفقية (محاذاة مع البار العلوي) <input type="range" id="shiftX" min="-150" max="150"></label>
+  <label>خط الساعة <select id="clockFont" class="fontSel"></select></label>
+  <label>خط التاريخ <select id="dateFont" class="fontSel"></select></label>
+  <label class="file">⬆ ارفع خطك (TTF / OTF / WOFF)<input type="file" id="fontFile" accept=".ttf,.otf,.woff,.woff2,font/*" hidden></label>
+  <label>أو اكتب اسم خط من جهازك <input type="text" id="fontName" placeholder="Segoe UI"></label>
+  <label><input type="checkbox" id="clockOn"> إظهار الساعة</label>
+  <label><input type="checkbox" id="dateOn"> إظهار التاريخ</label>
+  <label><input type="checkbox" id="h24"> نظام 24 ساعة</label>
+  <label><input type="checkbox" id="searchOn"> إظهار البحث</label>
+  <label>وجهة زر AI <select id="aiDest"><option value="gemini">جمناي (Gemini)</option><option value="google">وضع AI من Google</option></select></label>
+
+  <h3>الاختصارات</h3>
+  <label>المصدر <select id="src"><option value="bm">شريط المفضلة</option><option value="off">إخفاء</option></select></label>
+  <label>عدد الاختصارات <input type="range" id="maxTiles" min="1" max="200"></label>
+  <label>حجم الأيقونات <input type="range" id="tileSize" min="28" max="72"></label>
+  <label><input type="checkbox" id="names"> إظهار الأسماء</label>
+  <button id="scRestore" type="button">إرجاع المحذوفة</button>
+
+  <button id="reset">إعادة الضبط</button>
+</aside>
+<script src="newtab.js"></script>
+</body>
+</html>
