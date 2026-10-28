@@ -8,6 +8,8 @@ OUT="$ROOT/dist/3zT Browser"
 rm -rf "$ROOT/dist" && mkdir -p "$OUT"
 unzip -q "$1" -d "$OUT"
 mv "$OUT/electron.exe" "$OUT/3zT Browser.exe"
+# our icon + name inside the .exe (Explorer, taskbar, Task Manager)
+python3 "$ROOT/scripts/patch_exe.py" "$OUT/3zT Browser.exe" "$ROOT/assets/icon.png" "3zT Browser" "$VER"
 rm -f "$OUT/resources/default_app.asar"
 # keep only the Arabic and English UI languages of Chromium (smaller download)
 find "$OUT/locales" -name '*.pak' ! -name 'ar.pak' ! -name 'en-US.pak' ! -name 'en-GB.pak' -delete

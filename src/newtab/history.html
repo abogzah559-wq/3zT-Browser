@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>السجل</title>
+<link rel="icon" href="icons/tab32.png">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#0b0b0f;color:#eee;font-family:"Segoe UI",Tajawal,Tahoma,system-ui,sans-serif;color-scheme:dark}
+main{max-width:820px;margin:0 auto;padding:28px 20px 60px}
+header{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+h1{flex:1;margin:0;font-size:22px;font-weight:600}
+#q{width:300px;max-width:50vw;padding:9px 14px;border-radius:18px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;font:inherit;outline:none}
+#q:focus{border-color:#8ab4f8}
+button{font:inherit;color:inherit;cursor:pointer}
+#clear{padding:8px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.18);background:transparent}
+#clear:hover{background:rgba(255,80,80,.15);border-color:rgba(255,80,80,.5)}
+h2{font-size:13px;font-weight:600;opacity:.6;margin:22px 4px 6px}
+.it{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:10px}
+.it:hover{background:rgba(255,255,255,.06)}
+.it .tm{flex:none;width:52px;font-size:12px;opacity:.5;direction:ltr;text-align:center}
+.it img,.it .ph{flex:none;width:16px;height:16px;border-radius:3px}
+.it .ph{background:rgba(255,255,255,.15)}
+.it a{flex:1;min-width:0;color:#eee;text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it a:hover{text-decoration:underline}
+.it .host{flex:none;max-width:200px;font-size:12px;opacity:.45;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr}
+.it .del{flex:none;width:26px;height:26px;border-radius:50%;border:0;background:transparent;opacity:0}
+.it:hover .del{opacity:.7}
+.it .del:hover{opacity:1;background:rgba(255,255,255,.12)}
+#empty{opacity:.5;text-align:center;margin-top:60px}
+</style>
+</head>
+<body>
+<main>
+  <header><h1 id="h">السجل</h1><input id="q" type="search" placeholder="ابحث في السجل"><button id="clear">مسح الكل</button></header>
+  <div id="list"></div>
+  <p id="empty" hidden>ما فيه شي</p>
+</main>
+<script src="history.js"></script>
+</body>
+</html>
