@@ -3,7 +3,7 @@
 // Websites get nothing from here.
 const { contextBridge, ipcRenderer } = require('electron');
 
-if (location.protocol === 'file:' && /\/newtab\/(newtab|history)\.html$/i.test(decodeURIComponent(location.pathname))) {
+if (location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks)\.html$/i.test(decodeURIComponent(location.pathname))) {
   contextBridge.exposeInMainWorld('zeus', {
     getBookmarks: () => ipcRenderer.invoke('bm:get'),
     favicons: urls => ipcRenderer.invoke('fav:get', urls),
@@ -16,6 +16,8 @@ if (location.protocol === 'file:' && /\/newtab\/(newtab|history)\.html$/i.test(d
     onLang: fn => ipcRenderer.on('lang', (e, l) => fn(l)),
     takeImport: () => ipcRenderer.invoke('ntp:take'),
     onImportReady: fn => ipcRenderer.on('import-ready', () => fn()),
-    onStrip: fn => ipcRenderer.on('strip', (e, h) => fn(h))
+    onStrip: fn => ipcRenderer.on('strip', (e, h) => fn(h)),
+    tasks: () => ipcRenderer.invoke('tasks:get'),
+    sleepTab: id => ipcRenderer.invoke('tasks:sleep', id)
   });
 }

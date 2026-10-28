@@ -135,3 +135,15 @@ body.loading #load{opacity:1}
 #toast{position:fixed;top:calc(var(--strip,56px) + 6px);left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;padding:10px 16px;border-radius:12px;
   background:rgba(22,22,28,.97);border:1px solid rgba(255,255,255,.12);box-shadow:0 10px 30px rgba(0,0,0,.5);font-size:13px;white-space:nowrap}
 #toast button{padding:4px 10px;border-radius:8px;border:0;background:#8ab4f8;color:#111;cursor:pointer}
+
+/* ad blocker shield */
+#shield{position:relative;color:#7ee2a8}
+#shield svg{width:16px;height:16px}
+body:not(.isweb) #shield{display:none}
+#omni.finding #shield{display:none}
+#shield.off{color:rgba(255,255,255,.45)}
+#shield.off #shOk{display:none}
+#shCount{position:absolute;top:-3px;inset-inline-end:-5px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:#2f9e63;color:#fff;
+  font-size:9.5px;font-weight:700;line-height:15px;text-align:center;direction:ltr}
+#shCount:empty,#shield.off #shCount{display:none}
+.big{font-size:26px;font-weight:600;padding:4px 10px 0;text-align:center;color:#7ee2a8}

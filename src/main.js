@@ -13,6 +13,7 @@ const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const CI = require('./chrome-import');
+const { AdBlocker } = require('./adblock');
 
 app.setName('3zT Browser');
 if (process.platform === 'win32') app.setAppUserModelId('com.3zo.3ztbrowser');
@@ -23,6 +24,7 @@ if (early.hwAccel === false) app.disableHardwareAcceleration();
 
 /* ---------- lighter Chromium ---------- */
 app.commandLine.appendSwitch('disable-features', ['SpareRendererForSitePerProcess', 'MediaRouter', 'OptimizationHints'].join(','));
+app.commandLine.appendSwitch('disable-background-networking');   // no hidden Chromium background downloads/pings
 if (early.hwAccel !== false) {
   // GPU work like Chrome: rasterize pages and decode video on the graphics card
   app.commandLine.appendSwitch('enable-gpu-rasterization');
@@ -47,8 +49,10 @@ process.on('unhandledRejection', err => { console.error('[3zT] unhandled', err &
 const SRC = __dirname;
 const NEWTAB_FILE = path.join(SRC, 'newtab', 'newtab.html');
 const HISTORY_FILE = path.join(SRC, 'newtab', 'history.html');
+const TASKS_FILE = path.join(SRC, 'newtab', 'tasks.html');
 const NEWTAB_URL = pathToFileURL(NEWTAB_FILE).href;
 const HISTORY_URL = pathToFileURL(HISTORY_FILE).href;
+const TASKS_URL = pathToFileURL(TASKS_FILE).href;
 const UI_FILE = path.join(SRC, 'ui', 'toolbar.html');
 const PRELOAD_UI = path.join(SRC, 'preload-ui.js');
 const PRELOAD_TAB = path.join(SRC, 'preload-newtab.js');
@@ -59,8 +63,9 @@ const STRIP = 56;
 const same = (u, base) => !!u && (u === base || u.startsWith(base + '#') || u.startsWith(base + '?'));
 const isNewtab = u => !u || same(u, NEWTAB_URL);
 const isHistory = u => same(u, HISTORY_URL);
-const isInternal = u => isNewtab(u) || isHistory(u);
-const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : u);
+const isTasks = u => same(u, TASKS_URL);
+const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u);
+const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : isTasks(u) ? 'zeus://tasks' : u);
 
 /* ---------- tiny JSON stores (debounced, atomic save) ---------- */
 function makeStore(name, def) {
@@ -78,6 +83,7 @@ function makeStore(name, def) {
   return { get data() { return data; }, set data(v) { data = v; this.save(); }, save() { if (!t) t = setTimeout(flush, 800); }, flush };
 }
 let settings, bookmarks, history, sessionStore, favStore;
+let adblock = null;
 const stores = () => [settings, bookmarks, history, sessionStore, favStore].filter(Boolean);
 
 const T = (ar, en) => (settings && settings.data.lang === 'en' ? en : ar);
@@ -177,8 +183,8 @@ class Win {
         private: this.private,
         tabs: this.tabs.map(x => ({
           id: x.id,
-          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : shownUrl(x.url)),
-          url: shownUrl(x.url), favicon: isNewtab(x.url) || isHistory(x.url) ? 'app' : (x.favicon || ''),
+          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : isTasks(x.url) ? T('مدير المهام', 'Task manager') : shownUrl(x.url)),
+          url: shownUrl(x.url), favicon: isInternal(x.url) ? 'app' : (x.favicon || ''),
           loading: !!x.loading, discarded: !!x.discarded, muted: !!x.muted,
           audible: !!(x.view && !x.view.webContents.isDestroyed() && x.view.webContents.isCurrentlyAudible())
         })),
@@ -200,6 +206,11 @@ class Win {
         hwAccelActive: early.hwAccel !== false,
         zoom: wc ? Math.round(wc.getZoomFactor() * 100) : 100,
         closedCount: closedStack.length,
+        adblock: settings.data.adblock !== false,
+        adSiteOff: !!(url && /^https?:/i.test(url) && settings.data.adAllow.includes(AdBlocker.site(hostOf(url) || ''))),
+        blocked: (t && t.blocked) || 0,
+        blockedTotal: settings.data.adBlockedTotal || 0,
+        adRules: adblock ? adblock.ruleCount : 0,
         versions: { app: app.getVersion(), chrome: process.versions.chrome }
       });
     }, 16);
@@ -330,6 +341,11 @@ function makeView(tab) {
     upd(); saveSessionSoon();
   };
   wc.on('did-navigate', nav);
+  wc.on('did-start-navigation', (e, ...rest) => {
+    const isMain = e && e.isMainFrame !== undefined ? e.isMainFrame : rest[2];
+    const same = e && e.isSameDocument !== undefined ? e.isSameDocument : rest[1];
+    if (isMain && !same) { tab.blocked = 0; tab.win.pushState(); }
+  });
   wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); });
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) nav(e, url); });
   wc.on('audio-state-changed', upd);
@@ -353,6 +369,7 @@ function loadInto(tab, url) {
   tab.view.setBackgroundColor(isNewtab(url) ? '#000000' : '#ffffff');
   if (isNewtab(url)) wc.loadFile(NEWTAB_FILE).catch(() => {});
   else if (isHistory(url)) wc.loadFile(HISTORY_FILE).catch(() => {});
+  else if (isTasks(url)) wc.loadFile(TASKS_FILE).catch(() => {});
   else wc.loadURL(url).catch(() => {});
 }
 
@@ -534,6 +551,7 @@ function handleKey(w, i) {
   if (c && k === 'f') { w.ui.webContents.focus(); w.ui.webContents.send('find-open'); return true; }
   if (c && k === 'p') { if (wc) wc.print({}, () => {}); return true; }
   if (c && k === 'h') { w.createTab(HISTORY_URL); return true; }
+  if (i.shift && !c && k === 'escape') { openTasks(w); return true; }
   if (c && k === 'u') { if (t && /^https?:/.test(t.url)) w.createTab('view-source:' + t.url, { after: t.id }); return true; }
   if (k === 'escape' && w.uiExpanded === true) { w.ui.webContents.send('close-menus'); return false; }
   return false;
@@ -557,6 +575,7 @@ function toUrl(text) {
   const t = (text || '').trim();
   if (!t) return null;
   if (/^zeus:\/\/history/i.test(t)) return HISTORY_URL;
+  if (/^zeus:\/\/tasks/i.test(t)) return TASKS_URL;
   if (/^(https?|file|chrome-extension|about|view-source):/i.test(t)) return t;
   if (/^localhost(:\d+)?(\/|$)/i.test(t) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(t)) return 'http://' + t;
   if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return 'https://' + t;
@@ -699,10 +718,64 @@ function stopTabDrag() {
   const d = tabDrag; tabDrag = null; return d;
 }
 
+/* ---------- task manager: memory + CPU of every process ---------- */
+function openTasks(w) {
+  const ex = allTabs().find(t => isTasks(t.url));
+  if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(TASKS_URL);
+}
+function taskRows() {
+  const m = app.getAppMetrics();
+  const mem = x => (x.memory.privateBytes || x.memory.workingSetSize || 0) * 1024;    // bytes
+  const cpu = x => Math.round((x.cpu.percentCPUUsage || 0) * 10) / 10;
+  const byPid = new Map(m.map(x => [x.pid, x]));
+  const used = new Set(), rows = [];
+  const add = (kind, name, pid, extra = {}) => {
+    const x = byPid.get(pid); if (!x || used.has(pid)) return;
+    used.add(pid); rows.push(Object.assign({ kind, name, pid, mem: mem(x), cpu: cpu(x) }, extra));
+  };
+  for (const x of m) if (x.type === 'Browser') add('browser', '3zT Browser', x.pid);
+  for (const x of m) if (x.type === 'GPU') add('gpu', T('معالجة الرسوميات (GPU)', 'GPU process'), x.pid);
+  // tabs: several tabs of the same site can share one process
+  const groups = new Map();
+  for (const t of allTabs()) {
+    if (!t.view || t.view.webContents.isDestroyed()) continue;
+    const pid = t.view.webContents.getOSProcessId();
+    if (!groups.has(pid)) groups.set(pid, []);
+    groups.get(pid).push(t);
+  }
+  for (const [pid, ts] of groups) {
+    const names = ts.map(t => t.title || (isNewtab(t.url) ? T('تبويب جديد', 'New tab') : t.url));
+    add('tab', names.join(' · '), pid, { tabs: ts.map(t => ({ id: t.id, active: t.id === t.win.activeId, win: t.win.id })), favicon: ts[0].favicon && !isInternal(ts[0].url) ? ts[0].favicon : '' });
+  }
+  for (const w of wins) if (!w.ui.webContents.isDestroyed()) add('ui', T('شريط الأدوات', 'Toolbar') + (wins.length > 1 ? ' #' + w.id : ''), w.ui.webContents.getOSProcessId());
+  for (const x of m) {
+    if (used.has(x.pid)) continue;
+    const n = x.type === 'Utility' ? (x.serviceName || x.name || 'Utility').replace(/^.*\./, '') : x.type;
+    add(x.type === 'Tab' ? 'other' : 'util', x.type === 'Tab' ? T('إضافة / عامل خلفية', 'Extension / worker') : n, x.pid);
+  }
+  const sleeping = allTabs().filter(t => t.discarded || !t.view).map(t => ({ id: t.id, title: t.title || t.url }));
+  const total = rows.reduce((a, r) => a + r.mem, 0);
+  return { rows, sleeping, total, cpu: Math.round(rows.reduce((a, r) => a + r.cpu, 0) * 10) / 10, blockedTotal: settings.data.adBlockedTotal || 0, procs: m.length };
+}
+
 /* ---------- permissions + downloads for a session ---------- */
 const setUp = new WeakSet();
 function setupSession(ses) {
   if (setUp.has(ses)) return; setUp.add(ses);
+  ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (d, cb) => {
+    if (!adblock || settings.data.adblock === false || d.resourceType === 'mainFrame') return cb({});
+    let page = '';
+    try { page = d.frame && d.frame.top ? d.frame.top.url : (d.webContents ? d.webContents.getURL() : ''); } catch (e) {}
+    if (!page) { try { page = d.webContents ? d.webContents.getURL() : ''; } catch (e) {} }
+    if (!/^https?:/i.test(page)) return cb({});            // only websites (not our own pages)
+    const ph = hostOf(page);
+    if (ph && settings.data.adAllow.includes(AdBlocker.site(ph))) return cb({});
+    if (!adblock.shouldBlock(d.url, page)) return cb({});
+    const t = d.webContents && tabOfWc(d.webContents);
+    if (t) { t.blocked = (t.blocked || 0) + 1; if (t.id === t.win.activeId) t.win.pushState(); }
+    settings.data.adBlockedTotal = (settings.data.adBlockedTotal || 0) + 1; settings.save();
+    cb({ cancel: true });
+  });
   const always = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'window-management']);
   const asked = new Map();
   ses.setPermissionRequestHandler((wc, perm, cb, details) => {
@@ -778,6 +851,13 @@ function setupIpc() {
       case 'menu': tabMenu(w, arg); break;
       case 'history': w.createTab(HISTORY_URL); break;
       case 'print': if (wc) wc.print({}, () => {}); break;
+      case 'tasks': openTasks(w); break;
+      case 'adSite': {   // turn the blocker off / on for the current site, then reload it
+        if (!t || !/^https?:/i.test(t.url)) break;
+        const site = AdBlocker.site(hostOf(t.url)); const list = settings.data.adAllow;
+        const i = list.indexOf(site); if (i >= 0) list.splice(i, 1); else list.push(site);
+        settings.save(); if (wc) wc.reload(); w.pushState(); break;
+      }
       case 'newWindow': newWindow(); break;
       case 'incognito': newWindow({ private: true }); break;
       case 'move': {   // reorder inside this window: arg = {id, to}
@@ -842,6 +922,7 @@ function setupIpc() {
     if (key === 'memorySaverMin' && [0, 5, 15, 30, 60].includes(+val)) settings.data.memorySaverMin = +val;
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
     if (key === 'hwAccel') settings.data.hwAccel = !!val;
+    if (key === 'adblock') settings.data.adblock = !!val;
     settings.save(); settings.flush();
     for (const w of wins) w.pushState();
     if (key === 'lang') for (const t of allTabs()) if (t.view && isInternal(t.url)) t.view.webContents.send('lang', settings.data.lang);
@@ -904,6 +985,13 @@ function setupIpc() {
     } catch (err) { return []; }
   });
   ipcMain.handle('lang:get', () => settings.data.lang);
+  ipcMain.handle('tasks:get', e => (internalPage(e) ? taskRows() : null));
+  ipcMain.handle('tasks:sleep', (e, id) => {
+    if (!internalPage(e)) return false;
+    const t = allTabs().find(x => x.id === id); if (!t) return false;
+    if (t.id === t.win.activeId) return false;
+    discard(t); return true;
+  });
 
   ipcMain.on('misc', async (e, cmd) => {
     const w = uiWin(e); if (!w) return;
@@ -941,7 +1029,8 @@ app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
   settings = makeStore('settings.json', {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
-    favImported: false, ntpImported: false, hwAccel: true
+    favImported: false, ntpImported: false, hwAccel: true,
+    adblock: true, adAllow: [], adBlockedTotal: 0
   });
   bookmarks = makeStore('bookmarks.json', { children: [] });
   history = makeStore('history.json', []);
@@ -954,6 +1043,11 @@ app.whenReady().then(async () => {
   if (!settings.data.ntpImported) { prepareNewtabImport(); settings.data.ntpImported = true; }
   settings.save();
 
+  adblock = new AdBlocker(path.join(app.getPath('userData'), 'adblock'));
+  // get the full lists in the background (refreshed every few days)
+  const refreshLists = () => adblock.refresh(u => net.fetch(u)).then(() => { for (const w of wins) w.pushState(); }).catch(() => {});
+  setTimeout(refreshLists, 4000);
+  setInterval(refreshLists, 6 * 3600 * 1000);
   setupSession(session.defaultSession);
   setupIpc();
   for (const p of settings.data.extensions.slice()) {

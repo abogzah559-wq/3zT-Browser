@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>مدير المهام</title>
+<link rel="icon" href="icons/tab32.png">
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;background:#0b0b0f;color:#eee;font-family:"Segoe UI",Tajawal,Tahoma,system-ui,sans-serif;color-scheme:dark}
+main{max-width:900px;margin:0 auto;padding:26px 20px 60px}
+h1{margin:0 0 16px;font-size:22px;font-weight:600}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:20px}
+.card{padding:14px 16px;border-radius:14px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08)}
+.card .k{font-size:12px;opacity:.6}
+.card .v{font-size:24px;font-weight:600;margin-top:4px;direction:ltr;text-align:start}
+.card .v small{font-size:13px;font-weight:400;opacity:.6}
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{font-weight:600;font-size:12px;opacity:.55;text-align:start;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.1)}
+td{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.05);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.03)}
+td.num,th.num{text-align:end;direction:ltr;white-space:nowrap;font-variant-numeric:tabular-nums}
+.name{display:flex;align-items:center;gap:9px;min-width:0}
+.name img,.name .ic{flex:none;width:16px;height:16px;border-radius:3px}
+.name .ic{display:grid;place-items:center;font-size:10px;background:rgba(255,255,255,.12)}
+.name span.t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:440px}
+.bar{height:4px;border-radius:2px;background:rgba(138,180,248,.18);margin-top:5px;overflow:hidden}
+.bar i{display:block;height:100%;background:#8ab4f8}
+.kind{font-size:11px;opacity:.5;margin-inline-start:6px}
+button{font:inherit;color:inherit;cursor:pointer;padding:4px 10px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:transparent;font-size:12px}
+button:hover{background:rgba(255,255,255,.08)}
+.hot td.num.mem{color:#ffb86b}
+h2{font-size:14px;font-weight:600;opacity:.7;margin:26px 0 8px}
+.zz{opacity:.6;font-size:13px;padding:4px 10px}
+.tip{opacity:.5;font-size:12px;line-height:1.7;margin-top:22px}
+</style>
+</head>
+<body>
+<main>
+  <h1 id="h">مدير المهام</h1>
+  <div class="cards">
+    <div class="card"><div class="k" id="kMem">الذاكرة المستخدمة</div><div class="v" id="vMem">…</div></div>
+    <div class="card"><div class="k" id="kCpu">المعالج</div><div class="v" id="vCpu">…</div></div>
+    <div class="card"><div class="k" id="kProc">العمليات</div><div class="v" id="vProc">…</div></div>
+    <div class="card"><div class="k" id="kAds">إعلانات محظورة</div><div class="v" id="vAds">…</div></div>
+  </div>
+  <table>
+    <thead><tr><th id="thName">المهمة</th><th class="num" id="thMem">الذاكرة</th><th class="num" id="thCpu">المعالج</th><th class="num">PID</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <h2 id="hSleep">تبويبات نايمة (ما تستهلك رام)</h2>
+  <div id="sleep"></div>
+  <p class="tip" id="tip"></p>
+</main>
+<script src="tasks.js"></script>
+</body>
+</html>

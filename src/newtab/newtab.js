@@ -483,6 +483,12 @@ async function takeImport(){
   shownMedia=null; lastSrc=null; save(); syncPanel(); resize(); apply(); tick();
 }
 takeImport();
+/* resource saver: a new tab you are not looking at stops its video and animation */
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){ cancelAnimationFrame(raf); raf=0; try{ bgv.pause(); }catch(e){} return; }
+  if(['space','galaxy','matrix','fireflies'].includes(S.theme)){ cancelAnimationFrame(raf); frame(); }
+  if(bgv.style.display==='block'&&bgv.src) bgv.play().catch(()=>{});
+});
 /* the toolbar grows when the tabs row shows: keep the shortcuts bar just under it */
 try{ zeus.onStrip(h=>document.documentElement.style.setProperty('--strip',h+'px')); }catch(e){}
 try{ zeus.onImportReady(takeImport); }catch(e){}
