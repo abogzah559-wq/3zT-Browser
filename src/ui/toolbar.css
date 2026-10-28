@@ -147,3 +147,15 @@ body:not(.isweb) #shield{display:none}
   font-size:9.5px;font-weight:700;line-height:15px;text-align:center;direction:ltr}
 #shCount:empty,#shield.off #shCount{display:none}
 .big{font-size:26px;font-weight:600;padding:4px 10px 0;text-align:center;color:#7ee2a8}
+
+/* pinned extensions */
+#pins{display:flex;align-items:center;gap:1px}
+#pins:empty{display:none}
+#pins .ib img{width:18px;height:18px;border-radius:4px}
+.mi .pin{flex:none;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;opacity:.45;border:0;background:transparent;padding:0;cursor:pointer}
+.mi .pin svg{width:13px;height:13px}
+.mi .pin.on{opacity:1;color:#8ab4f8}
+.mi .pin:hover{background:rgba(255,255,255,.12);opacity:1}
+#toast .alt{background:transparent;color:#ddd;border:1px solid rgba(255,255,255,.2)}
+#toast .t2{display:flex;flex-direction:column;gap:2px;white-space:normal;max-width:360px}
+#toast .t2 small{opacity:.65}

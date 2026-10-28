@@ -222,4 +222,4 @@ function readNewtabBlobs(profileDir, extId) {
   return found;
 }
 
-module.exports = { readBookmarksBar, readFavicons, readNewtabSettings, readNewtabBlobs, normUrl, hostOf };
+module.exports = { readBookmarksBar, readFavicons, readNewtabSettings, readNewtabBlobs, normUrl, hostOf, profiles };

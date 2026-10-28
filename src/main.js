@@ -6,14 +6,17 @@
  * Tabs can be dragged out into a new window and dropped back onto another window.
  */
 const {
-  app, BaseWindow, WebContentsView, ipcMain, Menu, session, dialog,
-  screen, net, shell, clipboard, nativeImage
+  app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, session, dialog,
+  screen, net, shell, clipboard, nativeImage, safeStorage
 } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { pathToFileURL } = require('url');
 const CI = require('./chrome-import');
 const { AdBlocker } = require('./adblock');
+const EXT = require('./ext-import');
+const PW = require('./passwords');
 
 app.setName('3zT Browser');
 if (process.platform === 'win32') app.setAppUserModelId('com.3zo.3ztbrowser');
@@ -50,9 +53,11 @@ const SRC = __dirname;
 const NEWTAB_FILE = path.join(SRC, 'newtab', 'newtab.html');
 const HISTORY_FILE = path.join(SRC, 'newtab', 'history.html');
 const TASKS_FILE = path.join(SRC, 'newtab', 'tasks.html');
+const PASSWORDS_FILE = path.join(SRC, 'newtab', 'passwords.html');
 const NEWTAB_URL = pathToFileURL(NEWTAB_FILE).href;
 const HISTORY_URL = pathToFileURL(HISTORY_FILE).href;
 const TASKS_URL = pathToFileURL(TASKS_FILE).href;
+const PASSWORDS_URL = pathToFileURL(PASSWORDS_FILE).href;
 const UI_FILE = path.join(SRC, 'ui', 'toolbar.html');
 const PRELOAD_UI = path.join(SRC, 'preload-ui.js');
 const PRELOAD_TAB = path.join(SRC, 'preload-newtab.js');
@@ -64,8 +69,9 @@ const same = (u, base) => !!u && (u === base || u.startsWith(base + '#') || u.st
 const isNewtab = u => !u || same(u, NEWTAB_URL);
 const isHistory = u => same(u, HISTORY_URL);
 const isTasks = u => same(u, TASKS_URL);
-const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u);
-const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : isTasks(u) ? 'zeus://tasks' : u);
+const isPasswords = u => same(u, PASSWORDS_URL);
+const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u);
+const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : isTasks(u) ? 'zeus://tasks' : isPasswords(u) ? 'zeus://passwords' : u);
 
 /* ---------- tiny JSON stores (debounced, atomic save) ---------- */
 function makeStore(name, def) {
@@ -84,6 +90,7 @@ function makeStore(name, def) {
 }
 let settings, bookmarks, history, sessionStore, favStore;
 let adblock = null;
+let passwords = null;
 const stores = () => [settings, bookmarks, history, sessionStore, favStore].filter(Boolean);
 
 const T = (ar, en) => (settings && settings.data.lang === 'en' ? en : ar);
@@ -133,6 +140,8 @@ class Win {
 
     const w = this.win;
     w.on('focus', () => { lastFocused = this; });
+    w.on('blur', () => { setTimeout(() => { if (!BrowserWindow.getFocusedWindow() && !wins.some(x => !x.win.isDestroyed() && x.win.isFocused())) closeExtPopup(); }, 150); });
+    for (const ev of ['move', 'minimize']) w.on(ev, () => closeExtPopup());
     w.on('resize', () => this.layout());
     for (const ev of ['maximize', 'unmaximize', 'enter-full-screen']) w.on(ev, () => { this.layout(); this.pushState(); });
     w.on('leave-full-screen', () => { this.htmlFs = false; this.layout(); this.pushState(); });
@@ -183,7 +192,7 @@ class Win {
         private: this.private,
         tabs: this.tabs.map(x => ({
           id: x.id,
-          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : isTasks(x.url) ? T('مدير المهام', 'Task manager') : shownUrl(x.url)),
+          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : isTasks(x.url) ? T('مدير المهام', 'Task manager') : isPasswords(x.url) ? T('كلمات السر', 'Passwords') : shownUrl(x.url)),
           url: shownUrl(x.url), favicon: isInternal(x.url) ? 'app' : (x.favicon || ''),
           loading: !!x.loading, discarded: !!x.discarded, muted: !!x.muted,
           audible: !!(x.view && !x.view.webContents.isDestroyed() && x.view.webContents.isCurrentlyAudible())
@@ -211,6 +220,9 @@ class Win {
         blocked: (t && t.blocked) || 0,
         blockedTotal: settings.data.adBlockedTotal || 0,
         adRules: adblock ? adblock.ruleCount : 0,
+        ytAds: settings.data.ytAds !== false,
+        fdm: !!settings.data.fdm, fdmFound: !!fdmPath(),
+        pinned: pinnedExtensions(),
         versions: { app: app.getVersion(), chrome: process.versions.chrome }
       });
     }, 16);
@@ -241,6 +253,7 @@ class Win {
     const prev = this.active();
     if (prev && prev.view && prev !== t) { try { this.win.contentView.removeChildView(prev.view); } catch (e) {} prev.lastActive = Date.now(); }
     this.activeId = id;
+    closeExtPopup();
     if (t.discarded || !t.view) { makeView(t); loadInto(t, t.url); }
     this.win.contentView.addChildView(t.view, 0);   // below the toolbar
     t.lastActive = Date.now();
@@ -350,6 +363,7 @@ function makeView(tab) {
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) nav(e, url); });
   wc.on('audio-state-changed', upd);
   wc.on('context-menu', (e, p) => contextMenu(tab, p));
+  wc.on('input-event', (e, i) => { if (extPopup && (i.type === 'mouseDown' || i.type === 'keyDown')) closeExtPopup(); });
   wc.on('before-input-event', (e, input) => { if (handleKey(tab.win, input)) e.preventDefault(); });
   wc.on('found-in-page', (e, r) => { const w = tab.win; if (w.ui && !w.ui.webContents.isDestroyed()) w.ui.webContents.send('found', { active: r.activeMatchOrdinal, matches: r.matches }); });
   wc.on('enter-html-full-screen', () => { const w = tab.win; w.htmlFs = true; w.win.setFullScreen(true); w.layout(); });
@@ -370,6 +384,7 @@ function loadInto(tab, url) {
   if (isNewtab(url)) wc.loadFile(NEWTAB_FILE).catch(() => {});
   else if (isHistory(url)) wc.loadFile(HISTORY_FILE).catch(() => {});
   else if (isTasks(url)) wc.loadFile(TASKS_FILE).catch(() => {});
+  else if (isPasswords(url)) wc.loadFile(PASSWORDS_FILE).catch(() => {});
   else wc.loadURL(url).catch(() => {});
 }
 
@@ -513,12 +528,107 @@ function extIcon(ext) {
     return img.isEmpty() ? '' : img.resize({ width: 32 }).toDataURL();
   } catch (e) { return ''; }
 }
-function listExtensions() {
-  return extApi().getAllExtensions().map(e => {
-    const m = e.manifest || {};
-    const opt = (m.options_ui && m.options_ui.page) || m.options_page || '';
-    return { id: e.id, name: e.name, version: e.version, icon: extIcon(e), options: opt ? `chrome-extension://${e.id}/${opt}` : '' };
+function extInfo(e) {
+  const m = e.manifest || {};
+  const opt = (m.options_ui && m.options_ui.page) || m.options_page || '';
+  const act = m.action || m.browser_action || {};
+  return {
+    id: e.id, name: e.name, version: e.version, icon: extIcon(e),
+    options: opt ? `chrome-extension://${e.id}/${opt.replace(/^\//, '')}` : '',
+    popup: act.default_popup ? act.default_popup.replace(/^\//, '') : '',
+    pinned: (settings.data.pinnedExt || []).includes(e.id)
+  };
+}
+function listExtensions() { return extApi().getAllExtensions().map(extInfo); }
+function pinnedExtensions() {
+  const ids = settings.data.pinnedExt || [];
+  return ids.map(id => extApi().getExtension(id)).filter(Boolean).map(extInfo);
+}
+const SHIM = (() => { try { return fs.readFileSync(path.join(SRC, 'ext-shim.js'), 'utf8'); } catch (e) { return ''; } })();
+const extRoot = () => path.join(app.getPath('userData'), 'extensions');
+function manifestName(dir) {
+  try { const m = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8').replace(/^\uFEFF/, '')); return (m.name || '').toLowerCase(); } catch (e) { return ''; }
+}
+/* bring the user's Chrome extensions in (compatible ones, patched for Electron, with their settings) */
+function importChromeExtensions() {
+  const own = settings.data.extensions.filter(p => !p.startsWith(extRoot()));   // folders the user added himself
+  const r = EXT.importFromChrome(CI.profiles(app), app.getPath('userData'), SHIM);
+  // a folder the user added himself (e.g. his own modified version) wins over the store copy
+  const ownNames = new Set(own.map(manifestName).filter(Boolean));
+  const keep = r.imported.filter(x => !ownNames.has(manifestName(x.path)));
+  settings.data.extensions = [...own, ...keep.map(x => x.path)];
+  settings.save();
+  return { imported: keep, skipped: r.skipped };
+}
+/* the user picked a folder: copy it into our extensions folder and patch the copy (his folder stays untouched) */
+async function addExtensionFolder(dir) {
+  let d = dir;
+  if (!fs.existsSync(path.join(d, 'manifest.json'))) {
+    const sub = fs.readdirSync(d).map(n => path.join(d, n)).find(p => fs.existsSync(path.join(p, 'manifest.json')));
+    if (!sub) throw new Error('no manifest.json');
+    d = sub;
+  }
+  const slug = (path.basename(d === dir ? dir : path.dirname(d)) + '-' + Date.now().toString(36)).replace(/[^\w.-]+/g, '_');
+  const dst = path.join(extRoot(), 'manual', slug);
+  fs.mkdirSync(dst, { recursive: true });
+  fs.cpSync(d, dst, { recursive: true, filter: s => !/[\\/]_metadata$/.test(s) });
+  EXT.patch(dst, SHIM);
+  return dst;
+}
+
+/* extension popup: small window under the button that does not take focus away from the page,
+   so the extension sees the page as the active tab (Electron decides "active" by focus) */
+let extPopup = null;
+function closeExtPopup() { if (extPopup && !extPopup.isDestroyed()) extPopup.destroy(); extPopup = null; }
+function openExtPopup(w, id, rect) {
+  closeExtPopup();
+  const e = extApi().getExtension(id); if (!e) return;
+  const info = extInfo(e);
+  if (!info.popup) { if (info.options) w.createTab(info.options); return; }
+  const t = w.active(); if (t && t.view) t.view.webContents.focus();
+  const pop = new BrowserWindow({
+    parent: w.win, frame: false, focusable: false, skipTaskbar: true, resizable: false, show: false,
+    width: 360, height: 500, backgroundColor: '#202124', roundedCorners: true,
+    webPreferences: { contextIsolation: true, sandbox: true }
   });
+  extPopup = pop;
+  const place = (pw, ph) => {
+    const cb = w.win.getContentBounds();
+    const rtl = settings.data.lang !== 'en';
+    let x = cb.x + (rtl ? rect.x : rect.x + rect.w - pw), y = cb.y + rect.y + rect.h + 6;
+    const wa = screen.getDisplayMatching(cb).workArea;
+    x = Math.max(wa.x + 4, Math.min(wa.x + wa.width - pw - 4, x));
+    y = Math.max(wa.y + 4, Math.min(wa.y + wa.height - ph - 4, y));
+    pop.setBounds({ x: Math.round(x), y: Math.round(y), width: pw, height: ph });
+  };
+  const fit = async () => {
+    if (pop.isDestroyed()) return;
+    try {
+      const [cw, ch] = await pop.webContents.executeJavaScript('[Math.ceil(document.documentElement.scrollWidth), Math.ceil(Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0))]');
+      place(Math.max(160, Math.min(800, cw || 360)), Math.max(60, Math.min(600, ch || 300)));
+    } catch (err) {}
+  };
+  pop.webContents.on('did-finish-load', async () => {
+    await fit(); if (pop.isDestroyed()) return;
+    pop.showInactive();
+    let n = 0; const iv = setInterval(() => { if (pop.isDestroyed() || ++n > 12) return clearInterval(iv); fit(); }, 250);
+  });
+  pop.webContents.on('before-input-event', (ev, i) => { if (i.type === 'keyDown' && i.key === 'Escape') closeExtPopup(); });
+  pop.webContents.setWindowOpenHandler(d => { w.createTab(d.url); closeExtPopup(); return { action: 'deny' }; });
+  pop.on('closed', () => { if (extPopup === pop) extPopup = null; });
+  pop.loadURL(`chrome-extension://${id}/${info.popup}`).catch(() => {});
+  place(360, 500);
+}
+
+/* ---------- Free Download Manager hand-off (optional) ---------- */
+function fdmPath() {
+  if (process.platform !== 'win32') return '';
+  const c = [
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Softdeluxe', 'Free Download Manager', 'fdm.exe'),
+    path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Softdeluxe', 'Free Download Manager', 'fdm.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Softdeluxe', 'Free Download Manager', 'fdm.exe')
+  ];
+  return c.find(p => { try { return fs.existsSync(p); } catch (e) { return false; } }) || '';
 }
 
 /* ---------- keyboard ---------- */
@@ -576,6 +686,7 @@ function toUrl(text) {
   if (!t) return null;
   if (/^zeus:\/\/history/i.test(t)) return HISTORY_URL;
   if (/^zeus:\/\/tasks/i.test(t)) return TASKS_URL;
+  if (/^zeus:\/\/passwords/i.test(t)) return PASSWORDS_URL;
   if (/^(https?|file|chrome-extension|about|view-source):/i.test(t)) return t;
   if (/^localhost(:\d+)?(\/|$)/i.test(t) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(t)) return 'http://' + t;
   if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return 'https://' + t;
@@ -796,6 +907,17 @@ function setupSession(ses) {
     }).then(r => { const ok = r.response === 0; asked.set(key, ok); cb(ok); }).catch(() => cb(false));
   });
   ses.on('will-download', (e, item, wc) => {
+    const url = item.getURL();
+    const fdm = settings.data.fdm && /^https?:/i.test(url) && fdmPath();
+    if (fdm) {
+      try {
+        spawn(fdm, [url], { detached: true, stdio: 'ignore' }).unref();
+        e.preventDefault();
+        const t0 = wc && tabOfWc(wc); const w0 = (t0 && t0.win) || focusedWin();
+        if (w0) w0.ui.webContents.send('download', { name: item.getFilename(), state: 'fdm' });
+        return;
+      } catch (err) { /* fall back to the built-in download */ }
+    }
     const dir = app.getPath('downloads');
     let name = item.getFilename() || 'download', p = path.join(dir, name), n = 1;
     const ext = path.extname(name), base = path.basename(name, ext);
@@ -806,6 +928,67 @@ function setupSession(ses) {
       name: path.basename(p), path: p, state: st, received: item.getReceivedBytes(), total: item.getTotalBytes() });
     send('progressing');
     item.once('done', (ev, st) => send(st));
+  });
+}
+
+/* ---------- passwords ---------- */
+const pwOffers = new Map();
+function setupPasswordIpc() {
+  // web pages (top frame of a normal tab) — the origin comes from Chromium, never from the page
+  const pageOrigin = e => {
+    const t = tabOfWc(e.sender); if (!t || t.win.private) return '';
+    try { if (e.senderFrame !== e.sender.mainFrame) return ''; const o = e.senderFrame.origin; return /^https?:\/\//.test(o) ? o : ''; } catch (x) { return ''; }
+  };
+  ipcMain.handle('pw:query', e => {
+    const o = pageOrigin(e); if (!o) return [];
+    return passwords.forOrigin(o).slice(0, 8).map(x => ({ id: x.id, username: x.username, host: hostOf(x.origin) }));
+  });
+  ipcMain.handle('pw:get', (e, id) => {
+    const o = pageOrigin(e); if (!o) return null;
+    const x = passwords.forOrigin(o).find(v => v.id === id); if (!x) return null;
+    passwords.touch(id);
+    return { username: x.username, password: passwords.reveal(id) };
+  });
+  ipcMain.on('pw:offer', (e, a) => {
+    const o = pageOrigin(e); if (!o || !a || !a.password || a.password.length > 512) return;
+    const site = AdBlocker.site(hostOf(o) || '');
+    if ((settings.data.pwNever || []).includes(site)) return;
+    const un = String(a.username || '').slice(0, 256);
+    const ex = passwords.find(o, un);
+    if (ex && passwords.reveal(ex.id) === a.password) return;
+    const id = require('crypto').randomUUID();
+    pwOffers.set(id, { origin: o, username: un, password: a.password, update: !!ex });
+    setTimeout(() => pwOffers.delete(id), 120000);
+    const t = tabOfWc(e.sender);
+    if (t && !t.win.ui.webContents.isDestroyed()) t.win.ui.webContents.send('pw-offer', { id, host: hostOf(o).replace(/^www\./, ''), username: un, update: !!ex });
+  });
+  ipcMain.on('pw:answer', (e, a) => {
+    if (!uiWin(e) || !a) return;
+    const off = pwOffers.get(a.id); pwOffers.delete(a.id); if (!off) return;
+    if (a.choice === 'save') passwords.upsert(off.origin, off.username, off.password);
+    if (a.choice === 'never') { const l = settings.data.pwNever || (settings.data.pwNever = []); l.push(AdBlocker.site(hostOf(off.origin) || '')); settings.save(); }
+  });
+  // the passwords page
+  ipcMain.handle('pw:list', e => (internalPage(e) ? { entries: passwords.list().map(x => Object.assign(x, { favicon: cachedFavicon(x.origin) })), encrypted: passwords.encrypted, never: settings.data.pwNever || [] } : null));
+  ipcMain.handle('pw:reveal', (e, id) => (internalPage(e) ? passwords.reveal(id) : ''));
+  ipcMain.handle('pw:delete', (e, id) => (internalPage(e) ? passwords.remove(id) : false));
+  ipcMain.handle('pw:unnever', (e, site) => { if (!internalPage(e)) return false; settings.data.pwNever = (settings.data.pwNever || []).filter(x => x !== site); settings.save(); return true; });
+  ipcMain.handle('pw:import', async e => {
+    if (!internalPage(e) && !uiWin(e)) return null;
+    const t = tabOfWc(e.sender), w = (t && t.win) || uiWin(e) || focusedWin();
+    const r = await dialog.showOpenDialog(w.win, { title: T('اختر ملف كلمات السر من كروم (CSV)', 'Choose the Chrome passwords file (CSV)'), properties: ['openFile'], filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    if (r.canceled || !r.filePaths[0]) return null;
+    try { const res = passwords.importCSV(fs.readFileSync(r.filePaths[0], 'utf8')); res.file = r.filePaths[0]; return res; }
+    catch (err) { return { error: String(err.message || err) }; }
+  });
+  ipcMain.handle('pw:deleteFile', async (e, file) => {
+    if (!internalPage(e) || typeof file !== 'string' || !/\.csv$/i.test(file)) return false;
+    try { await shell.trashItem(file); return true; } catch (err) { return false; }
+  });
+  // YouTube ad blocking: asked by the page preload before YouTube's own scripts run
+  ipcMain.on('yt:adblock', e => {
+    const t = tabOfWc(e.sender);
+    e.returnValue = !!(t && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com'));
   });
 }
 
@@ -852,6 +1035,7 @@ function setupIpc() {
       case 'history': w.createTab(HISTORY_URL); break;
       case 'print': if (wc) wc.print({}, () => {}); break;
       case 'tasks': openTasks(w); break;
+      case 'passwords': { const ex = allTabs().find(x => isPasswords(x.url)); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(PASSWORDS_URL); break; }
       case 'adSite': {   // turn the blocker off / on for the current site, then reload it
         if (!t || !/^https?:/i.test(t.url)) break;
         const site = AdBlocker.site(hostOf(t.url)); const list = settings.data.adAllow;
@@ -923,6 +1107,8 @@ function setupIpc() {
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
     if (key === 'hwAccel') settings.data.hwAccel = !!val;
     if (key === 'adblock') settings.data.adblock = !!val;
+    if (key === 'ytAds') settings.data.ytAds = !!val;
+    if (key === 'fdm') settings.data.fdm = !!val;
     settings.save(); settings.flush();
     for (const w of wins) w.pushState();
     if (key === 'lang') for (const t of allTabs()) if (t.view && isInternal(t.url)) t.view.webContents.send('lang', settings.data.lang);
@@ -934,7 +1120,8 @@ function setupIpc() {
     const r = await dialog.showOpenDialog(w.win, { title: T('اختر مجلد الإضافة', 'Choose the extension folder'), properties: ['openDirectory'] });
     if (r.canceled || !r.filePaths[0]) return { ok: false };
     try {
-      const ext = await loadExtensionDir(r.filePaths[0]);
+      const dst = await addExtensionFolder(r.filePaths[0]);
+      const ext = await loadExtensionDir(dst);
       const list = settings.data.extensions.filter(p => p !== ext.path); list.push(ext.path);
       settings.data.extensions = list; settings.save();
       return { ok: true, name: ext.name };
@@ -944,8 +1131,28 @@ function setupIpc() {
     if (!uiWin(e)) return false;
     const ext = extApi().getExtension(id); if (!ext) return false;
     extApi().removeExtension(id);
-    settings.data.extensions = settings.data.extensions.filter(p => p !== ext.path); settings.save();
+    settings.data.extensions = settings.data.extensions.filter(p => p !== ext.path);
+    settings.data.pinnedExt = (settings.data.pinnedExt || []).filter(x => x !== id);
+    settings.save();
+    if (ext.path.startsWith(extRoot())) { try { fs.rmSync(ext.path, { recursive: true, force: true }); } catch (err) {} }
+    for (const w of wins) w.pushState();
     return true;
+  });
+  ipcMain.on('ext:popup', (e, a) => { const w = uiWin(e); if (w && a && a.id) openExtPopup(w, a.id, a.rect || { x: 0, y: 0, w: 0, h: 40 }); });
+  ipcMain.on('ext:popupClose', e => { if (uiWin(e)) closeExtPopup(); });
+  ipcMain.on('ext:pin', (e, id) => {
+    if (!uiWin(e)) return;
+    const l = settings.data.pinnedExt || (settings.data.pinnedExt = []);
+    const i = l.indexOf(id); if (i >= 0) l.splice(i, 1); else l.push(id);
+    settings.save(); for (const w of wins) w.pushState();
+  });
+  ipcMain.handle('ext:importChrome', async e => {
+    if (!uiWin(e)) return null;
+    for (const x of extApi().getAllExtensions()) if (x.path.startsWith(extRoot()) && !x.path.includes(path.sep + 'manual' + path.sep)) { try { extApi().removeExtension(x.id); } catch (err) {} }
+    const r = importChromeExtensions();
+    for (const p of settings.data.extensions) { try { await loadExtensionDir(p); } catch (err) {} }
+    for (const w of wins) w.pushState();
+    return { imported: r.imported.map(x => x.name), skipped: r.skipped.map(x => ({ name: x.name, reason: x.reason })) };
   });
   ipcMain.on('ext:options', (e, url) => { const w = uiWin(e); if (w && /^chrome-extension:\/\//.test(url)) w.createTab(url); });
 
@@ -1030,7 +1237,8 @@ app.whenReady().then(async () => {
   settings = makeStore('settings.json', {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
     favImported: false, ntpImported: false, hwAccel: true,
-    adblock: true, adAllow: [], adBlockedTotal: 0
+    adblock: true, adAllow: [], adBlockedTotal: 0,
+    ytAds: true, fdm: false, pinnedExt: [], extImported: false, pwNever: []
   });
   bookmarks = makeStore('bookmarks.json', { children: [] });
   history = makeStore('history.json', []);
@@ -1050,6 +1258,12 @@ app.whenReady().then(async () => {
   setInterval(refreshLists, 6 * 3600 * 1000);
   setupSession(session.defaultSession);
   setupIpc();
+  passwords = new PW.PasswordStore(path.join(app.getPath('userData'), 'passwords.json'), safeStorage);
+  setupPasswordIpc();
+  if (!settings.data.extImported) {
+    try { const r = importChromeExtensions(); console.log('[3zT] extensions imported:', r.imported.map(x => x.name).join(', ')); } catch (e) { console.warn('extension import failed', e.message); }
+    settings.data.extImported = true; settings.save();
+  }
   for (const p of settings.data.extensions.slice()) {
     try { await loadExtensionDir(p); } catch (e) { console.warn('extension failed', p, e.message); }
   }
