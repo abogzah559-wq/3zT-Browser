@@ -1,0 +1,16 @@
+{
+  "name": "3zt-browser",
+  "productName": "3zT Browser",
+  "version": "0.1.0",
+  "description": "متصفح خفيف مبني على Chromium بواجهة شفافة وفيديو خلفية",
+  "main": "src/main.js",
+  "author": "3zo",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "45.1.0"
+  }
+}

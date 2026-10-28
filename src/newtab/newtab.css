@@ -1,0 +1,135 @@
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;overflow:hidden;font-family:system-ui,"Segoe UI",Tahoma,sans-serif;color:#fff;background:#000}
+canvas{position:fixed;inset:0;width:100%;height:100%}
+#ui{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;pointer-events:none}
+#ui>*{pointer-events:auto}
+#clock{font-size:84px;font-weight:200;letter-spacing:4px;text-shadow:0 0 30px var(--accent)}
+#q{width:min(560px,86vw);padding:14px 22px;border-radius:30px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.45);color:#fff;font-size:17px;outline:none;backdrop-filter:blur(8px)}
+#q:focus{border-color:var(--accent);box-shadow:0 0 18px var(--accent)}
+#gear{position:fixed;bottom:16px;left:16px;width:42px;height:42px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.5);color:#fff;font-size:20px;cursor:pointer;opacity:.5;transition:.2s}
+#gear:hover{opacity:1}
+#panel{position:fixed;bottom:68px;left:16px;width:280px;padding:16px;border-radius:16px;background:rgba(15,15,20,.88);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.15);display:flex;flex-direction:column;gap:12px;font-size:14px}
+#panel[hidden]{display:none}
+#panel h3{margin:0}
+#panel label{display:flex;justify-content:space-between;align-items:center;gap:10px}
+#themes{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#themes button,#reset{padding:8px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;cursor:pointer}
+#themes button.on{border-color:var(--accent);box-shadow:0 0 10px var(--accent)}
+body.aurora{background:linear-gradient(120deg,#021b2b,#0b6e5a,#3b1d6e,#021b2b);background-size:400% 400%;animation:flow 18s ease infinite}
+body.sunset{background:linear-gradient(160deg,#1a0b2e,#6a1b4d,#ff6a3d,#ffb347,#6a1b4d);background-size:300% 300%;animation:flow 22s ease infinite}
+body.ocean{background:linear-gradient(180deg,#001a33,#003d66,#006994,#001a33);background-size:100% 400%;animation:flowy 20s ease infinite}
+@keyframes flow{0%{background-position:0 50%}50%{background-position:100% 50%}100%{background-position:0 50%}}
+@keyframes flowy{0%{background-position:50% 0}50%{background-position:50% 100%}100%{background-position:50% 0}}
+#bgm{position:fixed;inset:0;display:none}
+#bgm video,#bgm img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none}
+#dim{position:absolute;inset:0;background:#000}
+#clock{font-size:var(--clock,120px)}
+#search{display:flex;gap:10px;align-items:center}
+#q{width:min(480px,70vw)}
+#ai{padding:13px 20px;border-radius:30px;border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.45);color:#fff;font-size:15px;cursor:pointer;backdrop-filter:blur(8px)}
+#ai:hover{border-color:var(--accent);box-shadow:0 0 14px var(--accent)}
+#panel{max-height:80vh;overflow:auto}
+#panel select{background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:4px}
+.file{justify-content:center!important;padding:9px;border-radius:10px;border:1px dashed rgba(255,255,255,.35);cursor:pointer}
+#tiles{position:fixed;top:12px;left:50%;transform:translateX(-50%);max-width:92vw;z-index:5;display:flex;gap:2px;padding:6px 8px;overflow-x:auto;scrollbar-width:none;background:rgba(0,0,0,.35);backdrop-filter:blur(10px);border-radius:18px}
+body.fs #tiles{top:60px}
+#tiles::-webkit-scrollbar{display:none}
+#tiles:empty{display:none}
+.tile{flex:none;display:grid;place-items:center;width:40px;height:40px;border-radius:12px;text-decoration:none}
+.tile:hover{background:rgba(255,255,255,.18)}
+.tile i{font-style:normal;display:grid;place-items:center;font-size:18px}
+.tile i img{width:22px;height:22px}
+.tile span{display:none}
+#clock{font-family:Bahnschrift,"Arial Narrow","Roboto Condensed",Oswald,Impact,sans-serif;font-stretch:75%;font-variation-settings:"wdth" 75,"wght" 600;font-weight:600;line-height:.95;letter-spacing:2px;color:rgba(235,235,226,.42);-webkit-text-stroke:1.5px rgba(255,255,255,.4);text-shadow:0 6px 28px rgba(0,0,0,.35);direction:ltr}
+#date{margin-top:-20px;font-size:17px;font-weight:500;opacity:.9;letter-spacing:.5px;text-shadow:0 2px 10px rgba(0,0,0,.5)}
+#ui{text-align:center}
+#search{position:relative;justify-content:center}
+#q{width:min(560px,86vw);padding:14px 22px 14px 140px}
+#ai{position:absolute;left:8px;top:50%;transform:translateY(-50%);padding:8px 16px;border:0;background:rgba(255,255,255,.14);font-size:14px}
+#clock{-webkit-text-stroke:0;text-shadow:none;color:rgba(240,240,232,.5);filter:drop-shadow(0 0 1px rgba(255,255,255,.55)) drop-shadow(0 6px 20px rgba(0,0,0,.35))}
+/* ---- v1.1: fonts, sizes, shortcuts manager ---- */
+#clock{font-family:var(--clockFont,Bahnschrift,"Arial Narrow",sans-serif)}
+body.plainClock #clock{font-stretch:normal;font-variation-settings:normal;letter-spacing:1px}
+#date{font-size:var(--date,17px);font-family:var(--dateFont,system-ui,sans-serif)}
+#date{margin-top:-14px;line-height:1.2}
+#panel{width:300px}
+#panel h3{margin:6px 0 0;font-size:15px;padding-top:10px;border-top:1px solid rgba(255,255,255,.12)}
+#panel h3:first-child{border-top:0;padding-top:0}
+#panel input[type=text]{width:150px;background:#222;color:#fff;border:1px solid #444;border-radius:8px;padding:5px 8px;font:inherit;font-size:13px}
+#panel .tip{margin:0;font-size:12px;opacity:.7;line-height:1.6}
+#scList{display:flex;flex-direction:column;gap:2px;max-height:210px;overflow:auto;padding:4px;border-radius:10px;background:rgba(255,255,255,.04)}
+#scList:empty{display:none}
+#scList .sc{justify-content:flex-start!important;gap:8px!important;padding:3px 4px;border-radius:6px;cursor:pointer;font-size:13px}
+#scList .sc:hover{background:rgba(255,255,255,.08)}
+#scList .sc img{width:16px;height:16px;flex:none}
+#scList .sc span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#scAdd{display:flex;gap:6px}
+#scAdd input{flex:1;min-width:0;width:auto!important}
+#scAdd button,#scRestore{padding:6px 10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(255,255,255,.07);color:#fff;cursor:pointer}
+#scRestore:disabled{opacity:.4;cursor:default}
+.tile{position:relative;width:var(--tile,40px);height:var(--tile,40px)}
+.tile i img{width:calc(var(--tile,40px) * .55);height:calc(var(--tile,40px) * .55)}
+.tile i{font-size:calc(var(--tile,40px) * .45)}
+.tile .x{position:absolute;top:-2px;right:-2px;width:17px;height:17px;border-radius:50%;background:rgba(0,0,0,.85);border:1px solid rgba(255,255,255,.35);font-size:9px;line-height:15px;text-align:center;font-weight:400;color:#fff;display:none;cursor:pointer}
+.tile:hover .x{display:block}
+.tile .x:hover{background:#d33}
+#tiles.names .tile{width:auto;min-width:var(--tile,40px);height:auto;padding:6px 8px 4px;display:flex;flex-direction:column;gap:3px}
+#tiles.names .tile span{display:block;max-width:80px;font-size:11px;color:#fff;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ai{z-index:1}
+#panel>*{flex:none}
+#scList .sc{flex:none}
+
+/* ---- v1.2: clock, date and search bar share ONE exact center axis ---- */
+#ui{align-items:center;justify-content:center;text-align:center;gap:0}
+#clock,#date,#search{width:min(560px,86vw);max-width:100%;margin-left:auto;margin-right:auto;text-align:center}
+#clock{--ls:2px;letter-spacing:var(--ls);padding-left:var(--ls);width:100%}
+body.plainClock #clock{--ls:1px}
+#date{width:100%;margin-top:14px;margin-bottom:28px;padding:0;direction:rtl;unicode-bidi:plaintext}
+#search{display:block;position:relative}
+#q{display:block;width:100%;margin:0}
+#ai{left:8px;right:auto}
+
+/* ---- v1.3: align the group with the browser's top bar (it sits off-center because of the window buttons) ---- */
+#clock,#date,#search{translate:var(--shiftX,0px) 0}
+
+/* ---- v1.4: suggestions + recent searches dropdown under the in-page bar ---- */
+#sug{position:absolute;top:calc(100% + 8px);left:0;right:0;z-index:20;padding:6px;border-radius:20px;background:rgba(14,14,20,.94);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.14);box-shadow:0 12px 40px rgba(0,0,0,.5);text-align:start}
+#sug[hidden]{display:none}
+.sg{display:flex;align-items:center;gap:12px;padding:9px 14px;border-radius:12px;cursor:pointer;font-size:15px;color:#fff}
+.sg i{font-style:normal;opacity:.6;width:18px;text-align:center;flex:none}
+.sg span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sg:hover,.sg.on{background:rgba(255,255,255,.12)}
+
+/* ---- v1.5: AI Mode state + pasted image thumbnail ---- */
+#search.ai #ai{background:var(--accent);color:#000;font-weight:600}
+#search.ai #q{border-color:var(--accent)}
+#thumb{position:absolute;left:104px;top:50%;transform:translateY(-50%);width:34px;height:34px;z-index:2}
+#thumb[hidden]{display:none}
+#thumb img{width:34px;height:34px;object-fit:cover;border-radius:8px;border:1px solid rgba(255,255,255,.3);display:block}
+#thumb button{position:absolute;top:-6px;right:-6px;width:16px;height:16px;border-radius:50%;border:0;background:#000;color:#fff;font-size:9px;line-height:16px;padding:0;cursor:pointer}
+#search.hasImg #q{padding-left:150px}
+
+/* ---- v1.6: drag-to-reorder shortcuts, per-font weight ---- */
+.tile[draggable="true"]{cursor:grab;user-select:none;-webkit-user-drag:element}
+.tile.drag{opacity:.35;outline:1px dashed rgba(255,255,255,.6)}
+body.plainClock #clock{font-weight:var(--clockW,600)}
+#date{font-weight:var(--dateW,500)}
+
+/* v1.6: settings panel lag fix - no live blur over the video, own GPU layer */
+#panel{backdrop-filter:none;background:rgba(15,15,20,.96);will-change:transform;contain:layout paint}
+
+/* v1.6.2: separate opacity for clock and date; AI button on the RIGHT in English */
+#clock{opacity:var(--clockOp,1)}
+#date{opacity:calc(.9 * var(--dateOp,1))}
+html[dir="ltr"] #ai{left:auto;right:8px}
+html[dir="ltr"] #q{padding:14px 140px 14px 22px}
+html[dir="ltr"] #thumb{left:auto;right:104px}
+html[dir="ltr"] #search.hasImg #q{padding-left:22px;padding-right:150px}
+
+/* v1.6.3: dark scrollbars that match the panel (no white bar) */
+#panel,#scList{color-scheme:dark;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.28) transparent}
+
+/* ---- 3zT Browser: the floating toolbar sits on top, so the shortcuts bar moves just under it ---- */
+#tiles{top:62px}
+body.fs #tiles{top:62px}
+.tile i.letter{width:calc(var(--tile,40px) * .6);height:calc(var(--tile,40px) * .6);border-radius:50%;background:rgba(255,255,255,.18);font-size:calc(var(--tile,40px) * .3);font-weight:600;color:#fff}
