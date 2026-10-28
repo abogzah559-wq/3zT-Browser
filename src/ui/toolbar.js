@@ -9,7 +9,8 @@ const TIPS = {
   min: ['تصغير', 'Minimize'], max: ['تكبير', 'Maximize'], close: ['إغلاق', 'Close'],
   back: ['رجوع (Alt+←)', 'Back (Alt+←)'], forward: ['للأمام (Alt+→)', 'Forward (Alt+→)'], reload: ['تحديث (F5)', 'Reload (F5)'],
   star: ['حفظ في المفضلة (Ctrl+D)', 'Bookmark (Ctrl+D)'], ext: ['الإضافات', 'Extensions'], menu: ['القائمة', 'Menu'],
-  newtab: ['تبويب جديد (Ctrl+T)', 'New tab (Ctrl+T)'], translate: ['ترجمة الصفحة', 'Translate page']
+  newtab: ['تبويب جديد (Ctrl+T)', 'New tab (Ctrl+T)'], translate: ['ترجمة الصفحة', 'Translate page'],
+  shield: ['مانع الإعلانات', 'Ad blocker']
 };
 const ICO = {
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -48,6 +49,9 @@ ui.on('state', st => {
   $('back').disabled = !S.canGoBack;
   $('fwd').disabled = !S.canGoForward;
   $('star').classList.toggle('on', S.bookmarked);
+  const shOff = !S.adblock || S.adSiteOff;
+  $('shield').classList.toggle('off', shOff);
+  $('shCount').textContent = !shOff && S.blocked ? (S.blocked > 99 ? '99+' : S.blocked) : '';
   $('act').title = S.isWeb ? (S.translated ? L('عرض الصفحة الأصلية', 'Show original') : TIPS.translate[en() ? 1 : 0]) : '';
   $('act').disabled = !S.isWeb;
   $('maxIco').innerHTML = S.maximized
@@ -226,12 +230,26 @@ function closeDrop() {
 ui.on('close-menus', closeDrop);
 $('backdrop').addEventListener('mousedown', e => { e.preventDefault(); closeDrop(); if (document.activeElement === $('addr')) $('addr').blur(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && openKind && openKind !== 'sug') closeDrop(); });
+$('shield').onclick = () => (openKind === 'shield' ? closeDrop() : openDrop('shield', $('shield')));
 $('ext').onclick = () => (openKind === 'ext' ? closeDrop() : openDrop('ext', $('ext')));
 $('menuBtn').onclick = () => (openKind === 'menu' ? closeDrop() : openDrop('menu', $('menuBtn')));
 
 async function renderMenu(kind) {
   const d = $('drop');
-  if (kind === 'ext') {
+  if (kind === 'shield') {
+    const host = (() => { try { return new URL(S.url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } })();
+    d.innerHTML = `
+      <div class="hd">${L('مانع الإعلانات والمتتبعات', 'Ad and tracker blocker')}</div>
+      <div class="big">${S.adblock && !S.adSiteOff ? S.blocked : '—'}</div>
+      <div class="note" style="padding-top:0">${L('محظورة في هذي الصفحة', 'blocked on this page')}</div>
+      <div class="row"><span class="lbl">${esc(host)}</span>
+        <button class="chip${S.adblock && !S.adSiteOff ? ' on' : ''}" data-a="adSite" ${S.adblock ? '' : 'disabled'}>${S.adSiteOff ? L('طافي لهذا الموقع', 'Off for this site') : L('شغّال', 'On')}</button></div>
+      <div class="note">${L('لو موقع ما اشتغل صح، طفّه لهذا الموقع بس.', 'If a site breaks, turn it off for that site only.')}</div>
+      <div class="sep"></div>
+      <div class="row"><span class="lbl">${L('المانع لكل المواقع', 'Blocker for all sites')}</span>
+        <button class="chip${S.adblock ? ' on' : ''}" data-a="adAll">${S.adblock ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
+      <div class="note">${L('المجموع من البداية:', 'Total so far:')} ${Number(S.blockedTotal || 0).toLocaleString('en')} · ${L('القواعد:', 'rules:')} ${Number(S.adRules || 0).toLocaleString('en')}</div>`;
+  } else if (kind === 'ext') {
     d.innerHTML = `<div class="note">${L('جاري التحميل…', 'Loading…')}</div>`;
     const items = await ui.invoke('ext:list') || [];
     if (openKind !== 'ext') return;
@@ -268,6 +286,9 @@ async function renderMenu(kind) {
         <button class="chip" data-a="fullscreen" title="F11">${L('ملء الشاشة', 'Full screen')}</button></div>
       <div class="sep"></div>
       <div class="hd">${L('الأداء', 'Performance')}</div>
+      <button class="mi" data-a="tasks">${ICO.chip}<span class="t">${L('مدير المهام (الرام والمعالج)', 'Task manager (RAM and CPU)')}</span><span class="sub">Shift+Esc</span></button>
+      <div class="row"><span class="lbl">${L('مانع الإعلانات', 'Ad blocker')}</span>
+        <button class="chip${S.adblock ? ' on' : ''}" data-a="adAll">${S.adblock ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
       <div class="row"><span class="lbl">${L('توفير الذاكرة (دقايق)', 'Memory saver (minutes)')}</span></div>
       <div class="row">${chips}</div>
       <div class="note">${L('التبويبات اللي ما فتحتها من هالمدة تنام وتفضّي الرام، وترجع تشتغل لما تفتحها.', 'Tabs you have not opened for this long go to sleep to free RAM, and wake up when you open them.')}</div>
@@ -286,7 +307,7 @@ async function renderMenu(kind) {
       <div class="sep"></div>
       <div class="note">3zT Browser ${esc(S.versions && S.versions.app)} · Chromium ${esc(S.versions && S.versions.chrome)}</div>`;
   }
-  if (openKind && openKind !== 'sug') place($(kind === 'ext' ? 'ext' : 'menuBtn'));
+  if (openKind && openKind !== 'sug') place($(kind === 'ext' ? 'ext' : kind === 'shield' ? 'shield' : 'menuBtn'));
 }
 
 $('drop').addEventListener('mousedown', e => { if (openKind === 'sug') e.preventDefault(); });
@@ -301,11 +322,13 @@ $('drop').addEventListener('click', async e => {
   const a = t.closest('[data-a]'); if (!a) return;
   const cmd = a.dataset.a;
   const simple = { new: ['tab', 'new'], newWindow: ['tab', 'newWindow'], incognito: ['tab', 'incognito'], history: ['tab', 'history'],
-    reopen: ['tab', 'reopen'], translate: ['tab', 'translate'], print: ['tab', 'print'],
+    reopen: ['tab', 'reopen'], translate: ['tab', 'translate'], print: ['tab', 'print'], tasks: ['tab', 'tasks'],
     downloads: ['misc', 'downloads'], fullscreen: ['misc', 'fullscreen'], devtools: ['misc', 'devtools'] };
   if (simple[cmd]) { ui.send(...simple[cmd]); closeDrop(); return; }
   switch (cmd) {
     case 'zoomReset': ui.send('tab', 'zoomReset'); break;
+    case 'adSite': ui.send('tab', 'adSite'); break;
+    case 'adAll': ui.send('set', 'adblock', !S.adblock); break;
     case 'restore': ui.send('set', 'restoreTabs', !S.restoreTabs); break;
     case 'hw': ui.send('set', 'hwAccel', !S.hwAccel); break;
     case 'relaunch': ui.send('misc', 'relaunch'); break;
