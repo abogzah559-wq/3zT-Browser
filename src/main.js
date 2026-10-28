@@ -34,6 +34,9 @@ if (early.hwAccel !== false) {
   app.commandLine.appendSwitch('enable-zero-copy');
 }
 
+/* Electron's own user agent (without the app name): the one Google's sign-in accepts */
+const ELECTRON_UA = app.userAgentFallback.replace(/\s+3z[tT][\w.-]*\/[\d.]+/g, '').replace(/\s+3zT Browser\/[\d.]+/g, '');
+
 /* a plain Chrome user agent (no "Electron/x" token) so sites treat us like Chrome */
 (() => {
   const major = (process.versions.chrome || '140').split('.')[0];
@@ -871,19 +874,20 @@ function taskRows() {
 
 /* ---------- permissions + downloads for a session ---------- */
 const setUp = new WeakSet();
-/* Google blocks sign-in from Electron-based browsers ("this browser may not be secure").
-   Only on Google's sign-in pages we look like Firefox (which Google allows); every other site sees Chrome. */
-const FIREFOX_UA = process.platform === 'win32'
-  ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0'
-  : 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0';
-const SIGNIN_URLS = ['*://accounts.google.com/*', '*://accounts.youtube.com/*'];
+/* Google sign-in rejects Electron browsers that pretend to be Chrome (or Firefox), but accepts
+   Electron's own, honest identity. So only Google's sign-in pages (and what they load) get the
+   Electron user agent; every other site still sees plain Chrome. */
+const isSignin = u => /^https?:\/\/accounts\.(google|youtube)\.com(\/|$)/i.test(u || '');
 function setupSession(ses) {
   if (setUp.has(ses)) return; setUp.add(ses);
-  ses.webRequest.onBeforeSendHeaders({ urls: SIGNIN_URLS }, (d, cb) => {
-    const h = d.requestHeaders;
-    h['User-Agent'] = FIREFOX_UA;
-    for (const k of Object.keys(h)) if (/^sec-ch-ua/i.test(k)) delete h[k];   // Firefox sends no client hints
-    cb({ requestHeaders: h });
+  ses.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (d, cb) => {
+    let top = '';
+    try { top = d.frame && d.frame.top ? d.frame.top.url : ''; } catch (e) {}
+    if (isSignin(d.url) || isSignin(top) || (d.resourceType !== 'mainFrame' && isSignin(d.referrer))) {
+      d.requestHeaders['User-Agent'] = ELECTRON_UA;
+      return cb({ requestHeaders: d.requestHeaders });
+    }
+    cb({});
   });
   ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (d, cb) => {
     if (!adblock || settings.data.adblock === false || d.resourceType === 'mainFrame') return cb({});
@@ -998,7 +1002,7 @@ function setupPasswordIpc() {
     try { await shell.trashItem(file); return true; } catch (err) { return false; }
   });
   // YouTube ad blocking: asked by the page preload before YouTube's own scripts run
-  ipcMain.on('signin:ua', e => { e.returnValue = FIREFOX_UA; });
+  ipcMain.on('signin:ua', e => { e.returnValue = ELECTRON_UA; });
   ipcMain.on('yt:adblock', e => {
     const t = tabOfWc(e.sender);
     e.returnValue = !!(t && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com'));
