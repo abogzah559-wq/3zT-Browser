@@ -15,6 +15,7 @@ const TIPS = {
 const ICO = {
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   plus: '<svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  gear: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></svg>',
   clock: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>',
   search: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
   star: '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg>',
@@ -296,11 +297,6 @@ async function renderMenu(kind) {
       <div class="note">${L('متجر كروم ما يشتغل هنا. نزّل الإضافة كمجلد وفكّه، وبعدين أضفه.', 'The Chrome Web Store does not work here. Get the extension as a folder, unzip it, then add it.')}</div>`;
     d.innerHTML = h;
   } else if (kind === 'menu') {
-    const ms = S.memorySaverMin;
-    const chips = [[0, L('إيقاف', 'Off')], [5, '5'], [15, '15'], [30, '30'], [60, '60']]
-      .map(([v, l]) => `<button class="chip${ms === v ? ' on' : ''}" data-ms="${v}">${l}</button>`).join('');
-    const hwNote = S.hwAccel !== S.hwAccelActive
-      ? `<button class="chip on" data-a="relaunch">${L('أعد التشغيل للتطبيق', 'Restart to apply')}</button>` : '';
     d.innerHTML = `
       <button class="mi" data-a="new">${ICO.plus}<span class="t">${L('تبويب جديد', 'New tab')}</span><span class="sub">Ctrl+T</span></button>
       <button class="mi" data-a="newWindow">${ICO.win}<span class="t">${L('نافذة جديدة', 'New window')}</span><span class="sub">Ctrl+N</span></button>
@@ -314,37 +310,13 @@ async function renderMenu(kind) {
       <button class="mi" data-a="find">${ICO.find}<span class="t">${L('بحث في الصفحة', 'Find in page')}</span><span class="sub">Ctrl+F</span></button>
       ${S.isWeb ? `<button class="mi" data-a="translate">${ICO.tr}<span class="t">${S.translated ? L('عرض الصفحة الأصلية', 'Show original') : L('ترجمة الصفحة', 'Translate page')}</span></button>` : ''}
       <button class="mi" data-a="print">${ICO.print}<span class="t">${L('طباعة…', 'Print…')}</span><span class="sub">Ctrl+P</span></button>
-      <div class="row"><span class="lbl">${L('تكبير الصفحة', 'Zoom')}</span>
+      <div class="row"><span class="lbl">${L('تكبير', 'Zoom')}</span>
         <button class="chip" data-z="-0.1">−</button><button class="chip" data-a="zoomReset">${S.zoom}%</button><button class="chip" data-z="0.1">+</button>
-        <button class="chip" data-a="fullscreen" title="F11">${L('ملء الشاشة', 'Full screen')}</button></div>
+        <button class="chip" data-a="fullscreen" title="F11">${ICO.full}</button></div>
       <div class="sep"></div>
-      <div class="hd">${L('الأداء', 'Performance')}</div>
-      <button class="mi" data-a="tasks">${ICO.chip}<span class="t">${L('مدير المهام (الرام والمعالج)', 'Task manager (RAM and CPU)')}</span><span class="sub">Shift+Esc</span></button>
-      <div class="row"><span class="lbl">${L('مانع الإعلانات', 'Ad blocker')}</span>
-        <button class="chip${S.adblock ? ' on' : ''}" data-a="adAll">${S.adblock ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
-      <div class="row"><span class="lbl">${L('حظر إعلانات يوتيوب', 'Block YouTube ads')}</span>
-        <button class="chip${S.ytAds ? ' on' : ''}" data-a="ytAds">${S.ytAds ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
-      ${S.fdmFound ? `<div class="row"><span class="lbl">${L('التنزيل عبر Free Download Manager (تجريبي)', 'Download with Free Download Manager (beta)')}</span>
-        <button class="chip${S.fdm ? ' on' : ''}" data-a="fdm">${S.fdm ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>` : ''}
-      <div class="row"><span class="lbl">${L('توفير الذاكرة (دقايق)', 'Memory saver (minutes)')}</span></div>
-      <div class="row">${chips}</div>
-      <div class="note">${L('التبويبات اللي ما فتحتها من هالمدة تنام وتفضّي الرام، وترجع تشتغل لما تفتحها.', 'Tabs you have not opened for this long go to sleep to free RAM, and wake up when you open them.')}</div>
-      <div class="row"><span class="lbl">${L('تسريع الأجهزة (كرت الشاشة)', 'Hardware acceleration (GPU)')}</span>
-        <button class="chip${S.hwAccel ? ' on' : ''}" data-a="hw">${S.hwAccel ? L('شغّال', 'On') : L('طافي', 'Off')}</button>${hwNote}</div>
-      <div class="sep"></div>
-      <div class="row"><span class="lbl">${L('اللغة', 'Language')}</span>
-        <button class="chip${!en() ? ' on' : ''}" data-lang="ar">عربي</button><button class="chip${en() ? ' on' : ''}" data-lang="en">English</button></div>
-      ${S.canDefault ? `<div class="row"><span class="lbl">${L('المتصفح الافتراضي', 'Default browser')}</span>
-        ${S.isDefault ? `<span class="chip on">${L('✓ هو الافتراضي', '✓ It is the default')}</span>` : `<button class="chip" data-a="makeDefault">${L('خلّه الافتراضي', 'Make it default')}</button>`}</div>` : ''}
-      <div class="row"><span class="lbl">${L('رجّع تبويباتي عند الفتح', 'Restore my tabs on start')}</span>
-        <button class="chip${S.restoreTabs ? ' on' : ''}" data-a="restore">${S.restoreTabs ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
-      <div class="sep"></div>
-      <button class="mi" data-a="importLook">${ICO.brush}<span class="t">${L('استيراد شكل بلاك كروم من كروم', 'Import Black Chrome look from Chrome')}</span></button>
-      <button class="mi" data-a="import">${ICO.star}<span class="t">${L('استيراد المفضلة والأيقونات من كروم', 'Import bookmarks and icons from Chrome')}</span></button>
+      <button class="mi" data-a="tasks">${ICO.chip}<span class="t">${L('مدير المهام', 'Task manager')}</span><span class="sub">Shift+Esc</span></button>
       <button class="mi" data-a="devtools">${ICO.code}<span class="t">${L('أدوات المطور', 'Developer tools')}</span><span class="sub">F12</span></button>
-      <button class="mi" data-a="clear">${ICO.trash}<span class="t">${L('مسح بيانات التصفح…', 'Clear browsing data…')}</span></button>
-      <div class="sep"></div>
-      <div class="note">3zT Browser ${esc(S.versions && S.versions.app)} · Chromium ${esc(S.versions && S.versions.chrome)}</div>`;
+      <button class="mi" data-a="settings">${ICO.gear}<span class="t">${L('الإعدادات', 'Settings')}</span></button>`;
   }
   if (openKind && openKind !== 'sug') place($(kind === 'ext' ? 'ext' : kind === 'shield' ? 'shield' : 'menuBtn'));
 }
@@ -363,7 +335,7 @@ $('drop').addEventListener('click', async e => {
   const a = t.closest('[data-a]'); if (!a) return;
   const cmd = a.dataset.a;
   const simple = { new: ['tab', 'new'], newWindow: ['tab', 'newWindow'], incognito: ['tab', 'incognito'], history: ['tab', 'history'],
-    reopen: ['tab', 'reopen'], translate: ['tab', 'translate'], print: ['tab', 'print'], tasks: ['tab', 'tasks'], passwords: ['tab', 'passwords'],
+    reopen: ['tab', 'reopen'], translate: ['tab', 'translate'], print: ['tab', 'print'], tasks: ['tab', 'tasks'], passwords: ['tab', 'passwords'], settings: ['tab', 'settings'],
     downloads: ['misc', 'downloads'], fullscreen: ['misc', 'fullscreen'], devtools: ['misc', 'devtools'] };
   if (simple[cmd]) { ui.send(...simple[cmd]); closeDrop(); return; }
   switch (cmd) {

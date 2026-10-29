@@ -20,7 +20,10 @@ const KNOWN = {
   gighmmpiobklfepjocnamgkkbiglidom: { skip: 'builtin', why: 'AdBlock (built-in ad blocker)' },
   jpkfgepcmmchgfbjblnodjhldacghenp: { skip: 'builtin', why: 'Pie Adblock (built-in ad blocker)' },
   cjpalhdlnbpafiamejdnhcphjbkeiagm: { skip: 'builtin', why: 'uBlock Origin (built-in ad blocker)' },
-  mpbjkejclgfgadiemmefgebjfooflfhl: { skip: 'unsupported', why: 'Buster (needs offscreen documents)' }
+  mpbjkejclgfgadiemmefgebjfooflfhl: { skip: 'unsupported', why: 'Buster (needs offscreen documents)' },
+  mnjggcdmjocbbbhaepdhchncahnbgone: { skip: 'builtin', why: 'SponsorBlock (built in)' },
+  kalhfjomailhflienkfajocjodgjipie: { skip: 'builtin', why: 'Clean YouTube (built in)' },
+  paponcgjfojgemddooebbgniglhkajkj: { skip: 'builtin', why: 'Ambient light for YouTube (built in)' }
 };
 
 /* generic rule for anything else: these Chrome-only APIs are missing in Electron */

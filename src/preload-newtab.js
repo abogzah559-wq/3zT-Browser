@@ -8,7 +8,7 @@
  */
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
-const internal = location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords)\.html$/i.test(decodeURIComponent(location.pathname));
+const internal = location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings)\.html$/i.test(decodeURIComponent(location.pathname));
 
 if (internal) {
   contextBridge.exposeInMainWorld('zeus', {
@@ -31,7 +31,12 @@ if (internal) {
     pwDelete: id => ipcRenderer.invoke('pw:delete', id),
     pwImport: () => ipcRenderer.invoke('pw:import'),
     pwDeleteFile: f => ipcRenderer.invoke('pw:deleteFile', f),
-    pwUnnever: s => ipcRenderer.invoke('pw:unnever', s)
+    pwUnnever: s => ipcRenderer.invoke('pw:unnever', s),
+    // settings page
+    settings: () => ipcRenderer.invoke('settings:get'),
+    set: (k, v) => ipcRenderer.send('set', k, v),
+    act: (cmd, arg) => ipcRenderer.invoke('settings:act', cmd, arg),
+    onSettings: fn => ipcRenderer.on('settings:changed', () => fn())
   });
 } else if (/^https?:$/.test(location.protocol)) {
   /* ================= Google sign-in: look like Firefox (Google blocks Electron browsers) ================= */
@@ -102,6 +107,144 @@ if (internal) {
         ytd-rich-item-renderer:has(ytd-ad-slot-renderer), ytd-rich-section-renderer:has(ytd-statement-banner-renderer) { display: none !important; }`;
       try { webFrame.insertCSS(css); } catch (e) {}
     }
+  }
+
+  /* ================= built-in features (used to be extensions) ================= */
+  let cfg = {};
+  try { cfg = ipcRenderer.sendSync('site:cfg') || {}; } catch (e) {}
+  const mainWorld = code => {
+    try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
+    catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
+  };
+
+  /* --- Twitch ads (TwitchAdSolutions "vaft", runs before Twitch's own player) --- */
+  if (cfg.twitch) { let c = ''; try { c = ipcRenderer.sendSync('site:code', 'twitch'); } catch (e) {} if (c) mainWorld(c); }
+
+  if (cfg.yt) {
+    const yt = cfg.yt;
+    /* --- Clean YouTube: switches become attributes on <html>, the CSS hides things --- */
+    let clean = yt.clean || {};
+    try { webFrame.insertCSS(yt.cleanCss || ''); } catch (e) {}
+    const applyClean = () => { const h = document.documentElement; if (h) for (const [k, v] of Object.entries(clean)) h.setAttribute(k, String(v)); };
+    applyClean();
+    document.addEventListener('readystatechange', applyClean);
+    const autoplayOff = () => {
+      if (!clean['hide-yt-autoplay']) return;
+      const b = document.querySelector('.ytp-autonav-toggle-button-container > .ytp-autonav-toggle-button');
+      if (b && b.getAttribute('aria-checked') === 'true') { const btn = document.querySelector('button.ytp-button[data-tooltip-target-id="ytp-autonav-toggle-button"]'); if (btn) btn.click(); }
+    };
+    ipcRenderer.on('site:update', (e, c) => { if (c && c.yt) { clean = c.yt.clean || {}; applyClean(); autoplayOff(); } });
+
+    /* --- SponsorBlock: skip sponsor parts of the video --- */
+    let segs = [], segFor = '', bound = null, muted = false, note = null;
+    const vid = () => { try { const u = new URL(location.href); return u.pathname === '/watch' ? u.searchParams.get('v') || '' : (/^\/(shorts|live)\/([\w-]{11})/.exec(u.pathname) || [])[2] || ''; } catch (e) { return ''; } };
+    const say = text => {
+      if (!document.body) return;
+      if (!note) {
+        const host = document.createElement('div'); host.style.cssText = 'position:fixed;z-index:2147483647;bottom:84px;left:50%;transform:translateX(-50%);pointer-events:none';
+        note = host.attachShadow({ mode: 'closed' });
+        note.innerHTML = '<style>div{font:600 13px system-ui,sans-serif;color:#fff;background:rgba(20,20,24,.9);padding:8px 14px;border-radius:16px;opacity:0;transition:opacity .2s}div.on{opacity:1}</style><div></div>';
+        document.body.appendChild(host);
+      }
+      const d = note.querySelector('div'); d.textContent = text; d.classList.add('on'); clearTimeout(d._t); d._t = setTimeout(() => d.classList.remove('on'), 2200);
+    };
+    const NAMES = { sponsor: ['إعلان', 'sponsor'], selfpromo: ['ترويج', 'self-promotion'], interaction: ['طلب اشتراك', 'subscribe reminder'], intro: ['المقدمة', 'intro'], outro: ['الخاتمة', 'outro'], preview: ['ملخص', 'preview'], filler: ['حشو', 'filler'], music_offtopic: ['جزء بدون موسيقى', 'non-music part'] };
+    const onTime = e => {
+      const v = e.target; if (!segs.length || !v || v.paused && v.currentTime === 0) return;
+      const t = v.currentTime; let inMute = false;
+      for (const s of segs) {
+        if (t >= s.s && t < s.e - 0.25) {
+          if (s.a === 'mute') { inMute = true; continue; }
+          v.currentTime = s.e;
+          const n = NAMES[s.c] || [s.c, s.c]; say(cfg.lang === 'en' ? `Skipped: ${n[1]}` : `⏭ تخطّيت: ${n[0]}`);
+          return;
+        }
+      }
+      if (inMute !== muted) { muted = inMute; v.muted = inMute; }
+    };
+    const bind = () => {
+      const v = document.querySelector('#movie_player video, video.html5-main-video');
+      if (v && v !== bound) { if (bound) bound.removeEventListener('timeupdate', onTime); v.addEventListener('timeupdate', onTime); bound = v; }
+    };
+    const refresh = async () => {
+      autoplayOff();
+      if (!yt.sponsor || !yt.sponsor.length) return;
+      const id = vid(); if (id === segFor) { bind(); return; }
+      segFor = id; segs = []; muted = false;
+      if (!id) return;
+      try { const r = await ipcRenderer.invoke('sb:get', id); if (segFor === id) segs = r || []; } catch (e) {}
+      bind();
+    };
+    document.addEventListener('yt-navigate-finish', refresh);
+    document.addEventListener('DOMContentLoaded', refresh);
+    setInterval(() => { if (vid() !== segFor) refresh(); else bind(); }, 2000);
+
+    /* --- Ambient light for YouTube: the original scripts, in their own isolated world (like an extension's),
+           so YouTube's script rules (CSP / Trusted Types) don't apply to them --- */
+    if (yt.ambient && !/^\/(live_chat|embed)/.test(location.pathname)) {
+      const WORLD = 1010, EV = 'zeus-amb-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { webFrame.setIsolatedWorldInfo(WORLD, { name: '3zT Ambient light', securityOrigin: 'zeus-res://ambient', csp: "script-src 'self' 'unsafe-eval' zeus-res:; object-src 'none'" }); } catch (e) {}
+      const inWorld = code => webFrame.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]).catch(err => console.warn('[3zT] ambient light', err));
+      const wrap = c => '(function (chrome) {\n' + c + '\n})(globalThis.__zeusChrome);';
+      // requests from that world (settings storage, loading the main script) come here as events with a secret name
+      document.addEventListener(EV + '-q', async e => {
+        let m; try { m = JSON.parse(e.detail); } catch (x) { return; }
+        let r = null;
+        try {
+          if (m.op === 'get') r = await ipcRenderer.invoke('amb:get', m.keys === undefined ? null : m.keys);
+          else if (m.op === 'set') { r = await ipcRenderer.invoke('amb:get', Object.keys(m.obj || {})); await ipcRenderer.invoke('amb:set', m.obj); }
+          else if (m.op === 'remove') await ipcRenderer.invoke('amb:remove', m.keys);
+          else if (m.op === 'main') { const c = await ipcRenderer.invoke('site:ambientMain'); if (c) await inWorld(wrap(c)); }
+        } catch (x) {}
+        document.dispatchEvent(new CustomEvent(EV + '-a', { detail: JSON.stringify({ id: m.id, r }) }));
+      });
+      const prelude = `(() => {
+        const EV = ${JSON.stringify(EV)}; let seq = 0; const pend = new Map(), listeners = new Set();
+        document.addEventListener(EV + '-a', e => { let m; try { m = JSON.parse(e.detail); } catch (x) { return; } const p = pend.get(m.id); if (p) { pend.delete(m.id); p(m.r); } });
+        const call = (op, a) => new Promise(res => { const id = ++seq; pend.set(id, res); document.dispatchEvent(new CustomEvent(EV + '-q', { detail: JSON.stringify(Object.assign({ op, id }, a)) })); });
+        const fire = ch => { for (const f of listeners) { try { f(ch, 'local'); } catch (e) {} } };
+        const ev = { addListener: f => listeners.add(f), removeListener: f => listeners.delete(f), hasListener: f => listeners.has(f) };
+        const done = (p, cb) => { if (typeof cb === 'function') p.then(v => cb(v)); return p; };
+        const local = {
+          get: (keys, cb) => done(call('get', { keys: keys === undefined ? null : keys }).then(r => r || {}), cb),
+          set: (obj, cb) => done(call('set', { obj }).then(old => { const c = {}; for (const k of Object.keys(obj || {})) c[k] = { newValue: obj[k], oldValue: old && old[k] }; fire(c); }), cb),
+          remove: (keys, cb) => { const ks = [].concat(keys || []); return done(call('remove', { keys: ks }).then(() => { const c = {}; for (const k of ks) c[k] = { newValue: undefined }; fire(c); }), cb); },
+          onChanged: ev
+        };
+        globalThis.__zeusChrome = {
+          runtime: { id: '3zt-ambient-light', lastError: undefined, getURL: p => 'zeus-res://ambient/' + String(p || '').replace(/^\\//, ''),
+            getManifest: () => ({ name: 'Ambient light for YouTube™', version: '2.38.17', manifest_version: 3 }),
+            sendMessage: () => Promise.resolve(), onMessage: { addListener() {}, removeListener() {} } },
+          storage: { local, onChanged: ev }
+        };
+        globalThis.__zeusAmbientMain = () => call('main');
+      })();`;
+      let c = ''; try { c = ipcRenderer.sendSync('site:code', 'ambientContent'); } catch (e) {}
+      if (c) inWorld(prelude + '\n' + wrap(c));
+    }
+  }
+
+  /* --- very fast mode: start loading a link the moment the mouse rests on it --- */
+  if (cfg.fast) {
+    const done = new Set();
+    const SKIP = /log-?out|sign-?out|log-?off|delete|remove|unsubscribe|cart|checkout|\.(zip|exe|msi|rar|7z|pdf|mp4|mkv|iso)(\?|$)/i;
+    const prefetch = href => {
+      try {
+        const u = new URL(href, location.href);
+        if (u.origin !== location.origin || !/^https?:$/.test(u.protocol) || SKIP.test(u.href)) return;
+        u.hash = ''; const k = u.href;
+        if (k === location.href.split('#')[0] || done.has(k) || done.size > 40) return;
+        done.add(k);
+        const l = document.createElement('link'); l.rel = 'prefetch'; l.href = k; (document.head || document.documentElement).appendChild(l);
+      } catch (e) {}
+    };
+    let hoverT = 0;
+    document.addEventListener('mouseover', e => {
+      const a = e.target && e.target.closest && e.target.closest('a[href]'); if (!a) return;
+      clearTimeout(hoverT); hoverT = setTimeout(() => prefetch(a.href), 65);
+    }, { capture: true, passive: true });
+    document.addEventListener('mouseout', () => clearTimeout(hoverT), { capture: true, passive: true });
+    document.addEventListener('mousedown', e => { const a = e.target && e.target.closest && e.target.closest('a[href]'); if (a) prefetch(a.href); }, { capture: true, passive: true });
   }
 
   /* ================= passwords ================= */

@@ -222,4 +222,20 @@ function readNewtabBlobs(profileDir, extId) {
   return found;
 }
 
-module.exports = { readBookmarksBar, readFavicons, readNewtabSettings, readNewtabBlobs, normUrl, hostOf, profiles };
+/* an extension's chrome.storage (LevelDB: key = setting name, value = JSON text); newest write wins */
+function readExtStorage(dir) {
+  const out = {}, seqs = {};
+  let files = [];
+  try { files = fs.readdirSync(dir).filter(n => /\.(log|ldb)$/.test(n)); } catch (e) { return out; }
+  const take = (key, val, seq) => {
+    const k = key.toString('utf8');
+    if (seqs[k] !== undefined && seqs[k] > seq) return;
+    try { out[k] = JSON.parse(val.toString('utf8')); seqs[k] = seq; } catch (e) {}
+  };
+  for (const n of files) {
+    try { const buf = fs.readFileSync(path.join(dir, n)); if (n.endsWith('.log')) logEntries(buf, take); else sstEntries(buf, take); } catch (e) {}
+  }
+  return out;
+}
+
+module.exports = { readExtStorage, readBookmarksBar, readFavicons, readNewtabSettings, readNewtabBlobs, normUrl, hostOf, profiles };
