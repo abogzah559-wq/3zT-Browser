@@ -81,6 +81,16 @@ function applyTips() {
 }
 applyTips();
 
+/* ---------- 'blend' mode: the strip takes the colour of the site under it ---------- */
+ui.on('tint', col => {
+  const st = document.documentElement.style;
+  if (!col) { document.body.classList.remove('tinted', 'light'); st.removeProperty('--tint'); return; }
+  st.setProperty('--tint', `rgb(${col.join(',')})`);
+  const lum = (0.299 * col[0] + 0.587 * col[1] + 0.114 * col[2]) / 255;
+  document.body.classList.add('tinted');
+  document.body.classList.toggle('light', lum > 0.6);
+});
+
 /* ---------- auto-hide: hide when the mouse leaves, show instantly when it comes back ---------- */
 let barHidden = false, hoverBar = false, hideT = 0, firstState = true;
 function busy() {
@@ -354,7 +364,7 @@ async function renderMenu(kind) {
       <div class="row"><span class="lbl">${L('اللغة', 'Language')}</span>
         <button class="chip${!en() ? ' on' : ''}" data-lang="ar">عربي</button><button class="chip${en() ? ' on' : ''}" data-lang="en">English</button></div>
       <div class="row"><span class="lbl">${L('الشريط العلوي', 'Top bar')}</span>
-        <button class="chip${S.barMode === 'dock' ? ' on' : ''}" data-bar="dock">${L('ثابت فوق الصفحة', 'Fixed above page')}</button><button class="chip${S.barMode === 'push' ? ' on' : ''}" data-bar="push">${L('يختفي ويدف الصفحة', 'Hide, push page')}</button><button class="chip${S.barMode === 'over' ? ' on' : ''}" data-bar="over">${L('يختفي فوق الصفحة', 'Hide, over page')}</button></div>
+        <button class="chip${S.barMode === 'dock' ? ' on' : ''}" data-bar="dock">${L('ثابت فوق الصفحة', 'Fixed above page')}</button><button class="chip${S.barMode === 'push' ? ' on' : ''}" data-bar="push">${L('يختفي ويدف الصفحة', 'Hide, push page')}</button><button class="chip${S.barMode === 'over' ? ' on' : ''}" data-bar="over">${L('يختفي فوق الصفحة', 'Hide, over page')}</button><button class="chip${S.barMode === 'blend' ? ' on' : ''}" data-bar="blend">${L('ثابت بلون الموقع', 'Fixed, site colour')}</button></div>
       <div class="row"><span class="lbl">${L('رجّع تبويباتي عند الفتح', 'Restore my tabs on start')}</span>
         <button class="chip${S.restoreTabs ? ' on' : ''}" data-a="restore">${S.restoreTabs ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
       <div class="sep"></div>
