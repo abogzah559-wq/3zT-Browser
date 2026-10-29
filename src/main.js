@@ -356,6 +356,39 @@ function newWindow(opts = {}) {
   return w;
 }
 
+/* ---------- links that belong to another program ---------- */
+const WEB_SCHEMES = new Set(['http', 'https', 'file', 'about', 'data', 'blob', 'chrome-extension', 'devtools', 'chrome', 'zeus-res', 'ws', 'wss', 'filesystem']);
+function isExternalUrl(u) {
+  const m = /^([a-z][a-z0-9+.-]*):/i.exec(u || ''); if (!m) return false;
+  const s = m[1].toLowerCase();
+  return !WEB_SCHEMES.has(s) && s !== 'javascript' && s !== 'vbscript';
+}
+const askingExternal = new Set();
+async function openExternalAsk(tab, url) {
+  const scheme = url.slice(0, url.indexOf(':')).toLowerCase();
+  const site = (hostOf(tab.url || '') || '').replace(/^www\./, '') || T('هذي الصفحة', 'This page');
+  const key = site + '|' + scheme;
+  const allowed = settings.data.extProto || (settings.data.extProto = []);
+  if (allowed.includes(key) || scheme === 'mailto') { shell.openExternal(url).catch(() => {}); return; }
+  if (askingExternal.has(key)) return; askingExternal.add(key);
+  try {
+    let name = ''; try { name = (app.getApplicationNameForProtocol(url) || '').replace(/\.exe$/i, ''); } catch (e) {}
+    const shown = name || scheme;
+    const w = tab.win && !tab.win.win.isDestroyed() ? tab.win.win : undefined;
+    const r = await dialog.showMessageBox(w, {
+      type: 'question', title: '3zT Browser', buttons: [T(`فتح ${shown}`, `Open ${shown}`), T('إلغاء', 'Cancel')], defaultId: 0, cancelId: 1, noLink: true,
+      message: T(`تبي تفتح ${shown}؟`, `Open ${shown}?`),
+      detail: T(`${site} يبي يفتح هذا البرنامج.`, `${site} wants to open this application.`),
+      checkboxLabel: T(`اسمح لـ ${site} يفتح روابط ${shown} دايماً`, `Always allow ${site} to open ${shown} links`)
+    });
+    if (r.response !== 0) return;
+    if (r.checkboxChecked) { allowed.push(key); settings.save(); }
+    await shell.openExternal(url);
+  } catch (e) {
+    console.warn('[3zT] external link', e && e.message);
+  } finally { askingExternal.delete(key); }
+}
+
 /* ---------- tab views ---------- */
 function destroyView(view) { try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {} }
 
@@ -374,7 +407,10 @@ function makeView(tab) {
   const wc = view.webContents;
   if (tab.muted) wc.setAudioMuted(true);
 
+  // links for other programs (claude://, mailto:, discord://, steam://...) go to Windows, like in Chrome
+  wc.on('will-frame-navigate', d => { if (isExternalUrl(d.url)) { d.preventDefault(); openExternalAsk(tab, d.url); } });
   wc.setWindowOpenHandler(d => {
+    if (isExternalUrl(d.url)) { openExternalAsk(tab, d.url); return { action: 'deny' }; }
     // real popups (sign-in windows...) keep their opener; normal "_blank" links become tabs
     if (d.disposition === 'new-window' && d.features) {
       return { action: 'allow', overrideBrowserWindowOptions: Object.assign({ autoHideMenuBar: true, backgroundColor: '#111' }, ICON_OPT) };
