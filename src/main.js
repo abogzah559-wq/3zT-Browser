@@ -106,6 +106,8 @@ const winOfUi = wc => wins.find(w => w.ui.webContents === wc);
 const tabOfWc = wc => allTabs().find(t => t.view && t.view.webContents === wc);
 const focusedWin = () => wins.find(w => !w.win.isDestroyed() && w.win.isFocused()) || lastFocused || wins[0];
 
+function barMode() { const m = settings.data.barMode; return m === 'push' || m === 'over' ? m : 'dock'; }
+
 class Win {
   constructor(opts = {}) {
     this.id = nextWinId++;
@@ -171,13 +173,14 @@ class Win {
     const { width, height } = w.getContentBounds();
     const t = this.active();
     if (t && t.view) {
-      const flush = this.htmlFs || isNewtab(t.url) || settings.data.autoHide !== false;
+      const mode = barMode();   // dock: bar sits above the page | push: hides, pushes the page down when shown | over: hides, floats over the page
+      const flush = this.htmlFs || isNewtab(t.url) || mode === 'over' || (mode === 'push' && this.barHidden);
       const top = this.stripH;
       t.view.setBounds(flush ? { x: 0, y: 0, width, height } : { x: 0, y: top, width, height: Math.max(0, height - top) });
     }
     this.ui.setVisible(!this.htmlFs);
     const uh = this.uiExpanded === true ? height : typeof this.uiExpanded === 'number' ? Math.min(height, this.uiExpanded)
-      : (this.barHidden && settings.data.autoHide !== false) ? 10 : this.stripH;
+      : (this.barHidden && barMode() !== 'dock') ? 10 : this.stripH;
     this.ui.setBounds({ x: 0, y: 0, width, height: uh });
   }
 
@@ -223,7 +226,7 @@ class Win {
         blockedTotal: settings.data.adBlockedTotal || 0,
         adRules: adblock ? adblock.ruleCount : 0,
         ytAds: settings.data.ytAds !== false,
-        autoHide: settings.data.autoHide !== false,
+        autoHide: barMode() !== 'dock', barMode: barMode(),
         fdm: !!settings.data.fdm, fdmFound: !!fdmPath(),
         pinned: pinnedExtensions(),
         versions: { app: app.getVersion(), chrome: process.versions.chrome }
@@ -1124,7 +1127,7 @@ function setupIpc() {
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
     if (key === 'hwAccel') settings.data.hwAccel = !!val;
     if (key === 'adblock') settings.data.adblock = !!val;
-    if (key === 'autoHide') { settings.data.autoHide = !!val; for (const w of wins) { if (!val) w.barHidden = false; w.layout(); } }
+    if (key === 'barMode' && ['dock', 'push', 'over'].includes(val)) { settings.data.barMode = val; for (const w of wins) { if (val === 'dock') w.barHidden = false; w.layout(); w.pushState(); } }
     if (key === 'ytAds') settings.data.ytAds = !!val;
     if (key === 'fdm') settings.data.fdm = !!val;
     settings.save(); settings.flush();
@@ -1256,7 +1259,7 @@ app.whenReady().then(async () => {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
     favImported: false, ntpImported: false, hwAccel: true,
     adblock: true, adAllow: [], adBlockedTotal: 0,
-    ytAds: true, fdm: false, autoHide: true, pinnedExt: [], extImported: false, pwNever: []
+    ytAds: true, fdm: false, barMode: 'dock', pinnedExt: [], extImported: false, pwNever: []
   });
   bookmarks = makeStore('bookmarks.json', { children: [] });
   history = makeStore('history.json', []);
