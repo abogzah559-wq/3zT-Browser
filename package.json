@@ -1,7 +1,7 @@
 {
   "name": "3zt-browser",
   "productName": "3zT Browser",
-  "version": "0.4.6",
+  "version": "0.5.0",
   "description": "متصفح خفيف مبني على Chromium بواجهة شفافة وفيديو خلفية",
   "main": "src/main.js",
   "author": "3zo",
