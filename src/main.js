@@ -7,7 +7,7 @@
  */
 const {
   app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, session, dialog,
-  screen, net, shell, clipboard, nativeImage, safeStorage
+  screen, net, shell, clipboard, nativeImage, safeStorage, protocol
 } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -17,6 +17,7 @@ const CI = require('./chrome-import');
 const { AdBlocker } = require('./adblock');
 const EXT = require('./ext-import');
 const PW = require('./passwords');
+const FEAT = require('./features');
 
 app.setName('3zT Browser');
 if (process.platform === 'win32') app.setAppUserModelId('com.3zo.3ztbrowser');
@@ -28,6 +29,13 @@ if (early.hwAccel === false) app.disableHardwareAcceleration();
 /* ---------- lighter Chromium ---------- */
 app.commandLine.appendSwitch('disable-features', ['SpareRendererForSitePerProcess', 'MediaRouter', 'OptimizationHints'].join(','));
 app.commandLine.appendSwitch('disable-background-networking');   // no hidden Chromium background downloads/pings
+const FAST = early.perfMode === 'fast';   // "very fast browsing": speed first, more RAM/CPU is fine
+if (FAST) {
+  app.commandLine.appendSwitch('enable-features', 'ParallelDownloading');   // downloads over several connections
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');          // background tabs keep full speed
+  app.commandLine.appendSwitch('ignore-gpu-blocklist');                    // use the graphics card even if Chromium is unsure about it
+  app.commandLine.appendSwitch('num-raster-threads', '4');
+}
 if (early.hwAccel !== false) {
   // GPU work like Chrome: rasterize pages and decode video on the graphics card
   app.commandLine.appendSwitch('enable-gpu-rasterization');
@@ -48,16 +56,21 @@ if (!app.requestSingleInstanceLock()) { app.quit(); }
 process.on('uncaughtException', err => { console.error('[3zT] uncaught', err && err.stack || err); });
 process.on('unhandledRejection', err => { console.error('[3zT] unhandled', err && err.stack || err); });
 
+// files that built-in YouTube features load into the page (must be allowed past the site's CSP, like an extension's files)
+protocol.registerSchemesAsPrivileged([{ scheme: 'zeus-res', privileges: { standard: true, secure: true, bypassCSP: true, supportFetchAPI: true, corsEnabled: true } }]);
+
 /* ---------- paths ---------- */
 const SRC = __dirname;
 const NEWTAB_FILE = path.join(SRC, 'newtab', 'newtab.html');
 const HISTORY_FILE = path.join(SRC, 'newtab', 'history.html');
 const TASKS_FILE = path.join(SRC, 'newtab', 'tasks.html');
 const PASSWORDS_FILE = path.join(SRC, 'newtab', 'passwords.html');
+const SETTINGS_FILE = path.join(SRC, 'newtab', 'settings.html');
 const NEWTAB_URL = pathToFileURL(NEWTAB_FILE).href;
 const HISTORY_URL = pathToFileURL(HISTORY_FILE).href;
 const TASKS_URL = pathToFileURL(TASKS_FILE).href;
 const PASSWORDS_URL = pathToFileURL(PASSWORDS_FILE).href;
+const SETTINGS_URL = pathToFileURL(SETTINGS_FILE).href;
 const UI_FILE = path.join(SRC, 'ui', 'toolbar.html');
 const PRELOAD_UI = path.join(SRC, 'preload-ui.js');
 const PRELOAD_TAB = path.join(SRC, 'preload-newtab.js');
@@ -70,8 +83,9 @@ const isNewtab = u => !u || same(u, NEWTAB_URL);
 const isHistory = u => same(u, HISTORY_URL);
 const isTasks = u => same(u, TASKS_URL);
 const isPasswords = u => same(u, PASSWORDS_URL);
-const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u);
-const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : isTasks(u) ? 'zeus://tasks' : isPasswords(u) ? 'zeus://passwords' : u);
+const isSettings = u => same(u, SETTINGS_URL);
+const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u) || isSettings(u);
+const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : isTasks(u) ? 'zeus://tasks' : isPasswords(u) ? 'zeus://passwords' : isSettings(u) ? 'zeus://settings' : u);
 
 /* ---------- tiny JSON stores (debounced, atomic save) ---------- */
 function makeStore(name, def) {
@@ -231,7 +245,7 @@ class Win {
         private: this.private,
         tabs: this.tabs.map(x => ({
           id: x.id,
-          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : isTasks(x.url) ? T('مدير المهام', 'Task manager') : isPasswords(x.url) ? T('كلمات السر', 'Passwords') : shownUrl(x.url)),
+          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : isTasks(x.url) ? T('مدير المهام', 'Task manager') : isPasswords(x.url) ? T('كلمات السر', 'Passwords') : isSettings(x.url) ? T('الإعدادات', 'Settings') : shownUrl(x.url)),
           url: shownUrl(x.url), favicon: isInternal(x.url) ? 'app' : (x.favicon || ''),
           loading: !!x.loading, discarded: !!x.discarded, muted: !!x.muted,
           audible: !!(x.view && !x.view.webContents.isDestroyed() && x.view.webContents.isCurrentlyAudible())
@@ -352,7 +366,7 @@ function makeView(tab) {
       partition: tab.win.partition,
       contextIsolation: true, sandbox: true, nodeIntegration: false,
       plugins: true,                   // built-in PDF viewer
-      spellcheck: false, backgroundThrottling: true
+      spellcheck: false, backgroundThrottling: !FAST
     }
   });
   if (tab.win.private) setupSession(view.webContents.session);
@@ -425,6 +439,7 @@ function loadInto(tab, url) {
   else if (isHistory(url)) wc.loadFile(HISTORY_FILE).catch(() => {});
   else if (isTasks(url)) wc.loadFile(TASKS_FILE).catch(() => {});
   else if (isPasswords(url)) wc.loadFile(PASSWORDS_FILE).catch(() => {});
+  else if (isSettings(url)) wc.loadFile(SETTINGS_FILE).catch(() => {});
   else wc.loadURL(url).catch(() => {});
 }
 
@@ -439,7 +454,7 @@ function discard(t) {
 }
 setInterval(() => {
   const min = settings && settings.data.memorySaverMin;
-  if (!min) return;
+  if (!min || FAST) return;   // very fast mode: tabs never sleep, switching is instant
   const limit = Date.now() - min * 60000;
   for (const t of allTabs()) if (t.id !== t.win.activeId && t.view && t.lastActive < limit) discard(t);
 }, 30000);
@@ -727,6 +742,7 @@ function toUrl(text) {
   if (/^zeus:\/\/history/i.test(t)) return HISTORY_URL;
   if (/^zeus:\/\/tasks/i.test(t)) return TASKS_URL;
   if (/^zeus:\/\/passwords/i.test(t)) return PASSWORDS_URL;
+  if (/^zeus:\/\/settings/i.test(t)) return SETTINGS_URL;
   if (/^(https?|file|chrome-extension|about|view-source):/i.test(t)) return t;
   if (/^localhost(:\d+)?(\/|$)/i.test(t) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(t)) return 'http://' + t;
   if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return 'https://' + t;
@@ -919,6 +935,7 @@ const FIREFOX_UA = process.platform === 'win32'
 const SIGNIN_URLS = ['*://accounts.google.com/*', '*://accounts.youtube.com/*'];
 function setupSession(ses) {
   if (setUp.has(ses)) return; setUp.add(ses);
+  try { ses.protocol.handle('zeus-res', FEAT.serve); } catch (e) {}
   try { ses.setSpellCheckerEnabled(false); } catch (e) {}   // no dictionary download, less memory
   ses.webRequest.onBeforeSendHeaders({ urls: SIGNIN_URLS }, (d, cb) => {
     const h = d.requestHeaders;
@@ -1044,11 +1061,84 @@ function setupPasswordIpc() {
     const t = tabOfWc(e.sender);
     e.returnValue = !!(t && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com'));
   });
+  setupSiteIpc();
+}
+
+/* ---------- built-in site features (were extensions) ---------- */
+const senderHost = e => { try { return new URL(e.senderFrame.url).hostname; } catch (x) { return ''; } };
+const isYT = h => /(^|\.)youtube\.com$/i.test(h), isTwitch = h => /(^|\.)twitch\.tv$/i.test(h);
+let ambientStore = null;
+function siteCfg(host) {
+  const d = settings.data, adsOn = d.adblock !== false;
+  return {
+    fast: FAST, lang: d.lang,
+    yt: isYT(host) ? { clean: ytCleanAttrs(), cleanCss: FEAT.YT_CLEAN_CSS, sponsor: d.sponsorBlock !== false ? (d.sbCats || []) : [], ambient: d.ambient !== false } : null,
+    twitch: isTwitch(host) && adsOn && d.twitchAds !== false && !d.adAllow.includes('twitch.tv')
+  };
+}
+function ytCleanAttrs() {
+  const on = settings.data.ytClean || {}, out = {};
+  for (const [id, attrs] of Object.entries(FEAT.YT_CLEAN)) for (const a of attrs) out[a] = !!on[id];
+  return out;
+}
+function setupSiteIpc() {
+  ipcMain.on('site:cfg', e => { e.returnValue = tabOfWc(e.sender) ? siteCfg(senderHost(e)) : {}; });
+  ipcMain.on('site:code', (e, name) => {
+    const h = senderHost(e);
+    const ok = (name === 'twitch' && isTwitch(h)) || (name === 'ambientContent' && isYT(h));
+    e.returnValue = ok ? FEAT.code(name) : '';
+  });
+  ipcMain.handle('site:ambientMain', e => (isYT(senderHost(e)) ? FEAT.code('ambientMain') : ''));
+  ipcMain.handle('sb:get', (e, id) => (isYT(senderHost(e)) && settings.data.sponsorBlock !== false ? FEAT.sbSegments(id, settings.data.sbCats) : []));
+  // chrome.storage.local for ambient light
+  const amb = () => ambientStore || (ambientStore = makeStore('ambient-light.json', {}));
+  ipcMain.handle('amb:get', (e, keys) => {
+    if (!isYT(senderHost(e))) return {};
+    const all = amb().data, out = {};
+    if (keys == null) return Object.assign({}, all);
+    if (typeof keys === 'string') keys = [keys];
+    if (Array.isArray(keys)) { for (const k of keys) if (k in all) out[k] = all[k]; return out; }
+    if (typeof keys === 'object') { for (const k of Object.keys(keys)) out[k] = k in all ? all[k] : keys[k]; return out; }
+    return out;
+  });
+  ipcMain.handle('amb:set', (e, obj) => { if (!isYT(senderHost(e)) || !obj || typeof obj !== 'object') return false; Object.assign(amb().data, obj); amb().save(); return true; });
+  ipcMain.handle('amb:remove', (e, keys) => { if (!isYT(senderHost(e))) return false; for (const k of [].concat(keys || [])) delete amb().data[k]; amb().save(); return true; });
+}
+/* tell open YouTube tabs about changed switches */
+function pushSiteCfg() {
+  for (const t of allTabs()) {
+    if (!t.view || t.view.webContents.isDestroyed()) continue;
+    const h = hostOf(t.url || '') || '';
+    if (isYT(h)) t.view.webContents.send('site:update', siteCfg(h));
+  }
+}
+/* the extensions that are now built in: carry their settings over once, then remove them */
+const MERGED = { sponsorBlock: 'mnjggcdmjocbbbhaepdhchncahnbgone', cleanYT: 'kalhfjomailhflienkfajocjodgjipie', ambient: 'paponcgjfojgemddooebbgniglhkajkj' };
+function mergeBuiltInExtensions() {
+  if (settings.data.mergedExt) return;
+  const ud = app.getPath('userData');
+  const local = id => CI.readExtStorage(path.join(ud, 'Local Extension Settings', id));
+  const chromeStore = (kind, id) => { for (const p of CI.profiles(app)) { const s = CI.readExtStorage(path.join(p, kind, id)); if (Object.keys(s).length) return s; } return {}; };
+  try {
+    let cy = local(MERGED.cleanYT); if (!Object.keys(cy).length) cy = chromeStore('Sync Extension Settings', MERGED.cleanYT);
+    const clean = FEAT.cleanFromExtension(cy);
+    if (Object.keys(clean).length) settings.data.ytClean = Object.assign({}, settings.data.ytClean, clean);
+  } catch (e) {}
+  try {
+    let am = local(MERGED.ambient); if (!Object.keys(am).length) am = chromeStore('Local Extension Settings', MERGED.ambient);
+    if (Object.keys(am).length) { const st = makeStore('ambient-light.json', {}); if (!Object.keys(st.data).length) { st.data = am; st.flush(); } ambientStore = st; }
+  } catch (e) {}
+  const ids = Object.values(MERGED);
+  settings.data.extensions = (settings.data.extensions || []).filter(p => !ids.some(id => p.includes(id)));
+  settings.data.pinnedExt = (settings.data.pinnedExt || []).filter(id => !ids.includes(id));
+  for (const id of ids) { try { fs.rmSync(path.join(extRoot(), id), { recursive: true, force: true }); } catch (e) {} }
+  settings.data.mergedExt = true; settings.save();
 }
 
 /* ---------- IPC ---------- */
 const uiWin = e => winOfUi(e.sender);
 const internalPage = e => { try { return isInternal(e.senderFrame.url); } catch (x) { return false; } };
+const settingsPage = e => { try { return isSettings(e.senderFrame.url); } catch (x) { return false; } };
 
 function setupIpc() {
   ipcMain.on('ui:height', (e, h) => {
@@ -1090,6 +1180,7 @@ function setupIpc() {
       case 'print': if (wc) wc.print({}, () => {}); break;
       case 'tasks': openTasks(w); break;
       case 'passwords': { const ex = allTabs().find(x => isPasswords(x.url)); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(PASSWORDS_URL); break; }
+      case 'settings': { const ex = allTabs().find(x => isSettings(x.url)); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(SETTINGS_URL); break; }
       case 'adSite': {   // turn the blocker off / on for the current site, then reload it
         if (!t || !/^https?:/i.test(t.url)) break;
         const site = AdBlocker.site(hostOf(t.url)); const list = settings.data.adAllow;
@@ -1155,7 +1246,13 @@ function setupIpc() {
   });
 
   ipcMain.on('set', (e, key, val) => {
-    if (!uiWin(e) && !(internalPage(e) && key === 'lang')) return;
+    if (!uiWin(e) && !settingsPage(e) && !(internalPage(e) && key === 'lang')) return;
+    if (key === 'perfMode' && ['normal', 'fast'].includes(val)) settings.data.perfMode = val;
+    if (key === 'sponsorBlock') settings.data.sponsorBlock = !!val;
+    if (key === 'sbCats' && Array.isArray(val)) settings.data.sbCats = val.filter(c => FEAT.SB_CATS.includes(c));
+    if (key === 'ambient') settings.data.ambient = !!val;
+    if (key === 'twitchAds') settings.data.twitchAds = !!val;
+    if (key === 'ytClean' && val && typeof val === 'object') { const o = {}; for (const k of Object.keys(FEAT.YT_CLEAN)) if (val[k]) o[k] = true; settings.data.ytClean = o; pushSiteCfg(); }
     if (key === 'lang' && (val === 'ar' || val === 'en')) settings.data.lang = val;
     if (key === 'memorySaverMin' && [0, 5, 15, 30, 60].includes(+val)) settings.data.memorySaverMin = +val;
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
@@ -1165,6 +1262,7 @@ function setupIpc() {
     if (key === 'fdm') settings.data.fdm = !!val;
     settings.save(); settings.flush();
     for (const w of wins) w.pushState();
+    settingsChanged();
     if (key === 'lang') for (const t of allTabs()) if (t.view && isInternal(t.url)) t.view.webContents.send('lang', settings.data.lang);
   });
 
@@ -1181,17 +1279,7 @@ function setupIpc() {
       return { ok: true, name: ext.name };
     } catch (err) { return { ok: false, error: String(err.message || err) }; }
   });
-  ipcMain.handle('ext:remove', (e, id) => {
-    if (!uiWin(e)) return false;
-    const ext = extApi().getExtension(id); if (!ext) return false;
-    extApi().removeExtension(id);
-    settings.data.extensions = settings.data.extensions.filter(p => p !== ext.path);
-    settings.data.pinnedExt = (settings.data.pinnedExt || []).filter(x => x !== id);
-    settings.save();
-    if (ext.path.startsWith(extRoot())) { try { fs.rmSync(ext.path, { recursive: true, force: true }); } catch (err) {} }
-    for (const w of wins) w.pushState();
-    return true;
-  });
+  ipcMain.handle('ext:remove', (e, id) => (uiWin(e) ? removeExtension(id) : false));
   ipcMain.on('ext:popup', (e, a) => { const w = uiWin(e); if (w && a && a.id) openExtPopup(w, a.id, a.rect || { x: 0, y: 0, w: 0, h: 40 }); });
   ipcMain.on('ext:popupClose', e => { if (uiWin(e)) closeExtPopup(); });
   ipcMain.on('ext:pin', (e, id) => {
@@ -1254,8 +1342,12 @@ function setupIpc() {
     discard(t); return true;
   });
 
-  ipcMain.on('misc', async (e, cmd) => {
-    const w = uiWin(e); if (!w) return;
+  ipcMain.on('misc', (e, cmd) => { const w = uiWin(e); if (w) runMisc(w, cmd); });
+  setupSettingsIpc();
+  ipcMain.on('download:show', (e, p) => { if (uiWin(e) && typeof p === 'string') shell.showItemInFolder(p); });
+}
+async function runMisc(w, cmd) {
+  {
     const t = w.active();
     if (cmd === 'downloads') shell.openPath(app.getPath('downloads'));
     if (cmd === 'makeDefault') makeDefault();
@@ -1271,9 +1363,69 @@ function setupIpc() {
       history.data = []; history.flush();
       await session.defaultSession.clearCache();
       await session.defaultSession.clearStorageData({ storages: ['cookies', 'cachestorage', 'serviceworkers', 'shadercache', 'websql'] });
+      return true;
     }
+  }
+}
+
+/* ---------- settings page (zeus://settings) ---------- */
+function removeExtension(id) {
+  const ext = extApi().getExtension(id); if (!ext) return false;
+  extApi().removeExtension(id);
+  settings.data.extensions = settings.data.extensions.filter(p => p !== ext.path);
+  settings.data.pinnedExt = (settings.data.pinnedExt || []).filter(x => x !== id);
+  settings.save();
+  if (ext.path.startsWith(extRoot())) { try { fs.rmSync(ext.path, { recursive: true, force: true }); } catch (err) {} }
+  for (const w of wins) w.pushState();
+  return true;
+}
+function settingsChanged() {
+  for (const t of allTabs()) if (t.view && isSettings(t.url) && !t.view.webContents.isDestroyed()) t.view.webContents.send('settings:changed');
+}
+function setupSettingsIpc() {
+  ipcMain.handle('settings:get', e => {
+    if (!settingsPage(e)) return null;
+    const d = settings.data;
+    return {
+      lang: d.lang, perfMode: d.perfMode || 'normal', perfActive: FAST ? 'fast' : 'normal',
+      memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, restoreTabs: !!d.restoreTabs,
+      adblock: d.adblock !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
+      blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
+      sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytClean: d.ytClean || {},
+      fdm: !!d.fdm, fdmFound: !!fdmPath(), canDefault: process.platform === 'win32', isDefault: isDefaultCache,
+      extensions: listExtensions(), versions: { app: app.getVersion(), chrome: process.versions.chrome }
+    };
   });
-  ipcMain.on('download:show', (e, p) => { if (uiWin(e) && typeof p === 'string') shell.showItemInFolder(p); });
+  ipcMain.handle('settings:act', async (e, cmd, arg) => {
+    if (!settingsPage(e)) return null;
+    const t = tabOfWc(e.sender), w = t ? t.win : focusedWin();
+    switch (cmd) {
+      case 'makeDefault': makeDefault(); return true;
+      case 'relaunch': if (w) runMisc(w, 'relaunch'); return true;
+      case 'clearData': return w ? runMisc(w, 'clearData') : false;
+      case 'importBookmarks': return importChromeBookmarks();
+      case 'importLook': return prepareNewtabImport();
+      case 'extRemove': { const r = removeExtension(arg); settingsChanged(); return r; }
+      case 'extImport': {
+        for (const x of extApi().getAllExtensions()) if (x.path.startsWith(extRoot()) && !x.path.includes(path.sep + 'manual' + path.sep)) { try { extApi().removeExtension(x.id); } catch (err) {} }
+        const r = importChromeExtensions();
+        for (const p of settings.data.extensions) { try { await loadExtensionDir(p); } catch (err) {} }
+        for (const x of wins) x.pushState(); settingsChanged();
+        return { imported: r.imported.map(x => x.name) };
+      }
+      case 'extOptions': if (w && /^chrome-extension:\/\//.test(arg || '')) w.createTab(arg); return true;
+      case 'unallow': settings.data.adAllow = settings.data.adAllow.filter(x => x !== arg); settings.save(); settingsChanged(); for (const x of wins) x.pushState(); return true;
+      case 'open': {
+        if (!w) return false;
+        if (arg === 'tasks') openTasks(w);
+        else if (arg === 'history') w.createTab(HISTORY_URL);
+        else if (arg === 'passwords') { const ex = allTabs().find(x => isPasswords(x.url)); if (ex) ex.win.activate(ex.id); else w.createTab(PASSWORDS_URL); }
+        return true;
+      }
+      case 'downloads': shell.openPath(app.getPath('downloads')); return true;
+    }
+    return null;
+  });
 }
 
 /* ---------- start ---------- */
@@ -1344,7 +1496,8 @@ app.whenReady().then(async () => {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
     favImported: false, ntpImported: false, hwAccel: true,
     adblock: true, adAllow: [], adBlockedTotal: 0,
-    ytAds: true, fdm: false, pinnedExt: [], extImported: false, pwNever: []
+    ytAds: true, fdm: false, pinnedExt: [], extImported: false, pwNever: [],
+    perfMode: 'normal', sponsorBlock: true, sbCats: ['sponsor', 'selfpromo', 'interaction'], ambient: true, twitchAds: true, ytClean: {}, mergedExt: false
   });
   bookmarks = makeStore('bookmarks.json', { children: [] });
   history = makeStore('history.json', []);
@@ -1381,6 +1534,7 @@ app.whenReady().then(async () => {
     try { const r = importChromeExtensions(); console.log('[3zT] extensions imported:', r.imported.map(x => x.name).join(', ')); } catch (e) { console.warn('extension import failed', e.message); }
     settings.data.extImported = true; settings.save();
   }
+  try { mergeBuiltInExtensions(); } catch (e) { console.warn('merge failed', e.message); }
   for (const p of settings.data.extensions.slice()) {
     try { await loadExtensionDir(p); } catch (e) { console.warn('extension failed', p, e.message); }
   }

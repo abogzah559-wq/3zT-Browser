@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>الإعدادات</title>
+<link rel="icon" href="icons/tab32.png">
+<style>
+*{box-sizing:border-box}
+:root{--bg:#0b0b0f;--card:#141419;--line:rgba(255,255,255,.07);--muted:rgba(255,255,255,.55);--acc:#8ab4f8;--warn:#ffb86b}
+html,body{margin:0;background:var(--bg);color:#eee;font-family:"Segoe UI",Tajawal,Tahoma,system-ui,sans-serif;color-scheme:dark;font-size:14px}
+.wrap{display:flex;max-width:1040px;margin:0 auto;min-height:100vh}
+nav{flex:none;width:220px;padding:28px 12px;position:sticky;top:0;align-self:flex-start;height:100vh}
+nav h1{font-size:20px;font-weight:600;margin:0 10px 18px}
+nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:18px;color:#ddd;text-decoration:none;cursor:pointer;margin-bottom:2px}
+nav a:hover{background:rgba(255,255,255,.06)}
+nav a.on{background:rgba(138,180,248,.16);color:#cfe0ff}
+nav svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+main{flex:1;min-width:0;padding:28px 22px 80px}
+section{margin-bottom:30px;scroll-margin-top:20px}
+h2{font-size:16px;font-weight:600;margin:0 4px 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.row{display:flex;align-items:center;gap:14px;padding:13px 16px;border-top:1px solid var(--line);min-height:56px}
+.row:first-child{border-top:0}
+.row .tx{flex:1;min-width:0}
+.row .t{font-weight:500}
+.row .d{color:var(--muted);font-size:12.5px;margin-top:3px;line-height:1.6}
+.row.sub{padding-inline-start:34px;min-height:44px}
+.row.dis{opacity:.45;pointer-events:none}
+button{font:inherit;color:inherit;cursor:pointer;padding:7px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.18);background:transparent;white-space:nowrap}
+button:hover{background:rgba(255,255,255,.08)}
+button.pri{background:var(--acc);color:#111;border-color:var(--acc)}
+.seg{display:inline-flex;border:1px solid rgba(255,255,255,.18);border-radius:16px;overflow:hidden;flex:none}
+.seg button{border:0;border-radius:0;padding:7px 13px}
+.seg button.on{background:var(--acc);color:#111}
+.sw{flex:none;position:relative;width:38px;height:22px;border-radius:11px;background:rgba(255,255,255,.2);border:0;padding:0;transition:background .15s}
+.sw::after{content:"";position:absolute;top:3px;inset-inline-start:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:inset-inline-start .15s}
+.sw.on{background:var(--acc)}
+.sw.on::after{inset-inline-start:19px}
+.sw:hover{background:rgba(255,255,255,.28)}.sw.on:hover{background:#9cc0fa}
+.modes{display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:14px 16px}
+.mode{text-align:start;padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,.14);white-space:normal;line-height:1.6}
+.mode b{display:block;font-size:14.5px;margin-bottom:4px}
+.mode span{color:var(--muted);font-size:12.5px}
+.mode.on{border-color:var(--acc);background:rgba(138,180,248,.1)}
+.note{margin:10px 16px 14px;padding:10px 12px;border-radius:10px;background:rgba(255,184,107,.1);border:1px solid rgba(255,184,107,.35);font-size:12.5px;display:flex;align-items:center;gap:10px}
+.note span{flex:1}
+.chips{display:flex;flex-wrap:wrap;gap:6px;padding:4px 16px 14px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 6px 4px 10px;border-radius:12px;background:rgba(255,255,255,.07);font-size:12.5px}
+.chip button{padding:0 6px;border:0;border-radius:8px}
+.ext img,.ext .ph{width:22px;height:22px;border-radius:5px;flex:none}
+.ext .ph{background:rgba(255,255,255,.12)}
+.muted{color:var(--muted)}
+.toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#202027;border:1px solid var(--line);padding:10px 16px;border-radius:14px;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:1}
+@media (max-width:760px){nav{display:none}.modes{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav id="nav"></nav>
+  <main id="main"></main>
+</div>
+<div class="toast" id="toast"></div>
+<script src="settings.js"></script>
+</body>
+</html>
