@@ -165,3 +165,7 @@ body:not(.isweb) #shield{display:none}
 #toast .alt{background:transparent;color:#ddd;border:1px solid rgba(255,255,255,.2)}
 #toast .t2{display:flex;flex-direction:column;gap:2px;white-space:normal;max-width:360px}
 #toast .t2 small{opacity:.65}
+
+/* 'blend' mode: the strip wears the site's colour so the bar looks like part of the page */
+body.web.tinted #strip{background:var(--tint);border-bottom-color:transparent}
+body.web.tinted.light #bar,body.web.tinted.light #tabs,body.web.tinted.light #winctl{background:rgba(24,24,28,.86);border-color:rgba(0,0,0,.25)}

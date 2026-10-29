@@ -106,7 +106,8 @@ const winOfUi = wc => wins.find(w => w.ui.webContents === wc);
 const tabOfWc = wc => allTabs().find(t => t.view && t.view.webContents === wc);
 const focusedWin = () => wins.find(w => !w.win.isDestroyed() && w.win.isFocused()) || lastFocused || wins[0];
 
-function barMode() { const m = settings.data.barMode; return m === 'push' || m === 'over' ? m : 'dock'; }
+function barMode() { const m = settings.data.barMode; return ['push', 'over', 'blend'].includes(m) ? m : 'dock'; }
+const docked = () => ['dock', 'blend'].includes(barMode());   // bar always shown, page starts under it
 
 class Win {
   constructor(opts = {}) {
@@ -120,6 +121,8 @@ class Win {
     this.barHidden = false;   // auto-hide: the bar is tucked away, only a thin edge at the top is left to bring it back
     this.htmlFs = false;
     this.stateTimer = null;
+    this.tint = null;          // 'blend' mode: colour of the top of the page, painted behind the bar
+    this.tintTimer = setInterval(() => this.sampleTint(), 1200);   // pages change colour as they load/scroll
 
     const b = opts.bounds && onScreen(opts.bounds) ? opts.bounds : null;
     this.win = new BaseWindow(Object.assign({
@@ -152,7 +155,7 @@ class Win {
       if (!quitting && wins.length === 1) { quitting = true; saveSession(); }
     });
     w.on('closed', () => {
-      clearTimeout(this.stateTimer); this.stateTimer = null;
+      clearTimeout(this.stateTimer); this.stateTimer = null; clearInterval(this.tintTimer);
       for (const t of this.tabs) if (t.view) destroyView(t.view);
       this.tabs = [];
       destroyView(this.ui);   // a closed BaseWindow does not free its views by itself
@@ -174,14 +177,43 @@ class Win {
     const t = this.active();
     if (t && t.view) {
       const mode = barMode();   // dock: bar sits above the page | push: hides, pushes the page down when shown | over: hides, floats over the page
-      const flush = this.htmlFs || isNewtab(t.url) || mode === 'over' || (mode === 'push' && this.barHidden);
+      const flush = this.htmlFs || isNewtab(t.url) || mode === 'over' || (mode === 'push' && this.barHidden);  // blend = dock + page colour
       const top = this.stripH;
       t.view.setBounds(flush ? { x: 0, y: 0, width, height } : { x: 0, y: top, width, height: Math.max(0, height - top) });
     }
     this.ui.setVisible(!this.htmlFs);
     const uh = this.uiExpanded === true ? height : typeof this.uiExpanded === 'number' ? Math.min(height, this.uiExpanded)
-      : (this.barHidden && barMode() !== 'dock') ? 10 : this.stripH;
+      : (this.barHidden && !docked()) ? 10 : this.stripH;
     this.ui.setBounds({ x: 0, y: 0, width, height: uh });
+  }
+
+  /* 'blend' mode: read the colour of the page's top edge so the bar looks like part of the site */
+  async sampleTint() {
+    if (barMode() !== 'blend' || this.win.isDestroyed() || this.ui.webContents.isDestroyed() || this.win.isMinimized() || !this.win.isVisible()) return;
+    const t = this.active();
+    let col = null;
+    if (t && t.view && !isNewtab(t.url) && !t.sleeping && !t.view.webContents.isDestroyed()) {
+      try {
+        const { width } = t.view.getBounds();
+        if (width < 20) return;
+        const img = await t.view.webContents.capturePage({ x: 0, y: 0, width, height: 3 });
+        const sz = img.getSize(), bmp = img.toBitmap();   // BGRA
+        if (sz.width && bmp.length >= sz.width * 4) {
+          // most common colour along the top row (ignores logos/buttons), quantised a little
+          const cnt = new Map(); const row = Math.min(1, sz.height - 1) * sz.width * 4;
+          for (let x = 0; x < sz.width; x += 2) {
+            const i = row + x * 4; const k = ((bmp[i + 2] >> 3) << 10) | ((bmp[i + 1] >> 3) << 5) | (bmp[i] >> 3);
+            const c = cnt.get(k); if (c) { c.n++; c.r += bmp[i + 2]; c.g += bmp[i + 1]; c.b += bmp[i]; } else cnt.set(k, { n: 1, r: bmp[i + 2], g: bmp[i + 1], b: bmp[i] });
+          }
+          let best = null; for (const c of cnt.values()) if (!best || c.n > best.n) best = c;
+          if (best) col = [best.r, best.g, best.b].map(v => Math.round(v / best.n));
+        }
+      } catch (e) { return; }
+    }
+    const key = col ? col.join(',') : '';
+    if (key === (this.tint || '') || this.ui.webContents.isDestroyed()) return;
+    this.tint = key;
+    this.ui.webContents.send('tint', col);
   }
 
   pushState() {
@@ -189,6 +221,7 @@ class Win {
     this.stateTimer = setTimeout(() => {
       this.stateTimer = null;
       if (this.win.isDestroyed() || this.ui.webContents.isDestroyed()) return;
+      this.sampleTint();
       const t = this.active();
       const wc = t && t.view ? t.view.webContents : null;
       const url = t ? t.url : '';
@@ -226,7 +259,7 @@ class Win {
         blockedTotal: settings.data.adBlockedTotal || 0,
         adRules: adblock ? adblock.ruleCount : 0,
         ytAds: settings.data.ytAds !== false,
-        autoHide: barMode() !== 'dock', barMode: barMode(),
+        autoHide: !docked(), barMode: barMode(),
         fdm: !!settings.data.fdm, fdmFound: !!fdmPath(),
         pinned: pinnedExtensions(),
         versions: { app: app.getVersion(), chrome: process.versions.chrome }
@@ -1127,7 +1160,7 @@ function setupIpc() {
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
     if (key === 'hwAccel') settings.data.hwAccel = !!val;
     if (key === 'adblock') settings.data.adblock = !!val;
-    if (key === 'barMode' && ['dock', 'push', 'over'].includes(val)) { settings.data.barMode = val; for (const w of wins) { if (val === 'dock') w.barHidden = false; w.layout(); w.pushState(); } }
+    if (key === 'barMode' && ['dock', 'push', 'over', 'blend'].includes(val)) { settings.data.barMode = val; for (const w of wins) { if (docked()) w.barHidden = false; w.tint = null; w.layout(); w.pushState(); w.sampleTint(); } }
     if (key === 'ytAds') settings.data.ytAds = !!val;
     if (key === 'fdm') settings.data.fdm = !!val;
     settings.save(); settings.flush();
@@ -1259,7 +1292,7 @@ app.whenReady().then(async () => {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
     favImported: false, ntpImported: false, hwAccel: true,
     adblock: true, adAllow: [], adBlockedTotal: 0,
-    ytAds: true, fdm: false, barMode: 'dock', pinnedExt: [], extImported: false, pwNever: []
+    ytAds: true, fdm: false, barMode: 'blend', pinnedExt: [], extImported: false, pwNever: []
   });
   bookmarks = makeStore('bookmarks.json', { children: [] });
   history = makeStore('history.json', []);
