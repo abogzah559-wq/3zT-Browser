@@ -353,8 +353,8 @@ async function renderMenu(kind) {
       <div class="sep"></div>
       <div class="row"><span class="lbl">${L('اللغة', 'Language')}</span>
         <button class="chip${!en() ? ' on' : ''}" data-lang="ar">عربي</button><button class="chip${en() ? ' on' : ''}" data-lang="en">English</button></div>
-      <div class="row"><span class="lbl">${L('إخفاء الشريط تلقائياً', 'Auto-hide the bar')}</span>
-        <button class="chip${S.autoHide ? ' on' : ''}" data-a="autoHide">${S.autoHide ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
+      <div class="row"><span class="lbl">${L('الشريط العلوي', 'Top bar')}</span>
+        <button class="chip${S.barMode === 'dock' ? ' on' : ''}" data-bar="dock">${L('ثابت فوق الصفحة', 'Fixed above page')}</button><button class="chip${S.barMode === 'push' ? ' on' : ''}" data-bar="push">${L('يختفي ويدف الصفحة', 'Hide, push page')}</button><button class="chip${S.barMode === 'over' ? ' on' : ''}" data-bar="over">${L('يختفي فوق الصفحة', 'Hide, over page')}</button></div>
       <div class="row"><span class="lbl">${L('رجّع تبويباتي عند الفتح', 'Restore my tabs on start')}</span>
         <button class="chip${S.restoreTabs ? ' on' : ''}" data-a="restore">${S.restoreTabs ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
       <div class="sep"></div>
@@ -379,6 +379,7 @@ $('drop').addEventListener('click', async e => {
   const z = t.closest('[data-z]'); if (z) { ui.send('tab', 'zoom', +z.dataset.z); return; }
   const ms = t.closest('[data-ms]'); if (ms) { ui.send('set', 'memorySaverMin', +ms.dataset.ms); return; }
   const lg = t.closest('[data-lang]'); if (lg) { ui.send('set', 'lang', lg.dataset.lang); return; }
+  const bm = t.closest('[data-bar]'); if (bm) { ui.send('set', 'barMode', bm.dataset.bar); return; }
   const a = t.closest('[data-a]'); if (!a) return;
   const cmd = a.dataset.a;
   const simple = { new: ['tab', 'new'], newWindow: ['tab', 'newWindow'], incognito: ['tab', 'incognito'], history: ['tab', 'history'],
