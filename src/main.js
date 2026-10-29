@@ -261,6 +261,7 @@ class Win {
         adRules: adblock ? adblock.ruleCount : 0,
         ytAds: settings.data.ytAds !== false,
         fdm: !!settings.data.fdm, fdmFound: !!fdmPath(),
+        isDefault: isDefaultCache, canDefault: process.platform === 'win32',
         pinned: pinnedExtensions(),
         versions: { app: app.getVersion(), chrome: process.versions.chrome }
       });
@@ -1257,6 +1258,7 @@ function setupIpc() {
     const w = uiWin(e); if (!w) return;
     const t = w.active();
     if (cmd === 'downloads') shell.openPath(app.getPath('downloads'));
+    if (cmd === 'makeDefault') makeDefault();
     if (cmd === 'devtools' && t && t.view) t.view.webContents.toggleDevTools();
     if (cmd === 'fullscreen') w.win.setFullScreen(!w.win.isFullScreen());
     if (cmd === 'relaunch') { quitting = true; saveSession(); for (const s of stores()) s.flush(); app.relaunch(); app.exit(0); }
@@ -1275,9 +1277,60 @@ function setupIpc() {
 }
 
 /* ---------- start ---------- */
+/* ---------- default browser (Windows) ---------- */
+// a link or file Windows hands us on the command line ("3zT Browser.exe" "https://...")
+function urlFromArgv(argv) {
+  for (const a of argv.slice(1)) {
+    if (!a || a.startsWith('-')) continue;
+    if (/^(https?|ftp|file):/i.test(a)) return a;
+    if (/\.(html?|xhtml|pdf|svg|webp|mht(ml)?)$/i.test(a) && fs.existsSync(a)) return pathToFileURL(a).href;
+  }
+  return '';
+}
+const PROGID = '3zTBrowserHTML', APPKEY = 'Software\\Clients\\StartMenuInternet\\3zT Browser';
+function reg(args) {
+  return new Promise(res => { try { const p = spawn('reg', args, { windowsHide: true }); let out = ''; p.stdout.on('data', d => out += d); p.on('close', c => res(c === 0 ? out : null)); p.on('error', () => res(null)); } catch (e) { res(null); } });
+}
+// tell Windows we are a browser (current user only, no admin needed)
+async function registerBrowser() {
+  if (process.platform !== 'win32') return false;
+  const exe = process.execPath, cmd = `"${exe}" "%1"`, ico = `"${exe}",0`;
+  const K = 'HKCU\\' + APPKEY, C = 'HKCU\\Software\\Classes\\' + PROGID;
+  const add = (key, name, val) => reg(['add', key, ...(name ? ['/v', name] : ['/ve']), '/t', 'REG_SZ', '/d', val, '/f']);
+  const jobs = [
+    add(C, '', '3zT Browser HTML Document'), add(C + '\\DefaultIcon', '', ico), add(C + '\\shell\\open\\command', '', cmd),
+    add(C + '\\Application', 'ApplicationName', '3zT Browser'), add(C + '\\Application', 'ApplicationIcon', ico),
+    add(K, '', '3zT Browser'), add(K + '\\DefaultIcon', '', ico), add(K + '\\shell\\open\\command', '', `"${exe}"`),
+    add(K + '\\Capabilities', 'ApplicationName', '3zT Browser'), add(K + '\\Capabilities', 'ApplicationIcon', ico),
+    add(K + '\\Capabilities', 'ApplicationDescription', 'A light browser built on Chromium'),
+    add(K + '\\Capabilities\\StartMenu', 'StartMenuInternet', '3zT Browser'),
+    add('HKCU\\Software\\RegisteredApplications', '3zT Browser', APPKEY + '\\Capabilities')
+  ];
+  for (const p of ['http', 'https', 'ftp']) jobs.push(add(K + '\\Capabilities\\URLAssociations', p, PROGID));
+  for (const x of ['.htm', '.html', '.xhtml', '.pdf', '.svg', '.webp', '.shtml', '.mht', '.mhtml']) jobs.push(add(K + '\\Capabilities\\FileAssociations', x, PROGID));
+  const ok = (await Promise.all(jobs)).every(Boolean);
+  if (ok) { settings.data.registeredExe = exe; settings.save(); }
+  return ok;
+}
+let isDefaultCache = false;
+async function checkDefault() {
+  if (process.platform !== 'win32') return false;
+  const q = k => reg(['query', 'HKCU\\Software\\Microsoft\\Windows\\Shell\\Associations\\UrlAssociations\\https\\' + k, '/v', 'ProgId']);
+  const out = (await q('UserChoice')) || (await q('UserChoiceLatest'));
+  const v = !!(out && out.includes(PROGID));
+  if (v !== isDefaultCache) { isDefaultCache = v; for (const w of wins) w.pushState(); }
+  return v;
+}
+async function makeDefault() {
+  await registerBrowser();
+  // Windows only lets the user pick the default browser: open the settings page for our app
+  shell.openExternal('ms-settings:defaultapps?registeredAppUser=' + encodeURIComponent('3zT Browser'));
+  let n = 0; const iv = setInterval(() => { checkDefault(); if (++n > 40) clearInterval(iv); }, 3000);   // notice when they switch
+}
+
 app.on('second-instance', (e, argv) => {
   const w = focusedWin();
-  const u = argv.find(a => /^https?:\/\//i.test(a));
+  const u = urlFromArgv(argv);
   if (!w) { newWindow({ url: u }); return; }
   if (w.win.isMinimized()) w.win.restore();
   w.win.focus();
@@ -1344,8 +1397,14 @@ app.whenReady().then(async () => {
       w.activate(w.tabs[act].id);
     }
   } else {
-    newWindow({ bounds: settings.data.bounds, maximized: settings.data.maximized });
+    newWindow({ bounds: settings.data.bounds, maximized: settings.data.maximized, url: urlFromArgv(process.argv) || undefined });
   }
+  // opened by Windows with a link while restoring tabs: show the link too
+  const startUrl = urlFromArgv(process.argv);
+  if (startUrl && settings.data.restoreTabs && wins.length && !wins[0].tabs.some(t => t.url === startUrl)) wins[0].createTab(startUrl);
+  // keep the Windows registration pointing at this copy if the folder was moved
+  if (settings.data.registeredExe && settings.data.registeredExe !== process.execPath) registerBrowser();
+  setTimeout(checkDefault, 4000);
 });
 
 app.on('window-all-closed', () => app.quit());

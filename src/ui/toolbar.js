@@ -334,6 +334,8 @@ async function renderMenu(kind) {
       <div class="sep"></div>
       <div class="row"><span class="lbl">${L('اللغة', 'Language')}</span>
         <button class="chip${!en() ? ' on' : ''}" data-lang="ar">عربي</button><button class="chip${en() ? ' on' : ''}" data-lang="en">English</button></div>
+      ${S.canDefault ? `<div class="row"><span class="lbl">${L('المتصفح الافتراضي', 'Default browser')}</span>
+        ${S.isDefault ? `<span class="chip on">${L('✓ هو الافتراضي', '✓ It is the default')}</span>` : `<button class="chip" data-a="makeDefault">${L('خلّه الافتراضي', 'Make it default')}</button>`}</div>` : ''}
       <div class="row"><span class="lbl">${L('رجّع تبويباتي عند الفتح', 'Restore my tabs on start')}</span>
         <button class="chip${S.restoreTabs ? ' on' : ''}" data-a="restore">${S.restoreTabs ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
       <div class="sep"></div>
@@ -392,6 +394,7 @@ $('drop').addEventListener('click', async e => {
       closeDrop(); ui.send('tab', 'passwords'); break;
     }
     case 'ytAds': ui.send('set', 'ytAds', !S.ytAds); break;
+    case 'makeDefault': closeDrop(); ui.send('misc', 'makeDefault'); toast(L('اختار "3zT Browser" من الصفحة اللي فتحت لك', 'Pick "3zT Browser" on the page that just opened')); break;
     case 'fdm': ui.send('set', 'fdm', !S.fdm); break;
     case 'importLook': { const ok = await ui.invoke('ntp:import'); closeDrop(); toast(ok ? L('تم. افتح تبويب جديد عشان تشوف الشكل', 'Done. Open a new tab to see it') : L('ما لقيت إعدادات بلاك كروم في كروم', 'Black Chrome settings not found in Chrome')); break; }
   }
