@@ -86,13 +86,22 @@ Windows SmartScreen may warn about the setup because it is not code-signed. Choo
 ## Memory compared with Chrome and Brave
 
 Measured automatically on every release by [`tests/bench.ps1`](tests/bench.ps1) on a GitHub
-Windows machine: each browser starts with a fresh profile and opens the same three websites
+Windows machine: each browser starts with a new profile and opens the same three websites
 (Wikipedia, GitHub, Stack Overflow) in three tabs. Memory is the total of all of the browser's
 processes, averaged 30 and 60 seconds after the last tab opened. No extensions are installed in any
-of them.
+of them. The test runs twice, in opposite order, and the two results are averaged.
 
 <!-- BENCH:START -->
-_The table is filled in by the release build._
+Result of version 0.8.0 (GitHub `windows-latest`, two rounds in opposite order, averaged):
+
+| Browser | Processes | Memory (working set) | Memory (private) |
+|---|---|---|---|
+| **3zT 0.8.0** | 7 | **827 MB** | **399 MB** |
+| Brave | 12 | 890 MB | 440 MB |
+| Google Chrome | 34 | 1569 MB | 738 MB |
+
+In this test 3zT used about **46% less memory than Chrome** and about **9% less than Brave**,
+with fewer processes than both. Each release's own numbers are in its release notes.
 <!-- BENCH:END -->
 
 Numbers change with the websites you visit and your hardware. The gap grows when you would
@@ -177,7 +186,8 @@ not affiliated with them or with any of the projects above.
 ## Chrome Web Store and your own extensions
 
 - **Chrome Web Store:** open **Extensions (puzzle icon) → Chrome Web Store** or
-  `https://chromewebstore.google.com`, press **Add to Chrome** on any extension and confirm.
+  `https://chromewebstore.google.com`, press **Add to 3zT** on any extension and confirm (the store
+  puts the browser's name on its button; it also shows a "Switch to Chrome?" note that you can close).
   3zT downloads it from Google, checks that the package matches the extension ID, installs it and
   keeps it updated (checked at start and every few hours). Remove it from the puzzle menu or
   Settings → Extensions.
@@ -321,7 +331,7 @@ DevTools Protocol. On every push, GitHub Actions on Windows:
    browser registration,
 3. checks that the toolbar and every internal page open with no script errors and that websites load,
 4. installs **Dark Reader** and **uBlock Origin Lite** from the real Chrome Web Store with the
-   "Add to Chrome" button, checks that Dark Reader really darkens a website, restarts the browser,
+   store's "Add to 3zT" button, checks that Dark Reader really darkens a website, restarts the browser,
    checks both are still there and removes them again,
 5. uninstalls and checks everything was removed,
 6. on releases, runs the memory comparison with Chrome and Brave.
