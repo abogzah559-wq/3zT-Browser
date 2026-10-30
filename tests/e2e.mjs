@@ -5,7 +5,7 @@
 // What it checks:
 //   smoke   : the window opens, the toolbar and every internal page load with no script errors
 //   --store : installs Dark Reader and uBlock Origin Lite from the real Chrome Web Store
-//             ("Add to Chrome" button), checks they run on a website, survive a restart,
+//             ("Add to 3zT" button), checks they run on a website, survive a restart,
 //             and can be removed again
 // Exit code 0 = all passed. Screenshots go to tests/out/.
 import { spawn, execSync } from 'node:child_process';
@@ -117,7 +117,7 @@ async function storeInstall(ext) {
   const btn = `[...document.querySelectorAll('button')].find(b => /^\\s*(add to 3zt|add to chrome|إضافة إلى 3zT|إضافة إلى chrome)\\s*$/i.test(b.textContent) && !b.disabled)`;
   const ready = await poll(() => c.ev(`!!(${btn})`), 60000);
   await shot(c, `store-${ext.id}-before`);
-  ok(`"Add to Chrome" button shows for ${ext.name}`, !!ready, ready ? '' : String(await c.ev('document.body && document.body.innerText.slice(0, 300)')));
+  ok(`store install button shows for ${ext.name}`, !!ready, ready ? '' : String(await c.ev('document.body && document.body.innerText.slice(0, 300)')));
   if (!ready) { c.close(); return; }
   await c.ev(`(${btn}).click(), 1`);
   const installed = await poll(async () => (await extList()).includes(ext.id), 120000, 1500);
