@@ -98,7 +98,8 @@ async function smoke() {
   // a normal website loads
   await go('https://example.com/', true);
   const ex = await find(u => /^https:\/\/example\.com/.test(u), 40);
-  ok('website loads', !!ex && !!(await poll(async () => { const c = await connect(ex); const h = await c.ev('document.querySelector("h1") && document.querySelector("h1").textContent'); c.close(); return h; }, 20000)));
+  const h1 = ex && await poll(async () => { const c = await connect(ex); const h = await c.ev('document.querySelector("h1") && document.querySelector("h1").textContent'); c.close(); return h; }, 20000);
+  ok('website loads', !!h1, h1 ? `"${h1}"` : 'tabs: ' + (await targets()).filter(x => x.type === 'page').map(x => x.url).join(' , '));
 }
 
 async function extList() { const tb = await toolbar(); const l = await tb.ev(`ui.invoke('ext:list').then(l=>l.map(x=>x.id))`); tb.close(); return l || []; }
@@ -108,7 +109,8 @@ async function storeInstall(ext) {
   const t = await find(u => u.includes(ext.id) && /^https:/.test(u), 60);
   if (!t) return ok(`store page for ${ext.name}`, false, 'did not open');
   const c = await connect(t);
-  const btn = `[...document.querySelectorAll('button')].find(b => /add to chrome|إضافة إلى chrome|إضافة إلى Chrome/i.test(b.textContent) && !b.disabled)`;
+  // the store labels the button with the browser's name ("Install 3zT"); in Chrome it says "Add to Chrome"
+  const btn = `[...document.querySelectorAll('button')].find(b => /^\\s*(install 3zt|add to chrome|تثبيت 3zT|إضافة إلى chrome)\\s*$/i.test(b.textContent) && !b.disabled)`;
   const ready = await poll(() => c.ev(`!!(${btn})`), 60000);
   await shot(c, `store-${ext.id}-before`);
   ok(`"Add to Chrome" button shows for ${ext.name}`, !!ready, ready ? '' : String(await c.ev('document.body && document.body.innerText.slice(0, 300)')));
@@ -116,7 +118,7 @@ async function storeInstall(ext) {
   await c.ev(`(${btn}).click(), 1`);
   const installed = await poll(async () => (await extList()).includes(ext.id), 120000, 1500);
   await sleep(2500); await shot(c, `store-${ext.id}-after`);
-  const label = await c.ev(`[...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => /chrome/i.test(t)).join(' / ')`);
+  const label = await c.ev(`[...document.querySelectorAll('button')].map(b => b.textContent.trim()).filter(t => /chrome|3zt|remove|إزالة/i.test(t)).join(' / ')`);
   ok(`${ext.name} installs from the Chrome Web Store`, !!installed, `store button now: "${label}"`);
   c.close();
 }
