@@ -290,7 +290,7 @@ ISCC installer\3zT.iss /DAppVersion=0.8.0
 
 `scripts/build_win.py` also works on Linux; only the installer step needs Windows.
 The GitHub Actions workflow in [`.github/workflows/build.yml`](.github/workflows/build.yml) does all
-of this, tests the result and publishes the release when a `v*` tag is pushed.
+of this, tests the result and publishes a release whenever the version in `package.json` changes.
 
 ## How the project is organised
 

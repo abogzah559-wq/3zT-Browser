@@ -117,12 +117,15 @@ jobs:
             dist/install.log
             tests/out/
 
-      - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish the release (once per version in package.json)
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          notes="Download **3zT-Browser-Setup.exe** below and run it."
-          [ -f tests/out/bench.md ] && notes="$notes"$'\n\n### Memory on this build (same 3 websites, fresh profiles, Windows)\n\n'"$(cat tests/out/bench.md)"
-          gh release create "$GITHUB_REF_NAME" dist/3zT-Browser-Setup.exe --title "3zT $GITHUB_REF_NAME" --notes "$notes"
+          v="v$(node -p "require('./package.json').version")"
+          if gh release view "$v" >/dev/null 2>&1; then echo "::notice title=release::$v already published"; exit 0; fi
+          notes="Download **3zT-Browser-Setup.exe** below and run it. Windows 10/11, 64-bit. No administrator rights needed."
+          [ -f tests/out/bench.md ] && notes="$notes"$'\n\n### Memory on this build\nSame 3 websites in 3 tabs, new profiles, GitHub Windows machine, two rounds averaged:\n\n'"$(cat tests/out/bench.md)"
+          gh release create "$v" dist/3zT-Browser-Setup.exe --target "$GITHUB_SHA" --title "3zT $v" --notes "$notes"
+          echo "::notice title=release::published $v"
