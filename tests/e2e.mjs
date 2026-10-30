@@ -149,6 +149,10 @@ async function main() {
   await stop();
   fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify(results, null, 1));
   const failed = results.filter(r => !r.pass);
+  if (process.env.GITHUB_ACTIONS) {   // one annotation with the whole result (readable without the log)
+    const esc = t => String(t).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
+    console.log(`::${failed.length ? 'error' : 'notice'} title=e2e ${results.length - failed.length}/${results.length}::` + esc(results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + r.info : ''}`).join('\n')));
+  }
   console.log(`\n${results.length - failed.length}/${results.length} passed`);
   process.exit(failed.length ? 1 : 0);
 }

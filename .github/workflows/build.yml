@@ -46,19 +46,22 @@ jobs:
       - name: Install Inno Setup (6.6+ for the dark wizard)
         shell: pwsh
         run: |
-          choco install innosetup -y --no-progress
-          $iscc = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe","$env:ProgramFiles\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          (Get-Item $iscc.FullName).VersionInfo.ProductVersion
-          "ISCC=$($iscc.FullName)" >> $env:GITHUB_ENV
+          choco upgrade innosetup -y --no-progress | Select-Object -Last 3
+          $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { echo "::error title=inno::ISCC.exe not found"; exit 1 }
+          $ver = (Get-Item $iscc).VersionInfo.ProductVersion
+          echo "::notice title=inno::Inno Setup $ver at $iscc"
+          "ISCC=$iscc" >> $env:GITHUB_ENV
           # Arabic wizard text (unofficial translation shipped in the Inno Setup source repo)
-          Invoke-WebRequest https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/Arabic.isl -OutFile installer\Arabic.isl
+          try { Invoke-WebRequest https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/Arabic.isl -OutFile installer\Arabic.isl }
+          catch { echo "::error title=inno::Arabic.isl download failed: $_"; exit 1 }
 
       - name: Build the installer
         shell: pwsh
         run: |
           $v = (Get-Content package.json | ConvertFrom-Json).version
-          & $env:ISCC installer\3zT.iss "/DAppVersion=$v"
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $log = & $env:ISCC installer\3zT.iss "/DAppVersion=$v" 2>&1
+          if ($LASTEXITCODE) { $t = ($log | Select-Object -Last 15) -join '%0A'; echo "::error title=iscc::$t"; exit $LASTEXITCODE }
           Get-Item dist\3zT-Browser-Setup.exe | Format-List Name,Length
 
       - name: Test the installer (silent install, shortcut, uninstall)
@@ -72,7 +75,8 @@ jobs:
           "installed exe: $(Test-Path $app)  desktop shortcut: $(Test-Path $lnk)  start menu: $(Test-Path $start)"
           $reg = Get-ItemProperty 'HKCU:\Software\Clients\StartMenuInternet\3zT Browser\Capabilities' -ErrorAction SilentlyContinue
           "registered as a browser: $([bool]$reg)"
-          if (-not $ok -or -not $reg) { Get-Content dist\install.log -Tail 40; exit 1 }
+          echo "::notice title=install::exe $(Test-Path $app), desktop shortcut $(Test-Path $lnk), start menu $(Test-Path $start), browser registration $([bool]$reg)"
+          if (-not $ok -or -not $reg) { $t = (Get-Content dist\install.log -Tail 15) -join '%0A'; echo "::error title=install::$t"; exit 1 }
 
       - name: End-to-end test of the installed app (pages + real Chrome Web Store installs)
         shell: pwsh
@@ -84,19 +88,21 @@ jobs:
           Start-Process "$env:LOCALAPPDATA\Programs\3zT\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
           Start-Sleep 5
           $gone = -not (Test-Path "$env:LOCALAPPDATA\Programs\3zT\3zT.exe") -and -not (Test-Path ([Environment]::GetFolderPath('Desktop') + '\3zT.lnk')) -and -not (Test-Path 'HKCU:\Software\Clients\StartMenuInternet\3zT Browser')
-          "removed cleanly: $gone"
+          echo "::notice title=uninstall::removed cleanly: $gone"
           if (-not $gone) { exit 1 }
 
       - name: Install Brave for the memory comparison
-        if: github.event_name == 'workflow_dispatch' && inputs.bench || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.bench)
         continue-on-error: true
         run: choco install brave -y --no-progress
 
       - name: Memory comparison (3zT vs Chrome vs Brave)
-        if: github.event_name == 'workflow_dispatch' && inputs.bench || startsWith(github.ref, 'refs/tags/')
+        if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.bench)
         continue-on-error: true
         shell: pwsh
-        run: ./tests/bench.ps1
+        run: |
+          ./tests/bench.ps1
+          if (Test-Path tests/out/bench.md) { $t = (Get-Content tests/out/bench.md) -join '%0A'; echo "::notice title=bench::$t" }
 
       - uses: actions/upload-artifact@v4
         if: always()
