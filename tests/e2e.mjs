@@ -50,10 +50,11 @@ async function targets() { return (await fetch(`http://127.0.0.1:${PORT}/json`))
 /* a small CDP client for one target */
 async function connect(t) {
   const ws = new WebSocket(t.webSocketDebuggerUrl);
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
+  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; setTimeout(() => rej(new Error('connect timeout')), 10000); });
   let id = 0; const wait = new Map(); const listeners = [];
   ws.onmessage = m => { const d = JSON.parse(m.data); if (d.id && wait.has(d.id)) { wait.get(d.id)(d); wait.delete(d.id); } else listeners.forEach(f => f(d)); };
-  const send = (method, params = {}) => new Promise(r => { const i = ++id; wait.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+  // every call gives up after 30 s so a stuck page can never hang the whole test
+  const send = (method, params = {}) => new Promise(r => { const i = ++id; wait.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); setTimeout(() => { if (wait.has(i)) { wait.delete(i); r({ error: { message: 'timeout ' + method } }); } }, 30000); });
   const ev = async expr => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); return r.result && r.result.result ? r.result.result.value : undefined; };
   return { send, ev, on: f => listeners.push(f), close: () => ws.close() };
 }
@@ -151,11 +152,17 @@ async function main() {
   await stop();
   fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify(results, null, 1));
   const failed = results.filter(r => !r.pass);
-  if (process.env.GITHUB_ACTIONS) {   // one annotation with the whole result (readable without the log)
-    const esc = t => String(t).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
-    console.log(`::${failed.length ? 'error' : 'notice'} title=e2e ${results.length - failed.length}/${results.length}::` + esc(results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + r.info : ''}`).join('\n')));
-  }
+  report();
   console.log(`\n${results.length - failed.length}/${results.length} passed`);
   process.exit(failed.length ? 1 : 0);
 }
-main().catch(async e => { console.error(e); await stop(); process.exit(1); });
+function report() {
+  const failed = results.filter(r => !r.pass);
+  if (process.env.GITHUB_ACTIONS) {
+    const esc = t => String(t).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
+    console.log(`::${failed.length ? 'error' : 'notice'} title=e2e ${results.length - failed.length}/${results.length}::` + esc(results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + r.info : ''}`).join('\n')));
+  }
+}
+// the whole run may take at most 20 minutes
+setTimeout(async () => { ok('finished in time', false, 'stopped after 20 minutes'); report(); await stop(); process.exit(1); }, 20 * 60 * 1000).unref();
+main().catch(async e => { ok('no crash in the test itself', false, String(e && e.stack || e)); report(); await stop(); process.exit(1); });
