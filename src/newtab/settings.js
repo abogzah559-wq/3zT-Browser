@@ -23,6 +23,12 @@ const SECTIONS = () => [
 
 const sw = (on, attrs) => `<button class="sw${on ? ' on' : ''}" ${attrs} role="switch" aria-checked="${!!on}"></button>`;
 const row = (t, d, ctl, cls = '') => `<div class="row ${cls}"><div class="tx"><div class="t">${t}</div>${d ? `<div class="d">${d}</div>` : ''}</div>${ctl || ''}</div>`;
+// a group that opens with an arrow: header row (with its own switch if given) + hidden sub-options
+const open = new Set((() => { try { return JSON.parse(localStorage.getItem('zeusSetOpen') || '[]'); } catch (e) { return []; } })());
+const group = (id, t, d, ctl, body, count) => `<div class="grp${open.has(id) ? ' open' : ''}">
+  <div class="row gh" data-grp="${id}"><span class="arr"><svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></span>
+    <div class="tx"><div class="t">${t}${count != null ? ` <span class="cnt">${count}</span>` : ''}</div>${d ? `<div class="d">${d}</div>` : ''}</div>${ctl || ''}</div>
+  <div class="gb">${body}</div></div>`;
 const card = (id, title, body) => `<section id="s-${id}"><h2>${title}</h2><div class="card">${body}</div></section>`;
 
 const YT_CLEAN = [
@@ -65,7 +71,7 @@ function render() {
       <button class="mode${!fast ? ' on' : ''}" data-set="perfMode" data-v="normal"><b>${L('عادي', 'Normal')}</b><span>${L('متوازن: سريع وخفيف على الرام. التبويبات اللي ما تستخدمها تنام وتفضّي الذاكرة.', 'Balanced: fast and light on RAM. Tabs you are not using sleep to free memory.')}</span></button>
       <button class="mode${fast ? ' on' : ''}" data-set="perfMode" data-v="fast"><b>${L('تصفح سريع جداً ⚡', 'Very fast ⚡')}</b><span>${L('السرعة أول شي: الروابط تبدأ تتحمل أول ما توقف عليها بالماوس، التبويبات ما تنام، والتنزيل بأكثر من اتصال. ياخذ رام ومعالج أكثر.', 'Speed first: links start loading when you hover them, tabs never sleep, downloads use several connections. Uses more RAM and CPU.')}</span></button>
     </div>` + restart(S.perfMode !== S.perfActive) +
-    row(L('توفير الذاكرة', 'Memory saver'), fast ? L('طافي في وضع التصفح السريع جداً.', 'Off in very fast mode.') : L('التبويبات اللي ما فتحتها من هالمدة (بالدقايق) تنام.', 'Tabs you have not opened for this many minutes go to sleep.'),
+    row(L('توفير الذاكرة (دقايق)', 'Memory saver (minutes)'), fast ? L('طافي في وضع التصفح السريع جداً.', 'Off in very fast mode.') : L('التبويبات اللي ما فتحتها من هالمدة تنام.', 'Tabs you have not opened for this long go to sleep.'),
       `<div class="seg">${[[0, L('إيقاف', 'Off')], [5, '5'], [15, '15'], [30, '30'], [60, '60']].map(([v, l]) => `<button class="${S.memorySaverMin === v ? 'on' : ''}" data-set="memorySaverMin" data-v="${v}">${l}</button>`).join('')}</div>`, fast ? 'dis' : '') +
     row(L('تسريع الأجهزة (كرت الشاشة)', 'Hardware acceleration (GPU)'), L('يخلي الفيديو والصفحات أنعم. طفّه بس لو فيه مشاكل في الشاشة.', 'Smoother video and pages. Turn off only if you see display problems.'), sw(S.hwAccel, 'data-tog="hwAccel"')) +
     restart(S.hwAccel !== S.hwAccelActive) +
@@ -76,14 +82,16 @@ function render() {
     (S.adAllow.length ? `<div class="chips">${S.adAllow.map(x => `<span class="chip">${esc(x)}<button data-act="unallow" data-arg="${esc(x)}" title="${L('إزالة', 'Remove')}">✕</button></span>`).join('')}</div>` : '') +
     row(L('مسح بيانات التصفح', 'Clear browsing data'), L('يمسح السجل والكاش والكوكيز (بيطلعك من حساباتك).', 'Clears history, cache and cookies (signs you out).'), `<button data-act="clearData">${L('مسح…', 'Clear…')}</button>`));
   const sbOn = S.sponsorBlock;
+  const cleanOn = YT_CLEAN.filter(([id]) => S.ytClean[id]).length;
   sec.youtube = card('youtube', L('يوتيوب وتويتش', 'YouTube & Twitch'),
-    row(L('حظر إعلانات يوتيوب', 'Block YouTube ads'), S.adblock ? '' : L('يحتاج مانع الإعلانات شغّال.', 'Needs the ad blocker on.'), sw(S.ytAds, 'data-tog="ytAds"'), S.adblock ? '' : 'dis') +
-    row(L('حظر إعلانات تويتش', 'Block Twitch ads'), L('يحاول يجيب البث بدون إعلانات، ولو ما قدر يخفيها لين تخلص.', 'Tries to get an ad-free stream; if it cannot, it hides the ad until it ends.'), sw(S.twitchAds, 'data-tog="twitchAds"'), S.adblock ? '' : 'dis') +
-    row('SponsorBlock', L('يتخطى تلقائياً الأجزاء المزعجة داخل الفيديوهات (حسب تحديد مستخدمين SponsorBlock).', 'Skips annoying parts inside videos automatically (marked by SponsorBlock users).'), sw(sbOn, 'data-tog="sponsorBlock"')) +
-    SB.map(([id, ar, en]) => row(L(ar, en), '', sw(S.sbCats.includes(id), `data-sb="${id}"`), 'sub' + (sbOn ? '' : ' dis'))).join('') +
-    row(L('الإضاءة المحيطة', 'Ambient light'), L('توهج حول الفيديو بألوانه. إعداداتها داخل مشغّل يوتيوب (زر الإعدادات تحت الفيديو).', 'A glow around the video in its colours. Its options are inside the YouTube player (settings button under the video).'), sw(S.ambient, 'data-tog="ambient"')) +
-    `<div class="row"><div class="tx"><div class="t">${L('تنظيف يوتيوب', 'Clean YouTube')}</div><div class="d">${L('اختر وش تبي تخفي. يتطبق على طول.', 'Pick what to hide. Applies right away.')}</div></div></div>` +
-    YT_CLEAN.map(([id, ar, en, dar, den]) => row(L(ar, en), dar ? L(dar, den) : '', sw(S.ytClean[id], `data-yt="${id}"`), 'sub')).join(''));
+    group('ads', L('حظر الإعلانات', 'Ad blocking'), L('إعلانات يوتيوب وتويتش.', 'YouTube and Twitch ads.'), '',
+      row(L('حظر إعلانات يوتيوب', 'Block YouTube ads'), S.adblock ? '' : L('يحتاج مانع الإعلانات شغّال.', 'Needs the ad blocker on.'), sw(S.ytAds, 'data-tog="ytAds"'), 'sub' + (S.adblock ? '' : ' dis')) +
+      row(L('حظر إعلانات تويتش', 'Block Twitch ads'), L('يحاول يجيب البث بدون إعلانات، ولو ما قدر يخفيها لين تخلص.', 'Tries to get an ad-free stream; if it cannot, it hides the ad until it ends.'), sw(S.twitchAds, 'data-tog="twitchAds"'), 'sub' + (S.adblock ? '' : ' dis'))) +
+    group('sb', 'SponsorBlock', L('يتخطى الأجزاء المزعجة داخل الفيديوهات تلقائياً. افتح السهم واختر وش يتخطى.', 'Skips annoying parts inside videos. Open the arrow to choose what to skip.'), sw(sbOn, 'data-tog="sponsorBlock"'),
+      SB.map(([id, ar, en]) => row(L(ar, en), '', sw(S.sbCats.includes(id), `data-sb="${id}"`), 'sub' + (sbOn ? '' : ' dis'))).join(''), sbOn ? `${S.sbCats.length}/${SB.length}` : null) +
+    row(L('الإضاءة المحيطة', 'Ambient light'), L('توهج حول الفيديو بألوانه. إعداداتها داخل مشغّل يوتيوب.', 'A glow around the video in its colours. Its options are inside the YouTube player.'), sw(S.ambient, 'data-tog="ambient"')) +
+    group('clean', L('تنظيف يوتيوب', 'Clean YouTube'), L('اختر وش تبي تخفي من يوتيوب. يتطبق على طول.', 'Pick what to hide on YouTube. Applies right away.'), '',
+      YT_CLEAN.map(([id, ar, en, dar, den]) => row(L(ar, en), dar ? L(dar, den) : '', sw(S.ytClean[id], `data-yt="${id}"`), 'sub')).join(''), `${cleanOn}/${YT_CLEAN.length}`));
   sec.ext = card('ext', L('الإضافات', 'Extensions'),
     (S.extensions.length ? S.extensions.map(x => `<div class="row ext">${x.icon ? `<img src="${esc(x.icon)}" alt="">` : '<span class="ph"></span>'}<div class="tx"><div class="t">${esc(x.name)}</div><div class="d">${esc(x.version || '')}</div></div>
       ${x.options ? `<button data-act="extOptions" data-arg="${esc(x.options)}">${L('إعداداتها', 'Options')}</button>` : ''}<button data-act="extRemove" data-arg="${esc(x.id)}">${L('إزالة', 'Remove')}</button></div>`).join('')
@@ -106,6 +114,13 @@ async function load() { S = await zeus.settings(); render(); }
 
 $('nav').addEventListener('click', e => { const a = e.target.closest('[data-nav]'); if (!a) return; cur = a.dataset.nav; history.replaceState(null, '', '#' + cur); render(); window.scrollTo(0, 0); });
 document.addEventListener('click', async e => {
+  const g = e.target.closest('[data-grp]');
+  if (g && !e.target.closest('button')) {
+    const id = g.dataset.grp; open.has(id) ? open.delete(id) : open.add(id);
+    g.parentNode.classList.toggle('open', open.has(id));
+    try { localStorage.setItem('zeusSetOpen', JSON.stringify([...open])); } catch (x) {}
+    return;
+  }
   const b = e.target.closest('button'); if (!b) return;
   if (b.dataset.tog) { zeus.set(b.dataset.tog, !S[b.dataset.tog]); return; }
   if (b.dataset.set) { const k = b.dataset.set; zeus.set(k, k === 'memorySaverMin' ? +b.dataset.v : b.dataset.v); return; }

@@ -93,7 +93,7 @@ ui.on('tint', col => {
 /* ---------- compact (bar only) or full (tabs row above the bar) ---------- */
 let stripH = 56, dropHinting = false;
 function updateFull() {
-  const full = !S.isNewtab || S.tabs.length > 1 || dropHinting;
+  const full = !S.isNewtab || S.tabs.length > 1 || dropHinting || S.winCount > 1;   // more than one window: always show tabs so they can be dragged between windows
   document.body.classList.toggle('full', full);
   const h = full ? 96 : 56;
   if (h !== stripH) {
@@ -198,6 +198,13 @@ function endDrag() {
   list._html = null; renderTabs();
 }
 window.addEventListener('pointerup', endDrag);
+/* this window is the one following the mouse (a tab pulled out): end the move as soon as the button is up */
+let beingMoved = false;
+ui.on('being-moved', v => { beingMoved = !!v; });
+const moverUp = () => { if (!beingMoved) return; beingMoved = false; if (dragging && dragging.out) { endDrag(); return; } ui.send('tab:dragend'); };
+window.addEventListener('mouseup', moverUp, true);
+window.addEventListener('mousemove', e => { if (beingMoved && e.buttons === 0) moverUp(); }, true);
+window.addEventListener('keydown', e => { if (beingMoved && e.key === 'Escape') moverUp(); }, true);
 window.addEventListener('pointercancel', endDrag);
 list.addEventListener('click', e => {
   const c = e.target.closest('[data-close]'); if (c) { ui.send('tab', 'close', +c.dataset.close); return; }
