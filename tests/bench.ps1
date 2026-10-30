@@ -1,5 +1,6 @@
 # Memory comparison: 3zT vs Google Chrome vs Brave (Windows).
-# Each browser: fresh profile, the same 3 websites in 3 tabs, measured 30 s and 60 s after the last tab opened.
+# Each browser: its own new profile, the same 3 websites in 3 tabs, measured 30 s and 60 s after the last tab opened,
+# two rounds in opposite order, averaged.
 # Sums every process of the browser. Writes tests/out/bench.json and bench.md.
 param([string]$ZtExe = "$PSScriptRoot\..\dist\3zT\3zT.exe")
 $ErrorActionPreference = 'Continue'
@@ -31,15 +32,21 @@ $chrome = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:Pro
 $brave = @("$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe", "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application\brave.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 $common = @('--no-first-run', '--no-default-browser-check', '--disable-sync')
 
-$results = @()
-$results += Run-One '3zT' $ZtExe '3zT' {
-  Start-Process $ZtExe -ArgumentList @($sites[0]); Start-Sleep 8
-  foreach ($s in $sites[1..2]) { Start-Process $ZtExe -ArgumentList @($s); Start-Sleep 4 }
+$runs = @{
+  '3zT' = { Run-One '3zT' $ZtExe '3zT' { Remove-Item -Recurse -Force "$env:APPDATA\3zT Browser" -ErrorAction SilentlyContinue; Start-Process $ZtExe -ArgumentList @($sites[0]); Start-Sleep 8; foreach ($s in $sites[1..2]) { Start-Process $ZtExe -ArgumentList @($s); Start-Sleep 4 } } }
+  'Google Chrome' = { if ($chrome) { Run-One 'Google Chrome' $chrome 'chrome' { Start-Process $chrome -ArgumentList ($common + @("--user-data-dir=$tmp\chrome$round") + $sites) } } }
+  'Brave' = { if ($brave) { Run-One 'Brave' $brave 'brave' { Start-Process $brave -ArgumentList ($common + @("--user-data-dir=$tmp\brave$round") + $sites) } } }
 }
-if ($chrome) { $results += Run-One 'Google Chrome' $chrome 'chrome' { Start-Process $chrome -ArgumentList ($common + @("--user-data-dir=$tmp\chrome") + $sites) } }
-if ($brave) { $results += Run-One 'Brave' $brave 'brave' { Start-Process $brave -ArgumentList ($common + @("--user-data-dir=$tmp\brave") + $sites) } }
-
-$results = $results | Where-Object { $_ }
+# two rounds in opposite order, so neither browser always goes first; a new profile for every run
+$all = @()
+$round = 0
+foreach ($order in @(@('3zT', 'Google Chrome', 'Brave'), @('Brave', 'Google Chrome', '3zT'))) { $round++; foreach ($n in $order) { $all += & $runs[$n] } }
+$results = @()
+foreach ($g in ($all | Where-Object { $_ } | Group-Object browser)) {
+  $results += [pscustomobject]@{ browser = $g.Name; processes = [math]::Round(($g.Group | Measure-Object processes -Average).Average)
+    workingSetMB = [math]::Round(($g.Group | Measure-Object workingSetMB -Average).Average); privateMB = [math]::Round(($g.Group | Measure-Object privateMB -Average).Average) }
+}
+$results = $results | Where-Object { $_ } | Sort-Object { @('3zT', 'Google Chrome', 'Brave').IndexOf($_.browser) }
 $results | ConvertTo-Json | Set-Content (Join-Path $out 'bench.json')
 $md = "| Browser | Processes | Memory (working set) | Memory (private) |`n|---|---|---|---|`n"
 foreach ($r in $results) { $md += "| $($r.browser) | $($r.processes) | $($r.workingSetMB) MB | $($r.privateMB) MB |`n" }
