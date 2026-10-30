@@ -50,6 +50,16 @@ button.pri{background:var(--acc);color:#111;border-color:var(--acc)}
 .ext img,.ext .ph{width:22px;height:22px;border-radius:5px;flex:none}
 .ext .ph{background:rgba(255,255,255,.12)}
 .muted{color:var(--muted)}
+.grp{border-top:1px solid var(--line)}.card>.grp:first-child{border-top:0}
+.grp>.row{border-top:0}
+.gh{cursor:pointer;user-select:none}.gh:hover{background:rgba(255,255,255,.03)}
+.arr{flex:none;width:22px;height:22px;display:grid;place-items:center;border-radius:50%;transition:transform .18s}
+.arr svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+html[dir=rtl] .arr{transform:scaleX(-1)}
+.grp.open .arr,html[dir=rtl] .grp.open .arr{transform:rotate(90deg)}
+.gb{display:none;background:rgba(0,0,0,.18)}.grp.open .gb{display:block}
+.gb .row{border-top:1px solid var(--line)}
+.cnt{font-size:11.5px;font-weight:400;color:var(--muted);background:rgba(255,255,255,.07);padding:1px 7px;border-radius:9px;margin-inline-start:6px}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#202027;border:1px solid var(--line);padding:10px 16px;border-radius:14px;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.on{opacity:1}
 @media (max-width:760px){nav{display:none}.modes{grid-template-columns:1fr}}

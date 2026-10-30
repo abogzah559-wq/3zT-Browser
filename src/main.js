@@ -27,7 +27,7 @@ const early = (() => { try { return JSON.parse(fs.readFileSync(path.join(app.get
 if (early.hwAccel === false) app.disableHardwareAcceleration();
 
 /* ---------- lighter Chromium ---------- */
-app.commandLine.appendSwitch('disable-features', ['SpareRendererForSitePerProcess', 'MediaRouter', 'OptimizationHints'].join(','));
+app.commandLine.appendSwitch('disable-features', ['SpareRendererForSitePerProcess', 'MediaRouter', 'OptimizationHints', 'FedCm', 'WebIdentityDigitalCredentials'].join(','));
 app.commandLine.appendSwitch('disable-background-networking');   // no hidden Chromium background downloads/pings
 const FAST = early.perfMode === 'fast';   // "very fast browsing": speed first, more RAM/CPU is fine
 if (FAST) {
@@ -172,11 +172,13 @@ class Win {
       this.tabs = [];
       destroyView(this.ui);   // a closed BaseWindow does not free its views by itself
       const i = wins.indexOf(this); if (i >= 0) wins.splice(i, 1);
+      for (const x of wins) x.pushState();   // window count changed
       if (lastFocused === this) lastFocused = wins[0] || null;
       if (!quitting) saveSessionSoon();
       if (!wins.length) app.quit();
     });
     wins.push(this);
+    for (const x of wins) if (x !== this) x.pushState();
     lastFocused = this;
   }
 
@@ -241,7 +243,7 @@ class Win {
       const wc = t && t.view ? t.view.webContents : null;
       const url = t ? t.url : '';
       this.ui.webContents.send('state', {
-        winId: this.id,
+        winId: this.id, winCount: wins.filter(x => !x.win.isDestroyed() && x.private === this.private).length,
         private: this.private,
         tabs: this.tabs.map(x => ({
           id: x.id,
@@ -917,6 +919,7 @@ function dragTick() {
 function stopTabDrag() {
   if (!tabDrag) return null;
   clearInterval(tabDrag.timer);
+  try { if (!tabDrag.mover.ui.webContents.isDestroyed()) tabDrag.mover.ui.webContents.send('being-moved', false); } catch (e) {}
   if (tabDrag.hover && !tabDrag.hover.ui.webContents.isDestroyed()) tabDrag.hover.ui.webContents.send('drop-hint', null);
   const d = tabDrag; tabDrag = null; return d;
 }
@@ -1262,6 +1265,8 @@ function setupIpc() {
     tabDrag = { mover, tabId: t.id, offX, offY: 22, hover: null, source: w };
     tabDrag.timer = setInterval(dragTick, 8);
     dragTick();
+    // the moving window sits under the mouse, so on Windows it is the one that hears the button being let go
+    try { mover.ui.webContents.send('being-moved', true); } catch (err) {}
   });
   ipcMain.on('tab:dragend', async () => {
     const d = stopTabDrag(); if (!d) return;
