@@ -99,7 +99,7 @@ async function smoke() {
   // a normal website loads
   await go('https://example.com/', true);
   const ex = await find(u => /^https:\/\/example\.com/.test(u), 40);
-  const h1 = ex && await poll(async () => { const c = await connect(ex); const h = await c.ev('document.querySelector("h1") && document.querySelector("h1").textContent'); c.close(); return h; }, 20000);
+  const h1 = ex && await poll(async () => { const c = await connect(ex); const h = await c.ev('document.readyState === "complete" && document.body && document.body.innerText.length > 20 && document.title'); c.close(); return h; }, 20000);
   let why = '';
   if (!h1 && ex) { try { const c = await connect(ex); const r = await c.send('Runtime.evaluate', { expression: 'location.href + " | " + document.readyState + " | " + (document.body ? document.body.innerText.slice(0, 200) : "no body")', returnByValue: true }); why = JSON.stringify(r).slice(0, 400); c.close(); } catch (e) { why = 'connect: ' + e.message; } }
   ok('website loads', !!h1, h1 ? `"${h1}"` : (ex ? why : 'no example.com tab'));
