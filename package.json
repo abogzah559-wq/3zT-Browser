@@ -1,16 +1,18 @@
 {
   "name": "3zt-browser",
-  "productName": "3zT Browser",
-  "version": "0.7.0",
-  "description": "متصفح خفيف مبني على Chromium بواجهة شفافة وفيديو خلفية",
+  "productName": "3zT",
+  "version": "0.8.0",
+  "description": "3zT Browser - a light Chromium browser with a built-in ad blocker, download manager, SponsorBlock, Clean YouTube, Ambient light and Twitch ad blocking",
   "main": "src/main.js",
   "author": "3zo",
   "license": "MIT",
   "private": true,
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "test": "node tests/e2e.mjs"
   },
   "devDependencies": {
     "electron": "45.1.0"
-  }
+  },
+  "repository": "https://github.com/abogzah559-wq/3zT-Browser"
 }

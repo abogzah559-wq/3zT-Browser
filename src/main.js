@@ -1,13 +1,13 @@
 'use strict';
 /*
- * 3zT Browser - main process
+ * 3zT - main process
  * Every window is a frameless BaseWindow. Each tab is a WebContentsView; the floating
  * toolbar (tabs + address bar) is a transparent WebContentsView laid on top of the active tab.
  * Tabs can be dragged out into a new window and dropped back onto another window.
  */
 const {
   app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, session, dialog,
-  screen, net, shell, clipboard, nativeImage, safeStorage, protocol
+  screen, net, shell, clipboard, nativeImage, safeStorage, protocol, webContents
 } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -20,7 +20,9 @@ const PW = require('./passwords');
 const FEAT = require('./features');
 const { DownloadManager } = require('./downloads');
 
-app.setName('3zT Browser');
+// the app is called "3zT"; its profile folder keeps the older name so nothing is lost after updating
+app.setPath('userData', path.join(app.getPath('appData'), '3zT Browser'));
+app.setName('3zT');
 if (process.platform === 'win32') app.setAppUserModelId('com.3zo.3ztbrowser');
 
 /* settings that must be known before the app is ready */
@@ -143,7 +145,7 @@ class Win {
     const b = opts.bounds && onScreen(opts.bounds) ? opts.bounds : null;
     this.win = new BaseWindow(Object.assign({
       width: 1280, height: 800, minWidth: 560, minHeight: 320,
-      frame: false, backgroundColor: '#000000', show: false, title: '3zT Browser'
+      frame: false, backgroundColor: '#000000', show: false, title: '3zT'
     }, b || {}, ICON_OPT));
 
     this.ui = new WebContentsView({
@@ -401,7 +403,7 @@ async function openExternalAsk(tab, url) {
     const shown = name || scheme;
     const w = tab.win && !tab.win.win.isDestroyed() ? tab.win.win : undefined;
     const r = await dialog.showMessageBox(w, {
-      type: 'question', title: '3zT Browser', buttons: [T(`فتح ${shown}`, `Open ${shown}`), T('إلغاء', 'Cancel')], defaultId: 0, cancelId: 1, noLink: true,
+      type: 'question', title: '3zT', buttons: [T(`فتح ${shown}`, `Open ${shown}`), T('إلغاء', 'Cancel')], defaultId: 0, cancelId: 1, noLink: true,
       message: T(`تبي تفتح ${shown}؟`, `Open ${shown}?`),
       detail: T(`${site} يبي يفتح هذا البرنامج.`, `${site} wants to open this application.`),
       checkboxLabel: T(`اسمح لـ ${site} يفتح روابط ${shown} دايماً`, `Always allow ${site} to open ${shown} links`)
@@ -693,6 +695,34 @@ async function addExtensionFolder(dir) {
   return dst;
 }
 
+/* Chrome Web Store: the "Add to Chrome" button works on chromewebstore.google.com */
+const storeRoot = () => path.join(app.getPath('userData'), 'webstore');
+const STORE_URL = 'https://chromewebstore.google.com/';
+async function setupWebStore() {
+  const CWS = require('./vendor/chrome-web-store');
+  // patch every store download for Electron before it is loaded (keeps its update address so it can update)
+  globalThis.__zeusCwsUnpacked = dir => { try { return EXT.patch(dir, SHIM, { keepUpdateUrl: true }); } catch (e) { console.warn('patch failed', e.message); } };
+  await CWS.installChromeWebStore({
+    session: session.defaultSession, extensionsPath: storeRoot(), loadExtensions: true, autoUpdate: true,
+    beforeInstall: async d => {
+      if (process.env.ZEUS_E2E === '1') return { action: 'allow' };   // automated tests only
+      let parent;
+      try { const wc = webContents.fromFrame(d.frame); const t = wc && tabOfWc(wc); parent = t && t.win && !t.win.win.isDestroyed() ? t.win.win : undefined; } catch (e) {}
+      const perms = [...new Set([...(d.manifest.permissions || []), ...(d.manifest.host_permissions || [])])].filter(x => typeof x === 'string');
+      const r = await dialog.showMessageBox(parent, {
+        type: 'question', title: '3zT', icon: d.icon && !d.icon.isEmpty() ? d.icon.resize({ width: 48 }) : undefined,
+        buttons: [T('إضافة الإضافة', 'Add extension'), T('إلغاء', 'Cancel')], defaultId: 0, cancelId: 1, noLink: true,
+        message: T(`إضافة "${d.localizedName}"؟`, `Add "${d.localizedName}"?`),
+        detail: perms.length ? T('تقدر الإضافة: ', 'It can: ') + perms.slice(0, 8).join('، ') + (perms.length > 8 ? ' …' : '') : ''
+      });
+      return { action: r.response === 0 ? 'allow' : 'deny' };
+    }
+  });
+  webStore = CWS;
+}
+let webStore = null;
+function isStoreExt(ext) { return !!ext && typeof ext.path === 'string' && ext.path.startsWith(storeRoot() + path.sep); }
+
 /* extension popup: small window under the button that does not take focus away from the page,
    so the extension sees the page as the active tab (Electron decides "active" by focus) */
 let extPopup = null;
@@ -778,6 +808,7 @@ function handleKey(w, i) {
   if (c && k === 'f') { w.ui.webContents.focus(); w.ui.webContents.send('find-open'); return true; }
   if (c && k === 'p') { if (wc) wc.print({}, () => {}); return true; }
   if (c && k === 'h') { w.createTab(HISTORY_URL); return true; }
+  if (c && !i.shift && k === 'j') { openDownloads(w); return true; }
   if (i.shift && !c && k === 'escape') { openTasks(w); return true; }
   if (c && k === 'u') { if (t && /^https?:/.test(t.url)) w.createTab('view-source:' + t.url, { after: t.id }); return true; }
   if (k === 'escape' && w.uiExpanded === true) { w.ui.webContents.send('close-menus'); return false; }
@@ -994,7 +1025,7 @@ function taskRows() {
     const x = byPid.get(pid); if (!x || used.has(pid)) return;
     used.add(pid); rows.push(Object.assign({ kind, name, pid, mem: mem(x), cpu: cpu(x) }, extra));
   };
-  for (const x of m) if (x.type === 'Browser') add('browser', '3zT Browser', x.pid);
+  for (const x of m) if (x.type === 'Browser') add('browser', '3zT', x.pid);
   for (const x of m) if (x.type === 'GPU') add('gpu', T('معالجة الرسوميات (GPU)', 'GPU process'), x.pid);
   // tabs: several tabs of the same site can share one process
   const groups = new Map();
@@ -1067,7 +1098,7 @@ function setupSession(ses) {
     const t = tabOfWc(wc), parent = (t ? t.win : focusedWin());
     dialog.showMessageBox(parent ? parent.win : undefined, {
       type: 'question', buttons: [T('سماح', 'Allow'), T('رفض', 'Block')], defaultId: 1, cancelId: 1,
-      title: '3zT Browser', message: `${origin}\n${T('يطلب الوصول إلى', 'wants to use')}: ${names[perm]}`
+      title: '3zT', message: `${origin}\n${T('يطلب الوصول إلى', 'wants to use')}: ${names[perm]}`
     }).then(r => { const ok = r.response === 0; asked.set(key, ok); cb(ok); }).catch(() => cb(false));
   });
   ses.on('will-download', (e, item, wc) => {
@@ -1308,6 +1339,7 @@ function setupIpc() {
         const i = list.indexOf(site); if (i >= 0) list.splice(i, 1); else list.push(site);
         settings.save(); if (wc) wc.reload(); w.pushState(); break;
       }
+      case 'store': { const ex = allTabs().find(x => /^https:\/\/chromewebstore\.google\.com\//.test(x.url || '')); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(STORE_URL); break; }
       case 'newWindow': newWindow(); break;
       case 'incognito': newWindow({ private: true }); break;
       case 'move': {   // reorder inside this window: arg = {id, to}
@@ -1484,7 +1516,7 @@ async function runMisc(w, cmd) {
     if (cmd === 'relaunch') { quitting = true; saveSession(); for (const s of stores()) s.flush(); app.relaunch(); app.exit(0); }
     if (cmd === 'clearData') {
       const r = await dialog.showMessageBox(w.win, {
-        type: 'warning', buttons: [T('مسح', 'Clear'), T('إلغاء', 'Cancel')], defaultId: 1, cancelId: 1, title: '3zT Browser',
+        type: 'warning', buttons: [T('مسح', 'Clear'), T('إلغاء', 'Cancel')], defaultId: 1, cancelId: 1, title: '3zT',
         message: T('مسح السجل والكاش والكوكيز؟ (بيطلعك من حساباتك في المواقع)', 'Clear history, cache and cookies? (signs you out of sites)')
       });
       if (r.response !== 0) return;
@@ -1504,6 +1536,10 @@ function removeExtension(id) {
   settings.data.pinnedExt = (settings.data.pinnedExt || []).filter(x => x !== id);
   settings.save();
   if (ext.path.startsWith(extRoot())) { try { fs.rmSync(ext.path, { recursive: true, force: true }); } catch (err) {} }
+  if (isStoreExt(ext)) { try { fs.rmSync(path.join(storeRoot(), id), { recursive: true, force: true }); } catch (err) {} }
+  // like Chrome: removing an extension also removes what it saved
+  session.defaultSession.clearStorageData({ origin: `chrome-extension://${id}` }).catch(() => {});
+  setTimeout(() => { for (const k of ['Local Extension Settings', 'Sync Extension Settings', 'Managed Extension Settings']) { try { fs.rmSync(path.join(app.getPath('userData'), k, id), { recursive: true, force: true }); } catch (err) {} } }, 1500);
   for (const w of wins) w.pushState();
   return true;
 }
@@ -1541,6 +1577,7 @@ function setupSettingsIpc() {
         for (const x of wins) x.pushState(); settingsChanged();
         return { imported: r.imported.map(x => x.name) };
       }
+      case 'openStore': if (w) w.createTab(STORE_URL); return true;
       case 'extOptions': if (w && /^chrome-extension:\/\//.test(arg || '')) w.createTab(arg); return true;
       case 'unallow': settings.data.adAllow = settings.data.adAllow.filter(x => x !== arg); settings.save(); settingsChanged(); for (const x of wins) x.pushState(); return true;
       case 'open': {
@@ -1563,7 +1600,7 @@ function setupSettingsIpc() {
 
 /* ---------- start ---------- */
 /* ---------- default browser (Windows) ---------- */
-// a link or file Windows hands us on the command line ("3zT Browser.exe" "https://...")
+// a link or file Windows hands us on the command line ("3zT.exe" "https://...")
 function urlFromArgv(argv) {
   for (const a of argv.slice(1)) {
     if (!a || a.startsWith('-')) continue;
@@ -1583,10 +1620,10 @@ async function registerBrowser() {
   const K = 'HKCU\\' + APPKEY, C = 'HKCU\\Software\\Classes\\' + PROGID;
   const add = (key, name, val) => reg(['add', key, ...(name ? ['/v', name] : ['/ve']), '/t', 'REG_SZ', '/d', val, '/f']);
   const jobs = [
-    add(C, '', '3zT Browser HTML Document'), add(C + '\\DefaultIcon', '', ico), add(C + '\\shell\\open\\command', '', cmd),
-    add(C + '\\Application', 'ApplicationName', '3zT Browser'), add(C + '\\Application', 'ApplicationIcon', ico),
-    add(K, '', '3zT Browser'), add(K + '\\DefaultIcon', '', ico), add(K + '\\shell\\open\\command', '', `"${exe}"`),
-    add(K + '\\Capabilities', 'ApplicationName', '3zT Browser'), add(K + '\\Capabilities', 'ApplicationIcon', ico),
+    add(C, '', '3zT HTML Document'), add(C + '\\DefaultIcon', '', ico), add(C + '\\shell\\open\\command', '', cmd),
+    add(C + '\\Application', 'ApplicationName', '3zT'), add(C + '\\Application', 'ApplicationIcon', ico),
+    add(K, '', '3zT'), add(K + '\\DefaultIcon', '', ico), add(K + '\\shell\\open\\command', '', `"${exe}"`),
+    add(K + '\\Capabilities', 'ApplicationName', '3zT'), add(K + '\\Capabilities', 'ApplicationIcon', ico),
     add(K + '\\Capabilities', 'ApplicationDescription', 'A light browser built on Chromium'),
     add(K + '\\Capabilities\\StartMenu', 'StartMenuInternet', '3zT Browser'),
     add('HKCU\\Software\\RegisteredApplications', '3zT Browser', APPKEY + '\\Capabilities')
@@ -1672,6 +1709,10 @@ app.whenReady().then(async () => {
   for (const p of settings.data.extensions.slice()) {
     try { await loadExtensionDir(p); } catch (e) { console.warn('extension failed', p, e.message); }
   }
+  // extensions from the Chrome Web Store (installs, loads and keeps them updated)
+  try { await setupWebStore(); } catch (e) { console.warn('web store failed', e.message); }
+  // a new extension (from the store or anywhere): refresh the bar and the settings page
+  try { extApi().on('extension-loaded', () => { for (const w of wins) w.pushState(); settingsChanged(); }); extApi().on('extension-unloaded', () => { for (const w of wins) w.pushState(); settingsChanged(); }); } catch (e) {}
 
   // restore windows (old single-window format supported too)
   let saved = sessionStore.data.windows;

@@ -96,6 +96,7 @@ function render() {
     (S.extensions.length ? S.extensions.map(x => `<div class="row ext">${x.icon ? `<img src="${esc(x.icon)}" alt="">` : '<span class="ph"></span>'}<div class="tx"><div class="t">${esc(x.name)}</div><div class="d">${esc(x.version || '')}</div></div>
       ${x.options ? `<button data-act="extOptions" data-arg="${esc(x.options)}">${L('إعداداتها', 'Options')}</button>` : ''}<button data-act="extRemove" data-arg="${esc(x.id)}">${L('إزالة', 'Remove')}</button></div>`).join('')
       : row(L('ما فيه إضافات', 'No extensions'), L('SponsorBlock وتنظيف يوتيوب والإضاءة المحيطة ومانع إعلانات تويتش صارت جزء من المتصفح.', 'SponsorBlock, Clean YouTube, Ambient light and the Twitch ad blocker are now part of the browser.'), '')) +
+    row(L('متجر كروم للإضافات', 'Chrome Web Store'), L('افتح المتجر واضغط "إضافة إلى Chrome" على أي إضافة، وتنضاف هنا وتتحدث لحالها.', 'Open the store and press "Add to Chrome" on any extension; it is added here and kept up to date.'), `<button class="pri" data-act="openStore">${L('فتح المتجر', 'Open store')}</button>`) +
     row(L('استيراد إضافاتي من كروم', 'Import my Chrome extensions'), L('الإضافات اللي صارت جزء من المتصفح ما تنضاف مرة ثانية.', 'Extensions that are now built in are skipped.'), `<button data-act="extImport">${L('استيراد', 'Import')}</button>`));
   sec.downloads = card('downloads', L('التنزيلات', 'Downloads'),
     row(L('اسألني وين أحفظ كل ملف', 'Ask where to save each file'), L('تطلع لك نافذة ويندوز تختار فيها المكان واسم الملف.', 'A Windows window lets you pick the folder and file name.'), sw(S.dlAsk, 'data-tog="dlAsk"')) +
@@ -105,7 +106,7 @@ function render() {
     row(L('المفضلة والأيقونات', 'Bookmarks and icons'), '', `<button data-act="importBookmarks">${L('استيراد', 'Import')}</button>`) +
     row(L('شكل بلاك كروم (الخلفية والخط والإعدادات)', 'Black Chrome look (background, font, settings)'), '', `<button data-act="importLook">${L('استيراد', 'Import')}</button>`));
   sec.about = card('about', L('حول المتصفح', 'About'),
-    row('3zT Browser ' + esc(S.versions.app), 'Chromium ' + esc(S.versions.chrome), ''));
+    row('3zT ' + esc(S.versions.app), 'Chromium ' + esc(S.versions.chrome), ''));
   $('main').innerHTML = sec[cur] || sec.general;
 }
 
@@ -133,7 +134,7 @@ document.addEventListener('click', async e => {
   b.disabled = true;
   const r = await zeus.act(act, b.dataset.arg);
   b.disabled = false;
-  if (act === 'makeDefault') toast(L('اختار "3zT Browser" من صفحة ويندوز اللي فتحت', 'Pick "3zT Browser" on the Windows page that opened'));
+  if (act === 'makeDefault') toast(L('اختار "3zT" من صفحة ويندوز اللي فتحت', 'Pick "3zT" on the Windows page that opened'));
   if (act === 'importBookmarks') toast(r ? L(`انضافت ${r} من مفضلة كروم`, `Imported ${r} bookmarks`) : L('تم تحديث الأيقونات، وما فيه مفضلة جديدة', 'Icons updated, no new bookmarks'));
   if (act === 'importLook') toast(r ? L('تم. افتح تبويب جديد عشان تشوف الشكل', 'Done. Open a new tab to see it') : L('ما لقيت إعدادات بلاك كروم في كروم', 'Black Chrome settings not found'));
   if (act === 'extImport' && r) toast(L(`انضافت ${r.imported.length} إضافة`, `Imported ${r.imported.length} extensions`));

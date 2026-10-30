@@ -82,16 +82,18 @@ function copyDir(src, dst, skip) {
 function rmDir(p) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) {} }
 
 /* make a copied extension run in Electron */
-function patch(dir, shimSource) {
+function patch(dir, shimSource, opts = {}) {
   fs.writeFileSync(path.join(dir, 'zeus_shim.js'), shimSource);
   const m = readManifest(dir);
   // background: load the shim first (skip if this copy was already patched)
   if (m.background && m.background.service_worker && m.background.service_worker !== 'zeus_bg.js') {
     const orig = m.background.service_worker.replace(/^\//, '');
     const isModule = m.background.type === 'module';
-    fs.writeFileSync(path.join(dir, 'zeus_bg.js'), isModule
+    if (opts.keepUpdateUrl) fs.writeFileSync(path.join(dir, 'zeus_store.js'), 'self.__zeusStore = true;\n');
+    const pre = opts.keepUpdateUrl ? (isModule ? `import './zeus_store.js';\n` : `importScripts('zeus_store.js');\n`) : '';
+    fs.writeFileSync(path.join(dir, 'zeus_bg.js'), pre + (isModule
       ? `import './zeus_shim.js';\nimport './${orig}';\n`
-      : `importScripts('zeus_shim.js', '${orig}');\n`);
+      : `importScripts('zeus_shim.js', '${orig}');\n`));
     m.background = Object.assign({}, m.background, { service_worker: 'zeus_bg.js' });
     delete m.background.scripts;              // MV3 + leftover MV2 "scripts" confuses Electron
   }
@@ -114,7 +116,7 @@ function patch(dir, shimSource) {
       fs.writeFileSync(f, s);
     }
   })(dir);
-  delete m.update_url;                          // never try to self-update from the Chrome store
+  if (!opts.keepUpdateUrl) delete m.update_url;  // copies from Chrome never self-update; store installs keep it (3zT updates them)
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(m, null, 1));
   return m;
 }
