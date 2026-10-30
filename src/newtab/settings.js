@@ -98,8 +98,9 @@ function render() {
       : row(L('ما فيه إضافات', 'No extensions'), L('SponsorBlock وتنظيف يوتيوب والإضاءة المحيطة ومانع إعلانات تويتش صارت جزء من المتصفح.', 'SponsorBlock, Clean YouTube, Ambient light and the Twitch ad blocker are now part of the browser.'), '')) +
     row(L('استيراد إضافاتي من كروم', 'Import my Chrome extensions'), L('الإضافات اللي صارت جزء من المتصفح ما تنضاف مرة ثانية.', 'Extensions that are now built in are skipped.'), `<button data-act="extImport">${L('استيراد', 'Import')}</button>`));
   sec.downloads = card('downloads', L('التنزيلات', 'Downloads'),
-    row(L('مجلد التنزيلات', 'Downloads folder'), '', `<button data-act="downloads">${L('فتح', 'Open')}</button>`) +
-    (S.fdmFound ? row(L('التنزيل عبر Free Download Manager', 'Download with Free Download Manager'), L('تجريبي', 'Beta'), sw(S.fdm, 'data-tog="fdm"')) : ''));
+    row(L('اسألني وين أحفظ كل ملف', 'Ask where to save each file'), L('تطلع لك نافذة ويندوز تختار فيها المكان واسم الملف.', 'A Windows window lets you pick the folder and file name.'), sw(S.dlAsk, 'data-tog="dlAsk"')) +
+    row(S.dlAsk ? L('المجلد اللي تبدأ منه النافذة', 'Folder the window starts in') : L('مجلد التنزيلات', 'Downloads folder'), `<span style="direction:ltr;unicode-bidi:plaintext">${esc(S.dlDir)}</span>`, `<button data-act="dlFolder">${L('تغيير', 'Change')}</button>`) +
+    row(L('مدير التنزيلات', 'Download manager'), L('كل التنزيلات: إيقاف مؤقت واستئناف وإعادة محاولة. كل ملف يتحمل بأكثر من اتصال عشان يكون أسرع.', 'All downloads: pause, resume, retry. Every file downloads over several connections for speed.'), `<button data-act="downloads">${L('فتح', 'Open')}</button>`));
   sec.import = card('import', L('الاستيراد من كروم', 'Import from Chrome'),
     row(L('المفضلة والأيقونات', 'Bookmarks and icons'), '', `<button data-act="importBookmarks">${L('استيراد', 'Import')}</button>`) +
     row(L('شكل بلاك كروم (الخلفية والخط والإعدادات)', 'Black Chrome look (background, font, settings)'), '', `<button data-act="importLook">${L('استيراد', 'Import')}</button>`));

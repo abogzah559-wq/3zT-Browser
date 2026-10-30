@@ -8,7 +8,7 @@
  */
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
-const internal = location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings)\.html$/i.test(decodeURIComponent(location.pathname));
+const internal = location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads)\.html$/i.test(decodeURIComponent(location.pathname));
 
 if (internal) {
   contextBridge.exposeInMainWorld('zeus', {
@@ -36,7 +36,14 @@ if (internal) {
     settings: () => ipcRenderer.invoke('settings:get'),
     set: (k, v) => ipcRenderer.send('set', k, v),
     act: (cmd, arg) => ipcRenderer.invoke('settings:act', cmd, arg),
-    onSettings: fn => ipcRenderer.on('settings:changed', () => fn())
+    onSettings: fn => ipcRenderer.on('settings:changed', () => fn()),
+    // downloads page
+    dlList: () => ipcRenderer.invoke('dl:list'),
+    dlAct: (id, cmd) => ipcRenderer.invoke('dl:act', id, cmd),
+    dlClear: () => ipcRenderer.invoke('dl:clear'),
+    dlFolder: () => ipcRenderer.invoke('dl:folder'),
+    dlIcon: id => ipcRenderer.invoke('dl:icon', id),
+    onDl: fn => ipcRenderer.on('dl:changed', () => fn())
   });
 } else if (/^https?:$/.test(location.protocol)) {
   /* ================= Google sign-in: look like Firefox (Google blocks Electron browsers) ================= */

@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>التنزيلات</title>
+<link rel="icon" href="icons/tab32.png">
+<style>
+*{box-sizing:border-box}
+:root{--card:#141419;--line:rgba(255,255,255,.07);--muted:rgba(255,255,255,.55);--acc:#8ab4f8;--ok:#7ee2a8;--bad:#ff8a80}
+html,body{margin:0;background:#0b0b0f;color:#eee;font-family:"Segoe UI",Tajawal,Tahoma,system-ui,sans-serif;color-scheme:dark;font-size:14px}
+main{max-width:860px;margin:0 auto;padding:26px 20px 60px}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+h1{flex:1;margin:0;font-size:22px;font-weight:600}
+#q{width:240px;max-width:60vw;padding:9px 14px;border-radius:18px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.06);color:#fff;font:inherit;outline:none}
+#q:focus{border-color:var(--acc)}
+button{font:inherit;color:inherit;cursor:pointer;padding:7px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.18);background:transparent;white-space:nowrap}
+button:hover{background:rgba(255,255,255,.08)}
+.bar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);margin-bottom:16px;font-size:13px;color:var(--muted)}
+.bar span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr;text-align:start}
+.day{font-size:12.5px;color:var(--muted);margin:18px 4px 8px}
+.it{display:flex;gap:14px;align-items:center;padding:14px 16px;background:var(--card);border:1px solid var(--line);border-radius:14px;margin-bottom:8px}
+.ic{flex:none;width:32px;height:32px;display:grid;place-items:center}
+.ic img{width:32px;height:32px}
+.ic .ph{width:28px;height:32px;border-radius:4px;background:rgba(255,255,255,.12);display:grid;place-items:center;font-size:9px;font-weight:700;color:var(--muted)}
+.tx{flex:1;min-width:0}
+.nm{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nm a{color:inherit;text-decoration:none;cursor:pointer}.nm a:hover{text-decoration:underline}
+.it.gone .nm{text-decoration:line-through;opacity:.6}
+.src{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr;text-align:start;margin-top:2px}
+.st{font-size:12.5px;margin-top:6px;color:var(--muted)}
+.st.bad{color:var(--bad)}.st.ok{color:var(--ok)}
+.pb{height:4px;border-radius:2px;background:rgba(255,255,255,.1);margin-top:8px;overflow:hidden}
+.pb i{display:block;height:100%;background:var(--acc);border-radius:2px;transition:width .3s}
+.pb.paused i{background:#c8a24a}
+.pb.ind i{width:30%!important;animation:ind 1.2s linear infinite}
+@keyframes ind{from{transform:translateX(-120%)}to{transform:translateX(400%)}}
+html[dir=rtl] .pb.ind i{animation-direction:reverse}
+.acts{display:flex;gap:6px;flex:none}
+.acts button{padding:6px 12px;font-size:12.5px}
+.acts .x{padding:6px 9px;border:0;opacity:.7}.acts .x:hover{opacity:1}
+#empty{text-align:center;color:var(--muted);margin:70px 0;line-height:1.9}
+</style>
+</head>
+<body>
+<main>
+  <header><h1 id="h"></h1><input id="q" type="search"><button id="clear"></button><button id="open"></button></header>
+  <div class="bar"><b id="whereL" style="font-weight:400"></b><span id="where"></span><button id="ask"></button></div>
+  <div id="list"></div>
+  <div id="empty" hidden></div>
+</main>
+<script src="downloads.js"></script>
+</body>
+</html>

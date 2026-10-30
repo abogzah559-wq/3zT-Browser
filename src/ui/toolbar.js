@@ -8,7 +8,7 @@ const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&a
 const TIPS = {
   min: ['تصغير', 'Minimize'], max: ['تكبير', 'Maximize'], close: ['إغلاق', 'Close'],
   back: ['رجوع (Alt+←)', 'Back (Alt+←)'], forward: ['للأمام (Alt+→)', 'Forward (Alt+→)'], reload: ['تحديث (F5)', 'Reload (F5)'],
-  star: ['حفظ في المفضلة (Ctrl+D)', 'Bookmark (Ctrl+D)'], ext: ['الإضافات', 'Extensions'], menu: ['القائمة', 'Menu'],
+  star: ['حفظ في المفضلة (Ctrl+D)', 'Bookmark (Ctrl+D)'], ext: ['الإضافات', 'Extensions'], menu: ['القائمة', 'Menu'], downloads: ['التنزيلات', 'Downloads'],
   newtab: ['تبويب جديد (Ctrl+T)', 'New tab (Ctrl+T)'], translate: ['ترجمة الصفحة', 'Translate page'],
   shield: ['مانع الإعلانات', 'Ad blocker']
 };
@@ -69,6 +69,7 @@ ui.on('state', st => {
   if (!dragging) renderTabs();
   updateFull();
   renderPins();
+  drawDl();
   if (!$('drop').hidden && openKind && openKind !== 'sug') renderMenu(openKind);
 });
 function applyTips() {
@@ -169,8 +170,8 @@ window.addEventListener('pointermove', e => {
   if (d.out) return;
   if (!d.moved && Math.abs(e.clientX - d.x0) < 5 && Math.abs(e.clientY - d.y0) < 5) return;
   d.moved = true; d.el.classList.add('drag');
-  // pulled down (or up) out of the strip: split into its own window
-  if (e.clientY > stripH + 26 || e.clientY < -18) {
+  // pulled out of the strip: split into its own window. A window's only tab moves the whole window at once (to join another window)
+  if (e.clientY > stripH + 26 || e.clientY < -18 || S.tabs.length === 1) {
     d.out = true; d.el.classList.remove('drag');
     ui.send('tab:dragout', { id: d.id, offX: e.clientX });
     return;
@@ -456,9 +457,20 @@ ui.on('pw-offer', o => {
     { sub: `${o.username || L('(بدون اسم مستخدم)', '(no username)')} · ${o.host}`, ms: 20000 });
 });
 function hideToast() { $('toast').hidden = true; toastOn = false; if (!openKind) ui.send('ui:expand', false); }
+let dlDoneUntil = 0;
+function drawDl() {
+  const b = $('dlBtn'), d = S.dl || { active: 0, progress: -1 };
+  const show = d.active > 0 || Date.now() < dlDoneUntil;
+  b.hidden = !show; if (!show) return;
+  b.classList.toggle('done', !d.active);
+  b.classList.toggle('ind', d.active > 0 && d.progress < 0);
+  $('dlRing').style.strokeDashoffset = d.active && d.progress >= 0 ? String(100.5 * (1 - d.progress)) : '';
+  b.title = d.active ? L(`جاري تنزيل ${d.active}`, `${d.active} downloading`) : L('التنزيلات', 'Downloads');
+}
+$('dlBtn').onclick = () => ui.send('misc', 'downloads');
 ui.on('download', d => {
-  if (d.state === 'completed') toast(L('تم التنزيل: ', 'Downloaded: ') + d.name, { label: L('عرض', 'Show'), fn: () => ui.send('download:show', d.path) });
-  else if (d.state === 'interrupted' || d.state === 'cancelled') toast(L('فشل التنزيل: ', 'Download failed: ') + d.name);
-  else if (d.state === 'progressing' && d.received === 0) toast(L('جاري التنزيل: ', 'Downloading: ') + d.name);
-  else if (d.state === 'fdm') toast(L('انرسل التنزيل إلى Free Download Manager', 'Sent to Free Download Manager'));
+  const page = { label: L('التنزيلات', 'Downloads'), fn: () => ui.send('misc', 'downloads') };
+  if (d.state === 'completed') { dlDoneUntil = Date.now() + 8000; setTimeout(drawDl, 8100); drawDl(); toast(L('تم التنزيل: ', 'Downloaded: ') + d.name, [{ label: L('فتح المجلد', 'Show'), fn: () => ui.send('download:show', d.path) }, page]); }
+  else if (d.state === 'interrupted') toast(L('توقف التنزيل: ', 'Download stopped: ') + d.name, page);
+  else if (d.state === 'started') toast(L('جاري التنزيل: ', 'Downloading: ') + d.name, page);
 });

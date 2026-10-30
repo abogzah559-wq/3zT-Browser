@@ -18,6 +18,7 @@ const { AdBlocker } = require('./adblock');
 const EXT = require('./ext-import');
 const PW = require('./passwords');
 const FEAT = require('./features');
+const { DownloadManager } = require('./downloads');
 
 app.setName('3zT Browser');
 if (process.platform === 'win32') app.setAppUserModelId('com.3zo.3ztbrowser');
@@ -29,9 +30,9 @@ if (early.hwAccel === false) app.disableHardwareAcceleration();
 /* ---------- lighter Chromium ---------- */
 app.commandLine.appendSwitch('disable-features', ['SpareRendererForSitePerProcess', 'MediaRouter', 'OptimizationHints', 'FedCm', 'WebIdentityDigitalCredentials'].join(','));
 app.commandLine.appendSwitch('disable-background-networking');   // no hidden Chromium background downloads/pings
+app.commandLine.appendSwitch('enable-features', 'ParallelDownloading');     // every download over several connections (like a download manager)
 const FAST = early.perfMode === 'fast';   // "very fast browsing": speed first, more RAM/CPU is fine
 if (FAST) {
-  app.commandLine.appendSwitch('enable-features', 'ParallelDownloading');   // downloads over several connections
   app.commandLine.appendSwitch('disable-renderer-backgrounding');          // background tabs keep full speed
   app.commandLine.appendSwitch('ignore-gpu-blocklist');                    // use the graphics card even if Chromium is unsure about it
   app.commandLine.appendSwitch('num-raster-threads', '4');
@@ -66,11 +67,13 @@ const HISTORY_FILE = path.join(SRC, 'newtab', 'history.html');
 const TASKS_FILE = path.join(SRC, 'newtab', 'tasks.html');
 const PASSWORDS_FILE = path.join(SRC, 'newtab', 'passwords.html');
 const SETTINGS_FILE = path.join(SRC, 'newtab', 'settings.html');
+const DOWNLOADS_FILE = path.join(SRC, 'newtab', 'downloads.html');
 const NEWTAB_URL = pathToFileURL(NEWTAB_FILE).href;
 const HISTORY_URL = pathToFileURL(HISTORY_FILE).href;
 const TASKS_URL = pathToFileURL(TASKS_FILE).href;
 const PASSWORDS_URL = pathToFileURL(PASSWORDS_FILE).href;
 const SETTINGS_URL = pathToFileURL(SETTINGS_FILE).href;
+const DOWNLOADS_URL = pathToFileURL(DOWNLOADS_FILE).href;
 const UI_FILE = path.join(SRC, 'ui', 'toolbar.html');
 const PRELOAD_UI = path.join(SRC, 'preload-ui.js');
 const PRELOAD_TAB = path.join(SRC, 'preload-newtab.js');
@@ -84,8 +87,9 @@ const isHistory = u => same(u, HISTORY_URL);
 const isTasks = u => same(u, TASKS_URL);
 const isPasswords = u => same(u, PASSWORDS_URL);
 const isSettings = u => same(u, SETTINGS_URL);
-const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u) || isSettings(u);
-const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : isTasks(u) ? 'zeus://tasks' : isPasswords(u) ? 'zeus://passwords' : isSettings(u) ? 'zeus://settings' : u);
+const isDownloads = u => same(u, DOWNLOADS_URL);
+const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u) || isSettings(u) || isDownloads(u);
+const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : isTasks(u) ? 'zeus://tasks' : isPasswords(u) ? 'zeus://passwords' : isSettings(u) ? 'zeus://settings' : isDownloads(u) ? 'zeus://downloads' : u);
 
 /* ---------- tiny JSON stores (debounced, atomic save) ---------- */
 function makeStore(name, def) {
@@ -102,7 +106,7 @@ function makeStore(name, def) {
   };
   return { get data() { return data; }, set data(v) { data = v; this.save(); }, save() { if (!t) t = setTimeout(flush, 800); }, flush };
 }
-let settings, bookmarks, history, sessionStore, favStore;
+let settings, bookmarks, history, sessionStore, favStore, dl;
 let adblock = null;
 let passwords = null;
 const stores = () => [settings, bookmarks, history, sessionStore, favStore].filter(Boolean);
@@ -161,6 +165,25 @@ class Win {
     w.on('blur', () => { setTimeout(() => { if (!BrowserWindow.getFocusedWindow() && !wins.some(x => !x.win.isDestroyed() && x.win.isFocused())) closeExtPopup(); }, 150); });
     for (const ev of ['move', 'minimize']) w.on(ev, () => closeExtPopup());
     w.on('resize', () => this.layout());
+    // moved by its bar (Windows' own move): a one-tab window dropped on another window's tabs joins it
+    w.on('will-move', () => {
+      if (tabDrag || this.tabs.length !== 1) return;
+      const p = screen.getCursorScreenPoint();
+      const hit = snapZone(p) ? null : stripHit(p, this);
+      if (hit !== this.nativeHover) { if (this.nativeHover && !this.nativeHover.ui.webContents.isDestroyed()) this.nativeHover.ui.webContents.send('drop-hint', null); this.nativeHover = hit; }
+      if (hit) hit.ui.webContents.send('drop-hint', p.x - hit.win.getContentBounds().x);
+    });
+    w.on('moved', async () => {
+      const target = this.nativeHover; this.nativeHover = null;
+      if (!target || target.win.isDestroyed()) return;
+      target.ui.webContents.send('drop-hint', null);
+      const p = screen.getCursorScreenPoint();
+      if (stripHit(p, this) !== target || this.tabs.length !== 1) return;
+      const t = this.tabs[0];
+      let index = target.tabs.length;
+      try { index = await target.ui.webContents.executeJavaScript(`tabIndexAt(${p.x - target.win.getContentBounds().x})`); } catch (err) {}
+      this.releaseTab(t); target.adoptTab(t, index); this.win.close(); target.win.focus(); saveSessionSoon();
+    });
     for (const ev of ['maximize', 'unmaximize', 'enter-full-screen']) w.on(ev, () => { this.layout(); this.pushState(); });
     w.on('leave-full-screen', () => { this.htmlFs = false; this.layout(); this.pushState(); });
     w.on('close', () => {
@@ -247,7 +270,7 @@ class Win {
         private: this.private,
         tabs: this.tabs.map(x => ({
           id: x.id,
-          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : isTasks(x.url) ? T('مدير المهام', 'Task manager') : isPasswords(x.url) ? T('كلمات السر', 'Passwords') : isSettings(x.url) ? T('الإعدادات', 'Settings') : shownUrl(x.url)),
+          title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : isTasks(x.url) ? T('مدير المهام', 'Task manager') : isPasswords(x.url) ? T('كلمات السر', 'Passwords') : isSettings(x.url) ? T('الإعدادات', 'Settings') : isDownloads(x.url) ? T('التنزيلات', 'Downloads') : shownUrl(x.url)),
           url: shownUrl(x.url), favicon: isInternal(x.url) ? 'app' : (x.favicon || ''),
           loading: !!x.loading, discarded: !!x.discarded, muted: !!x.muted,
           audible: !!(x.view && !x.view.webContents.isDestroyed() && x.view.webContents.isCurrentlyAudible())
@@ -276,7 +299,7 @@ class Win {
         blockedTotal: settings.data.adBlockedTotal || 0,
         adRules: adblock ? adblock.ruleCount : 0,
         ytAds: settings.data.ytAds !== false,
-        fdm: !!settings.data.fdm, fdmFound: !!fdmPath(),
+        dl: dlSummary(),
         isDefault: isDefaultCache, canDefault: process.platform === 'win32',
         pinned: pinnedExtensions(),
         versions: { app: app.getVersion(), chrome: process.versions.chrome }
@@ -478,6 +501,7 @@ function loadInto(tab, url) {
   else if (isTasks(url)) wc.loadFile(TASKS_FILE).catch(() => {});
   else if (isPasswords(url)) wc.loadFile(PASSWORDS_FILE).catch(() => {});
   else if (isSettings(url)) wc.loadFile(SETTINGS_FILE).catch(() => {});
+  else if (isDownloads(url)) wc.loadFile(DOWNLOADS_FILE).catch(() => {});
   else wc.loadURL(url).catch(() => {});
 }
 
@@ -781,6 +805,7 @@ function toUrl(text) {
   if (/^zeus:\/\/tasks/i.test(t)) return TASKS_URL;
   if (/^zeus:\/\/passwords/i.test(t)) return PASSWORDS_URL;
   if (/^zeus:\/\/settings/i.test(t)) return SETTINGS_URL;
+  if (/^zeus:\/\/downloads/i.test(t)) return DOWNLOADS_URL;
   if (/^(https?|file|chrome-extension|about|view-source):/i.test(t)) return t;
   if (/^localhost(:\d+)?(\/|$)/i.test(t) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(t)) return 'http://' + t;
   if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return 'https://' + t;
@@ -903,6 +928,33 @@ function stripHit(p, except) {
   }
   return null;
 }
+/* Windows-style snapping for a window we move ourselves: screen edges = halves, corners = quarters, top = maximize */
+function snapZone(p) {
+  const d = screen.getDisplayNearestPoint(p), b = d.bounds, wa = d.workArea, E = 6;
+  const L = p.x <= b.x + E, R = p.x >= b.x + b.width - 1 - E, T = p.y <= b.y + E, B = p.y >= b.y + b.height - 1 - E;
+  const hw = Math.round(wa.width / 2), hh = Math.round(wa.height / 2);
+  if (T && L) return { x: wa.x, y: wa.y, width: hw, height: hh };
+  if (T && R) return { x: wa.x + wa.width - hw, y: wa.y, width: hw, height: hh };
+  if (B && L) return { x: wa.x, y: wa.y + wa.height - hh, width: hw, height: hh };
+  if (B && R) return { x: wa.x + wa.width - hw, y: wa.y + wa.height - hh, width: hw, height: hh };
+  if (L) return { x: wa.x, y: wa.y, width: hw, height: wa.height };
+  if (R) return { x: wa.x + wa.width - hw, y: wa.y, width: hw, height: wa.height };
+  if (T) return Object.assign({ max: true }, wa);
+  return null;
+}
+let snapGhost = null;
+function showSnapGhost(r) {
+  if (!r) { if (snapGhost && !snapGhost.isDestroyed()) snapGhost.hide(); return; }
+  if (!snapGhost || snapGhost.isDestroyed()) {
+    snapGhost = new BrowserWindow({ show: false, frame: false, transparent: true, focusable: false, skipTaskbar: true, resizable: false, hasShadow: false, alwaysOnTop: true,
+      webPreferences: { sandbox: true, contextIsolation: true } });
+    snapGhost.setIgnoreMouseEvents(true);
+    snapGhost.loadURL('data:text/html,' + encodeURIComponent('<body style="margin:0;background:transparent"><div style="position:fixed;inset:6px;border-radius:10px;background:rgba(138,180,248,.18);border:2px solid rgba(138,180,248,.75);backdrop-filter:blur(2px)"></div>'));
+  }
+  const b = { x: r.x, y: r.y, width: r.width, height: r.height };
+  snapGhost.setBounds(b);
+  if (!snapGhost.isVisible()) snapGhost.showInactive();
+}
 function dragTick() {
   if (!tabDrag) return;
   const p = screen.getCursorScreenPoint();
@@ -910,6 +962,8 @@ function dragTick() {
   if (mw.win.isDestroyed()) { stopTabDrag(); return; }
   mw.win.setPosition(Math.round(p.x - tabDrag.offX), Math.round(p.y - tabDrag.offY));
   const hit = stripHit(p, mw);
+  tabDrag.snap = hit ? null : snapZone(p);
+  showSnapGhost(tabDrag.snap);
   if (hit !== tabDrag.hover) {
     if (tabDrag.hover && !tabDrag.hover.ui.webContents.isDestroyed()) tabDrag.hover.ui.webContents.send('drop-hint', null);
     tabDrag.hover = hit;
@@ -919,6 +973,7 @@ function dragTick() {
 function stopTabDrag() {
   if (!tabDrag) return null;
   clearInterval(tabDrag.timer);
+  showSnapGhost(null);
   try { if (!tabDrag.mover.ui.webContents.isDestroyed()) tabDrag.mover.ui.webContents.send('being-moved', false); } catch (e) {}
   if (tabDrag.hover && !tabDrag.hover.ui.webContents.isDestroyed()) tabDrag.hover.ui.webContents.send('drop-hint', null);
   const d = tabDrag; tabDrag = null; return d;
@@ -1016,27 +1071,54 @@ function setupSession(ses) {
     }).then(r => { const ok = r.response === 0; asked.set(key, ok); cb(ok); }).catch(() => cb(false));
   });
   ses.on('will-download', (e, item, wc) => {
-    const url = item.getURL();
-    const fdm = settings.data.fdm && /^https?:/i.test(url) && fdmPath();
-    if (fdm) {
-      try {
-        spawn(fdm, [url], { detached: true, stdio: 'ignore' }).unref();
-        e.preventDefault();
-        const t0 = wc && tabOfWc(wc); const w0 = (t0 && t0.win) || focusedWin();
-        if (w0) w0.ui.webContents.send('download', { name: item.getFilename(), state: 'fdm' });
-        return;
-      } catch (err) { /* fall back to the built-in download */ }
-    }
-    const dir = app.getPath('downloads');
-    let name = item.getFilename() || 'download', p = path.join(dir, name), n = 1;
-    const ext = path.extname(name), base = path.basename(name, ext);
-    while (fs.existsSync(p)) p = path.join(dir, `${base} (${n++})${ext}`);
-    item.setSavePath(p);
-    const t = wc && tabOfWc(wc); const w = (t && t.win) || focusedWin();
-    const send = st => w && !w.ui.webContents.isDestroyed() && w.ui.webContents.send('download', {
-      name: path.basename(p), path: p, state: st, received: item.getReceivedBytes(), total: item.getTotalBytes() });
-    send('progressing');
-    item.once('done', (ev, st) => send(st));
+    const resumeId = dl.takeResume();
+    const rec = dl.handle(item, { resumeId });
+    rec.winId = (() => { const t = wc && tabOfWc(wc); const w = (t && t.win) || focusedWin(); return w ? w.id : null; })();
+  });
+}
+
+/* ---------- downloads: tell the bar (notices + icon) and the downloads page ---------- */
+let dlPageTimer = null;
+function dlNotify(rec, ev) {
+  const w = wins.find(x => x.id === rec.winId) || focusedWin();
+  if ((ev === 'start' || ev === 'done') && w && !w.ui.webContents.isDestroyed()) {
+    w.ui.webContents.send('download', { id: rec.id, name: rec.name, path: rec.path, state: ev === 'start' ? 'started' : rec.state });
+  }
+  for (const x of wins) x.pushState();
+  if (!dlPageTimer) dlPageTimer = setTimeout(() => {
+    dlPageTimer = null;
+    for (const t of allTabs()) if (t.view && isDownloads(t.url) && !t.view.webContents.isDestroyed()) t.view.webContents.send('dl:changed');
+  }, ev === 'update' ? 400 : 0);
+}
+function openDownloads(w) {
+  const ex = allTabs().find(x => isDownloads(x.url));
+  if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(DOWNLOADS_URL);
+}
+function dlSummary() {
+  const live = dl ? dl.list().filter(r => r.state === 'progressing') : [];
+  let got = 0, all = 0; for (const r of live) { got += r.received || 0; all += r.total || 0; }
+  return { active: live.length, progress: all ? got / all : -1 };
+}
+function setupDownloadIpc() {
+  const okPage = e => { try { return isDownloads(e.senderFrame.url); } catch (x) { return false; } };
+  ipcMain.handle('dl:list', e => (okPage(e) ? {
+    items: dl.list().map(r => (r.state === 'completed' && r.path ? Object.assign({}, r, { exists: fs.existsSync(r.path) }) : r)),
+    folder: dl.folder(), ask: settings.data.dlAsk !== false } : null));
+  ipcMain.handle('dl:act', (e, id, cmd) => {
+    if (!okPage(e)) return false;
+    const r = dl.get(id);
+    if (cmd === 'open' && r && r.path) { shell.openPath(r.path); return true; }
+    if (cmd === 'show' && r && r.path) { shell.showItemInFolder(r.path); return true; }
+    const t = tabOfWc(e.sender);
+    const ses = t && t.win.private ? t.view.webContents.session : session.defaultSession;
+    const ok = dl.action(id, cmd, ses); dlNotify(r || { id }, 'refresh'); return ok;
+  });
+  ipcMain.handle('dl:clear', e => { if (!okPage(e)) return false; dl.clear(); dlNotify({}, 'refresh'); return true; });
+  ipcMain.handle('dl:folder', e => { if (okPage(e)) shell.openPath(dl.folder()); return true; });
+  ipcMain.handle('dl:icon', async (e, id) => {
+    if (!okPage(e)) return '';
+    const r = dl.get(id); if (!r || !r.path || !fs.existsSync(r.path)) return '';
+    try { return (await app.getFileIcon(r.path, { size: 'normal' })).toDataURL(); } catch (x) { return ''; }
   });
 }
 
@@ -1281,13 +1363,17 @@ function setupIpc() {
       d.mover.win.close();
       target.win.focus();
     } else if (!d.mover.win.isDestroyed()) {
+      const z = snapZone(p);
+      if (z && z.max) d.mover.win.maximize();
+      else if (z) d.mover.win.setBounds({ x: z.x, y: z.y, width: z.width, height: z.height });
       d.mover.win.show(); d.mover.win.focus();
     }
     saveSessionSoon();
   });
 
   ipcMain.on('set', (e, key, val) => {
-    if (!uiWin(e) && !settingsPage(e) && !(internalPage(e) && key === 'lang')) return;
+    const dlPage = (() => { try { return isDownloads(e.senderFrame.url); } catch (x) { return false; } })();
+    if (!uiWin(e) && !settingsPage(e) && !(internalPage(e) && key === 'lang') && !(dlPage && key === 'dlAsk')) return;
     if (key === 'perfMode' && ['normal', 'fast'].includes(val)) settings.data.perfMode = val;
     if (key === 'sponsorBlock') settings.data.sponsorBlock = !!val;
     if (key === 'sbCats' && Array.isArray(val)) settings.data.sbCats = val.filter(c => FEAT.SB_CATS.includes(c));
@@ -1300,7 +1386,7 @@ function setupIpc() {
     if (key === 'hwAccel') settings.data.hwAccel = !!val;
     if (key === 'adblock') settings.data.adblock = !!val;
     if (key === 'ytAds') settings.data.ytAds = !!val;
-    if (key === 'fdm') settings.data.fdm = !!val;
+    if (key === 'dlAsk') settings.data.dlAsk = !!val;
     settings.save(); settings.flush();
     for (const w of wins) w.pushState();
     settingsChanged();
@@ -1385,12 +1471,13 @@ function setupIpc() {
 
   ipcMain.on('misc', (e, cmd) => { const w = uiWin(e); if (w) runMisc(w, cmd); });
   setupSettingsIpc();
+  setupDownloadIpc();
   ipcMain.on('download:show', (e, p) => { if (uiWin(e) && typeof p === 'string') shell.showItemInFolder(p); });
 }
 async function runMisc(w, cmd) {
   {
     const t = w.active();
-    if (cmd === 'downloads') shell.openPath(app.getPath('downloads'));
+    if (cmd === 'downloads') openDownloads(w);
     if (cmd === 'makeDefault') makeDefault();
     if (cmd === 'devtools' && t && t.view) t.view.webContents.toggleDevTools();
     if (cmd === 'fullscreen') w.win.setFullScreen(!w.win.isFullScreen());
@@ -1433,7 +1520,7 @@ function setupSettingsIpc() {
       adblock: d.adblock !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytClean: d.ytClean || {},
-      fdm: !!d.fdm, fdmFound: !!fdmPath(), canDefault: process.platform === 'win32', isDefault: isDefaultCache,
+      dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,
       extensions: listExtensions(), versions: { app: app.getVersion(), chrome: process.versions.chrome }
     };
   });
@@ -1463,7 +1550,12 @@ function setupSettingsIpc() {
         else if (arg === 'passwords') { const ex = allTabs().find(x => isPasswords(x.url)); if (ex) ex.win.activate(ex.id); else w.createTab(PASSWORDS_URL); }
         return true;
       }
-      case 'downloads': shell.openPath(app.getPath('downloads')); return true;
+      case 'downloads': if (w) openDownloads(w); return true;
+      case 'dlFolder': {
+        const r = await dialog.showOpenDialog(w ? w.win : undefined, { title: T('اختر مجلد التنزيلات', 'Choose the downloads folder'), defaultPath: dl.folder(), properties: ['openDirectory', 'createDirectory'] });
+        if (!r.canceled && r.filePaths[0]) { settings.data.dlDir = r.filePaths[0]; settings.save(); settingsChanged(); }
+        return true;
+      }
     }
     return null;
   });
@@ -1537,13 +1629,14 @@ app.whenReady().then(async () => {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
     favImported: false, ntpImported: false, hwAccel: true,
     adblock: true, adAllow: [], adBlockedTotal: 0,
-    ytAds: true, fdm: false, pinnedExt: [], extImported: false, pwNever: [],
+    ytAds: true, dlAsk: true, pinnedExt: [], extImported: false, pwNever: [],
     perfMode: 'normal', sponsorBlock: true, sbCats: ['sponsor', 'selfpromo', 'interaction'], ambient: true, twitchAds: true, ytClean: {}, mergedExt: false
   });
   bookmarks = makeStore('bookmarks.json', { children: [] });
   history = makeStore('history.json', []);
   sessionStore = makeStore('session.json', { windows: [] });
   favStore = makeStore('favicons.json', {});
+  dl = new DownloadManager({ app, store: makeStore('downloads.json', []), settings, notify: dlNotify });
 
   // first run (or first run of this version): bring things over from Chrome
   if (!settings.data.bookmarksImported) { try { importChromeBookmarks(); } catch (e) {} settings.data.bookmarksImported = true; settings.data.favImported = true; }
