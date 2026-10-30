@@ -49,12 +49,16 @@ jobs:
           choco upgrade innosetup -y --no-progress | Select-Object -Last 3
           $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           if (-not $iscc) { echo "::error title=inno::ISCC.exe not found"; exit 1 }
-          $ver = (Get-Item $iscc).VersionInfo.ProductVersion
-          echo "::notice title=inno::Inno Setup $ver at $iscc"
+          $ver = (& $iscc /? 2>&1 | Select-String 'Inno Setup' | Select-Object -First 1).ToString().Trim()
+          echo "::notice title=inno::$ver"
           "ISCC=$iscc" >> $env:GITHUB_ENV
-          # Arabic wizard text (unofficial translation shipped in the Inno Setup source repo)
-          try { Invoke-WebRequest https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/Arabic.isl -OutFile installer\Arabic.isl }
-          catch { echo "::error title=inno::Arabic.isl download failed: $_"; exit 1 }
+          # Arabic wizard text: comes with Inno Setup; otherwise take it from the Inno Setup source repo
+          $ar = Join-Path (Split-Path $iscc) 'Languages\Arabic.isl'
+          if (Test-Path $ar) { Copy-Item $ar installer\Arabic.isl }
+          else {
+            try { Invoke-WebRequest https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Arabic.isl -OutFile installer\Arabic.isl }
+            catch { echo "::error title=inno::Arabic.isl download failed: $_"; exit 1 }
+          }
 
       - name: Build the installer
         shell: pwsh
