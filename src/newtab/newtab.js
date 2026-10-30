@@ -1,8 +1,8 @@
 const THEMES = {
   space:'فضاء ونجوم', black:'أسود حقيقي', galaxy:'مجرة ملوّنة', matrix:'ماتريكس',
-  aurora:'شفق', sunset:'غروب', ocean:'محيط', fireflies:'يراعات', anime:'أنمي نيون (فيديو)', media:'صورة / فيديو', custom:'لون مخصص'
+  aurora:'شفق', sunset:'غروب', ocean:'محيط', fireflies:'يراعات', anime:'أنمي (فيديو)', media:'صورة / فيديو', custom:'لون مخصص'
 };
-const TEN={space:'Space & stars',black:'True black',galaxy:'Galaxy',matrix:'Matrix',aurora:'Aurora',sunset:'Sunset',ocean:'Ocean',fireflies:'Fireflies',anime:'Anime neon (video)',media:'Image / video',custom:'Custom color'};
+const TEN={space:'Space & stars',black:'True black',galaxy:'Galaxy',matrix:'Matrix',aurora:'Aurora',sunset:'Sunset',ocean:'Ocean',fireflies:'Fireflies',anime:'Anime (video)',media:'Image / video',custom:'Custom color'};
 const FONTS = {
   def:   {ar:'الافتراضي (طويل)', en:'Default (condensed)', css:'Bahnschrift,"Arial Narrow","Roboto Condensed",Oswald,Impact,sans-serif'},
   tajawal:{ar:'تجوال', en:'Tajawal', css:'Tajawal,Tahoma,sans-serif'},

@@ -292,7 +292,7 @@ async function renderMenu(kind) {
     const items = await ui.invoke('ext:list') || [];
     if (openKind !== 'ext') return;
     let h = `<div class="hd">${L('الإضافات', 'Extensions')}</div>`;
-    if (!items.length) h += `<div class="note">${L('ما فيه إضافات. أضف مجلد إضافة (فيه manifest.json).', 'No extensions yet. Add an unpacked extension folder (with manifest.json).')}</div>`;
+    if (!items.length) h += `<div class="note">${L('ما فيه إضافات للحين. افتح متجر كروم وأضف اللي تبي.', 'No extensions yet. Open the Chrome Web Store and add what you like.')}</div>`;
     for (const x of items) {
       h += `<div class="mi" data-ext="${esc(x.id)}" title="${esc(x.name)} ${esc(x.version)}">
         ${x.icon ? `<img src="${esc(x.icon)}" alt="">` : '<span class="ph"></span>'}<span class="t">${esc(x.name)}</span>
@@ -300,9 +300,9 @@ async function renderMenu(kind) {
         <button class="pin${x.pinned ? ' on' : ''}" data-pinx="${esc(x.id)}" title="${x.pinned ? L('إلغاء التثبيت من الشريط', 'Unpin from the bar') : L('تثبيت في الشريط', 'Pin to the bar')}">${ICO.pin}</button>
         <span class="x" data-rm="${esc(x.id)}" title="${L('إزالة', 'Remove')}">${ICO.x}</span></div>`;
     }
-    h += `<div class="sep"></div><button class="mi" data-a="extImport">${ICO.down}<span class="t">${L('استيراد إضافاتي من كروم', 'Import my Chrome extensions')}</span></button>
-      <button class="mi" data-a="extAdd">${ICO.plus}<span class="t">${L('إضافة مجلد إضافة…', 'Add extension folder…')}</span></button>
-      <div class="note">${L('متجر كروم ما يشتغل هنا. نزّل الإضافة كمجلد وفكّه، وبعدين أضفه.', 'The Chrome Web Store does not work here. Get the extension as a folder, unzip it, then add it.')}</div>`;
+    h += `<div class="sep"></div><button class="mi" data-a="store">${ICO.globe}<span class="t">${L('متجر كروم للإضافات', 'Chrome Web Store')}</span></button>
+      <button class="mi" data-a="extImport">${ICO.down}<span class="t">${L('استيراد إضافاتي من كروم', 'Import my Chrome extensions')}</span></button>
+      <button class="mi" data-a="extAdd">${ICO.plus}<span class="t">${L('إضافة مجلد إضافة…', 'Add extension folder…')}</span></button>`;
     d.innerHTML = h;
   } else if (kind === 'menu') {
     d.innerHTML = `
@@ -343,7 +343,7 @@ $('drop').addEventListener('click', async e => {
   const a = t.closest('[data-a]'); if (!a) return;
   const cmd = a.dataset.a;
   const simple = { new: ['tab', 'new'], newWindow: ['tab', 'newWindow'], incognito: ['tab', 'incognito'], history: ['tab', 'history'],
-    reopen: ['tab', 'reopen'], translate: ['tab', 'translate'], print: ['tab', 'print'], tasks: ['tab', 'tasks'], passwords: ['tab', 'passwords'], settings: ['tab', 'settings'],
+    reopen: ['tab', 'reopen'], translate: ['tab', 'translate'], print: ['tab', 'print'], tasks: ['tab', 'tasks'], passwords: ['tab', 'passwords'], settings: ['tab', 'settings'], store: ['tab', 'store'],
     downloads: ['misc', 'downloads'], fullscreen: ['misc', 'fullscreen'], devtools: ['misc', 'devtools'] };
   if (simple[cmd]) { ui.send(...simple[cmd]); closeDrop(); return; }
   switch (cmd) {
@@ -374,7 +374,7 @@ $('drop').addEventListener('click', async e => {
       closeDrop(); ui.send('tab', 'passwords'); break;
     }
     case 'ytAds': ui.send('set', 'ytAds', !S.ytAds); break;
-    case 'makeDefault': closeDrop(); ui.send('misc', 'makeDefault'); toast(L('اختار "3zT Browser" من الصفحة اللي فتحت لك', 'Pick "3zT Browser" on the page that just opened')); break;
+    case 'makeDefault': closeDrop(); ui.send('misc', 'makeDefault'); toast(L('اختار "3zT" من الصفحة اللي فتحت لك', 'Pick "3zT" on the page that just opened')); break;
     case 'fdm': ui.send('set', 'fdm', !S.fdm); break;
     case 'importLook': { const ok = await ui.invoke('ntp:import'); closeDrop(); toast(ok ? L('تم. افتح تبويب جديد عشان تشوف الشكل', 'Done. Open a new tab to see it') : L('ما لقيت إعدادات بلاك كروم في كروم', 'Black Chrome settings not found in Chrome')); break; }
   }

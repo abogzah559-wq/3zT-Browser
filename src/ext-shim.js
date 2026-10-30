@@ -36,6 +36,28 @@
     }
     if (!c.fontSettings) def(c, 'fontSettings', { getFontList: ret([]) });
     if (!c.contextMenus) def(c, 'contextMenus', { create: ret(undefined), update: ret(undefined), remove: ret(undefined), removeAll: ret(undefined), onClicked: ev() });
+    // Electron never fires runtime.onInstalled for extensions added from the Chrome Web Store:
+    // fire it once per version from the background worker (remembered in the worker's own IndexedDB)
+    if (globalThis.__zeusStore && typeof ServiceWorkerGlobalScope !== 'undefined' && self instanceof ServiceWorkerGlobalScope &&
+        c.runtime && c.runtime.onInstalled && self.indexedDB) {
+      var oi = c.runtime.onInstalled, ls = [], nativeFired = false, origAdd = oi.addListener.bind(oi);
+      def(oi, 'addListener', function (f) { if (typeof f !== 'function') return; ls.push(f); try { origAdd(function (d) { nativeFired = true; f(d); }); } catch (e) {} });
+      setTimeout(function () {
+        var ver = ''; try { ver = c.runtime.getManifest().version || ''; } catch (e) {}
+        var rq = indexedDB.open('__zeus3zt', 1);
+        rq.onupgradeneeded = function () { rq.result.createObjectStore('kv'); };
+        rq.onsuccess = function () {
+          var db = rq.result, tx = db.transaction('kv', 'readwrite'), st = tx.objectStore('kv'), g = st.get('installed');
+          g.onsuccess = function () {
+            var prev = g.result; if (prev === ver) return;
+            st.put(ver, 'installed');
+            if (nativeFired) return;
+            var d = prev ? { reason: 'update', previousVersion: prev } : { reason: 'install' };
+            ls.forEach(function (f) { try { f(d); } catch (e) { console.error(e); } });
+          };
+        };
+      }, 250);
+    }
     if (c.action && !c.action.setBadgeText) { def(c.action, 'setBadgeText', ret(undefined)); def(c.action, 'setBadgeBackgroundColor', ret(undefined)); }
   } catch (e) {}
 })();

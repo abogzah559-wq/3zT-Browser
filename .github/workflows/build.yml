@@ -1,0 +1,118 @@
+name: Build, test and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      bench:
+        description: 'Also run the memory comparison with Chrome and Brave'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  ELECTRON_VERSION: 45.1.0
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: python -m pip install pillow
+
+      - name: Download Electron (checksum verified)
+        shell: bash
+        run: |
+          base=https://github.com/electron/electron/releases/download/v$ELECTRON_VERSION
+          f=electron-v$ELECTRON_VERSION-win32-x64.zip
+          curl -sSfL -o $f $base/$f
+          curl -sSfL -o SHASUMS256.txt $base/SHASUMS256.txt
+          grep " \*$f\$" SHASUMS256.txt | sed 's/ \*/  /' | sha256sum -c -
+
+      - name: Build the app folder (dist/3zT)
+        run: python scripts/build_win.py electron-v${{ env.ELECTRON_VERSION }}-win32-x64.zip
+
+      - name: Install Inno Setup (6.6+ for the dark wizard)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = Get-ChildItem "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe","$env:ProgramFiles\Inno Setup 6\ISCC.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          (Get-Item $iscc.FullName).VersionInfo.ProductVersion
+          "ISCC=$($iscc.FullName)" >> $env:GITHUB_ENV
+          # Arabic wizard text (unofficial translation shipped in the Inno Setup source repo)
+          Invoke-WebRequest https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/Arabic.isl -OutFile installer\Arabic.isl
+
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $v = (Get-Content package.json | ConvertFrom-Json).version
+          & $env:ISCC installer\3zT.iss "/DAppVersion=$v"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-Item dist\3zT-Browser-Setup.exe | Format-List Name,Length
+
+      - name: Test the installer (silent install, shortcut, uninstall)
+        shell: pwsh
+        run: |
+          Start-Process dist\3zT-Browser-Setup.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=desktopicon','/LOG=dist\install.log' -Wait
+          $app = "$env:LOCALAPPDATA\Programs\3zT\3zT.exe"
+          $lnk = [Environment]::GetFolderPath('Desktop') + '\3zT.lnk'
+          $start = [Environment]::GetFolderPath('Programs') + '\3zT.lnk'
+          $ok = (Test-Path $app) -and (Test-Path $lnk) -and (Test-Path $start)
+          "installed exe: $(Test-Path $app)  desktop shortcut: $(Test-Path $lnk)  start menu: $(Test-Path $start)"
+          $reg = Get-ItemProperty 'HKCU:\Software\Clients\StartMenuInternet\3zT Browser\Capabilities' -ErrorAction SilentlyContinue
+          "registered as a browser: $([bool]$reg)"
+          if (-not $ok -or -not $reg) { Get-Content dist\install.log -Tail 40; exit 1 }
+
+      - name: End-to-end test of the installed app (pages + real Chrome Web Store installs)
+        shell: pwsh
+        run: node tests/e2e.mjs "$env:LOCALAPPDATA\Programs\3zT\3zT.exe" --store
+
+      - name: Uninstall test
+        shell: pwsh
+        run: |
+          Start-Process "$env:LOCALAPPDATA\Programs\3zT\unins000.exe" -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait
+          Start-Sleep 5
+          $gone = -not (Test-Path "$env:LOCALAPPDATA\Programs\3zT\3zT.exe") -and -not (Test-Path ([Environment]::GetFolderPath('Desktop') + '\3zT.lnk')) -and -not (Test-Path 'HKCU:\Software\Clients\StartMenuInternet\3zT Browser')
+          "removed cleanly: $gone"
+          if (-not $gone) { exit 1 }
+
+      - name: Install Brave for the memory comparison
+        if: github.event_name == 'workflow_dispatch' && inputs.bench || startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        run: choco install brave -y --no-progress
+
+      - name: Memory comparison (3zT vs Chrome vs Brave)
+        if: github.event_name == 'workflow_dispatch' && inputs.bench || startsWith(github.ref, 'refs/tags/')
+        continue-on-error: true
+        shell: pwsh
+        run: ./tests/bench.ps1
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: 3zT-windows
+          path: |
+            dist/3zT-Browser-Setup.exe
+            dist/install.log
+            tests/out/
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          notes="Download **3zT-Browser-Setup.exe** below and run it."
+          [ -f tests/out/bench.md ] && notes="$notes"$'\n\n### Memory on this build (same 3 websites, fresh profiles, Windows)\n\n'"$(cat tests/out/bench.md)"
+          gh release create "$GITHUB_REF_NAME" dist/3zT-Browser-Setup.exe --title "3zT $GITHUB_REF_NAME" --notes "$notes"
