@@ -100,7 +100,9 @@ async function smoke() {
   await go('https://example.com/', true);
   const ex = await find(u => /^https:\/\/example\.com/.test(u), 40);
   const h1 = ex && await poll(async () => { const c = await connect(ex); const h = await c.ev('document.querySelector("h1") && document.querySelector("h1").textContent'); c.close(); return h; }, 20000);
-  ok('website loads', !!h1, h1 ? `"${h1}"` : 'tabs: ' + (await targets()).filter(x => x.type === 'page').map(x => x.url).join(' , '));
+  let why = '';
+  if (!h1 && ex) { try { const c = await connect(ex); const r = await c.send('Runtime.evaluate', { expression: 'location.href + " | " + document.readyState + " | " + (document.body ? document.body.innerText.slice(0, 200) : "no body")', returnByValue: true }); why = JSON.stringify(r).slice(0, 400); c.close(); } catch (e) { why = 'connect: ' + e.message; } }
+  ok('website loads', !!h1, h1 ? `"${h1}"` : (ex ? why : 'no example.com tab'));
 }
 
 async function extList() { const tb = await toolbar(); const l = await tb.ev(`ui.invoke('ext:list').then(l=>l.map(x=>x.id))`); tb.close(); return l || []; }
@@ -110,8 +112,9 @@ async function storeInstall(ext) {
   const t = await find(u => u.includes(ext.id) && /^https:/.test(u), 60);
   if (!t) return ok(`store page for ${ext.name}`, false, 'did not open');
   const c = await connect(t);
-  // the store labels the button with the browser's name ("Install 3zT"); in Chrome it says "Add to Chrome"
-  const btn = `[...document.querySelectorAll('button')].find(b => /^\\s*(install 3zt|add to chrome|تثبيت 3zT|إضافة إلى chrome)\\s*$/i.test(b.textContent) && !b.disabled)`;
+  // the store labels the button with the browser's name ("Add to 3zT"); in Chrome it says "Add to Chrome"
+  // ("Install 3zT" is the store's "switch browser" banner, not the install button)
+  const btn = `[...document.querySelectorAll('button')].find(b => /^\\s*(add to 3zt|add to chrome|إضافة إلى 3zT|إضافة إلى chrome)\\s*$/i.test(b.textContent) && !b.disabled)`;
   const ready = await poll(() => c.ev(`!!(${btn})`), 60000);
   await shot(c, `store-${ext.id}-before`);
   ok(`"Add to Chrome" button shows for ${ext.name}`, !!ready, ready ? '' : String(await c.ev('document.body && document.body.innerText.slice(0, 300)')));
