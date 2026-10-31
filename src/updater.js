@@ -1,0 +1,151 @@
+'use strict';
+/*
+ * Silent updates (Windows, installed copies only).
+ *  - while you browse: checks GitHub for a newer release (shortly after start, then every few hours),
+ *    downloads the setup in the background and checks its SHA-256 against GitHub's
+ *  - when the browser closes: runs the setup silently (no windows, no questions)
+ *  - next start: the bar shows a short green "Updated" note with a "Details" button (release notes)
+ * Portable copies and development runs never update themselves.
+ */
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+const { spawn } = require('child_process');
+const { app, net } = require('electron');
+
+const REPO = 'abogzah559-wq/3zT-Browser';
+const API = process.env.ZEUS_UPDATE_URL || `https://api.github.com/repos/${REPO}/releases/latest`;
+const ASSET = '3zT-Browser-Setup.exe';
+const FIRST_CHECK_MS = +(process.env.ZEUS_UPDATE_DELAY || 60 * 1000);
+const EVERY_MS = 4 * 3600 * 1000;
+
+const dir = () => path.join(app.getPath('userData'), 'update');
+const pendingFile = () => path.join(dir(), 'pending.json');
+const lockFile = () => path.join(dir(), 'installing.lock');
+
+/* only a copy installed by our setup updates itself (the uninstaller sits next to the exe) */
+function installed() {
+  if (process.platform !== 'win32' || !app.isPackaged) return false;
+  return fs.existsSync(path.join(path.dirname(process.execPath), 'unins000.exe'));
+}
+
+function newer(a, b) {   // is version a newer than b?
+  const p = v => String(v).replace(/^v/, '').split(/[.-]/).map(x => parseInt(x, 10) || 0);
+  const x = p(a), y = p(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); }
+  return false;
+}
+function readJson(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return null; } }
+function sha256File(f) {
+  return new Promise((res, rej) => { const h = crypto.createHash('sha256'); fs.createReadStream(f).on('data', d => h.update(d)).on('end', () => res(h.digest('hex'))).on('error', rej); });
+}
+
+/* release notes: the "### العربية" / "### English" parts of the release text */
+function notesFor(body, lang) {
+  const text = String(body || '').replace(/\r/g, '');
+  const part = name => { const m = text.match(new RegExp('^###\\s*' + name + '\\s*\\n([\\s\\S]*?)(?=^###\\s|^##\\s|<!--\\s*end notes\\s*-->|$(?![\\s\\S]))', 'm')); return m ? m[1].trim() : ''; };
+  const lines = s => s.split('\n').map(l => l.replace(/^\s*[-*]\s+/, '').replace(/\*\*/g, '').trim()).filter(Boolean);
+  const ar = lines(part('العربية')), en = lines(part('English'));
+  return lang === 'en' ? (en.length ? en : ar) : (ar.length ? ar : en);
+}
+
+let busy = false, timer = null, log = () => {};
+
+async function check() {
+  if (busy) return; busy = true;
+  try {
+    const r = await net.fetch(API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': '3zT-updater' } });
+    if (!r.ok) return log('update check', r.status);
+    const rel = await r.json();
+    const ver = String(rel.tag_name || '').replace(/^v/, '');
+    if (!ver || !newer(ver, app.getVersion())) return;
+    const asset = (rel.assets || []).find(a => a.name === ASSET);
+    if (!asset) return;
+    // already downloaded and verified?
+    const pend = readJson(pendingFile());
+    if (pend && pend.version === ver && fs.existsSync(pend.file)) return;
+    // the expected checksum: GitHub's own digest of the file, or the .sha256 file next to it
+    let want = String(asset.digest || '').replace(/^sha256:/, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(want)) {
+      const sh = (rel.assets || []).find(a => a.name === ASSET + '.sha256');
+      if (sh) { const t = await (await net.fetch(sh.browser_download_url)).text(); want = (t.match(/[0-9a-f]{64}/i) || [''])[0].toLowerCase(); }
+    }
+    if (!/^[0-9a-f]{64}$/.test(want)) return log('update: no checksum, skipped');
+    fs.mkdirSync(dir(), { recursive: true });
+    const file = path.join(dir(), `3zT-Setup-${ver}.exe`), part = file + '.part';
+    const d = await net.fetch(asset.browser_download_url);
+    if (!d.ok || !d.body) return log('update download', d.status);
+    const out = fs.createWriteStream(part);
+    const reader = d.body.getReader();
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      if (!out.write(Buffer.from(value))) await new Promise(r2 => out.once('drain', r2));
+    }
+    await new Promise((r2, j) => out.end(e => (e ? j(e) : r2())));
+    const got = await sha256File(part);
+    if (got !== want) { try { fs.unlinkSync(part); } catch (e) {} return log('update: checksum mismatch'); }
+    // keep only this setup
+    for (const n of fs.readdirSync(dir())) if (/^3zT-Setup-.*\.exe$/.test(n) && n !== path.basename(file)) { try { fs.unlinkSync(path.join(dir(), n)); } catch (e) {} }
+    fs.renameSync(part, file);
+    fs.writeFileSync(pendingFile(), JSON.stringify({ version: ver, file, body: String(rel.body || '').slice(0, 20000), at: Date.now() }));
+    log('update ready', ver);
+  } catch (e) { log('update failed', e && e.message); }
+  finally { busy = false; }
+}
+
+/* called when the browser is closing for good: install the waiting update silently */
+function installOnQuit() {
+  if (!installed()) return false;
+  const pend = readJson(pendingFile());
+  if (!pend || !pend.file || !fs.existsSync(pend.file) || !newer(pend.version, app.getVersion())) return false;
+  try {
+    fs.writeFileSync(lockFile(), String(Date.now()));
+    // remember what to show on the next start
+    fs.writeFileSync(path.join(dir(), 'updated.json'), JSON.stringify({ from: app.getVersion(), to: pend.version, body: pend.body || '' }));
+    // wait for this browser to exit fully, then run the setup silently and remove the lock
+    const ps = [
+      `$ErrorActionPreference='SilentlyContinue'`,
+      `Wait-Process -Id ${process.pid} -Timeout 60`,
+      `Start-Sleep -Milliseconds 800`,
+      `Start-Process -FilePath '${pend.file.replace(/'/g, "''")}' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/NOCANCEL' -Wait`,
+      `Remove-Item -LiteralPath '${pendingFile().replace(/'/g, "''")}'`,
+      `Remove-Item -LiteralPath '${pend.file.replace(/'/g, "''")}'`,
+      `Remove-Item -LiteralPath '${lockFile().replace(/'/g, "''")}'`
+    ].join('; ');
+    spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    return true;
+  } catch (e) { log('install on quit failed', e && e.message); try { fs.unlinkSync(lockFile()); } catch (x) {} return false; }
+}
+
+/* called first thing on start: if an update is being installed right now, start again once it is done */
+function waitIfInstalling() {
+  if (process.platform !== 'win32') return false;
+  let at = 0; try { at = +fs.readFileSync(lockFile(), 'utf8') || fs.statSync(lockFile()).mtimeMs; } catch (e) { return false; }
+  if (Date.now() - at > 3 * 60 * 1000) { try { fs.unlinkSync(lockFile()); } catch (e) {} return false; }   // stale
+  const exe = process.execPath.replace(/'/g, "''"), lock = lockFile().replace(/'/g, "''");
+  const args = process.argv.slice(1).map(a => `'${String(a).replace(/'/g, "''")}'`).join(',');
+  const ps = `$i=0; while ((Test-Path -LiteralPath '${lock}') -and $i -lt 240) { Start-Sleep -Milliseconds 500; $i++ }; Start-Process -FilePath '${exe}'${args ? ' -ArgumentList ' + args : ''}`;
+  spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+    { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  return true;
+}
+
+/* after an update: what to show once (then forgotten) */
+function takeUpdated(lang) {
+  const f = path.join(dir(), 'updated.json');
+  const u = readJson(f); if (!u) return null;
+  try { fs.unlinkSync(f); } catch (e) {}
+  if (u.to !== app.getVersion()) return null;   // the install did not happen
+  return { from: u.from, to: u.to, notes: notesFor(u.body, lang) };
+}
+
+function start(opts = {}) {
+  log = opts.log || log;
+  if (!installed() && !process.env.ZEUS_UPDATE_URL) return false;
+  clearTimeout(timer);
+  timer = setTimeout(function tick() { check(); timer = setTimeout(tick, EVERY_MS); }, FIRST_CHECK_MS);
+  return true;
+}
+
+module.exports = { start, check, installOnQuit, waitIfInstalling, takeUpdated, installed, newer, notesFor };

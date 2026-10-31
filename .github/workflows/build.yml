@@ -86,6 +86,22 @@ jobs:
         shell: pwsh
         run: node tests/e2e.mjs "$env:LOCALAPPDATA\Programs\3zT\3zT.exe" --store
 
+      - name: Silent update test (installed version updates itself to a newer build)
+        shell: pwsh
+        run: |
+          # a "newer" build of the same code, version 9.9.9, used only for this test
+          Copy-Item dist\3zT-Browser-Setup.exe "$env:RUNNER_TEMP\current.exe"
+          $pkg = Get-Content package.json -Raw
+          ($pkg -replace '"version":\s*"[^"]+"', '"version": "9.9.9"') | Set-Content package.json -NoNewline
+          python scripts/build_win.py electron-v${{ env.ELECTRON_VERSION }}-win32-x64.zip | Out-Null
+          & $env:ISCC installer\3zT.iss "/DAppVersion=9.9.9" | Out-Null
+          Move-Item dist\3zT-Browser-Setup.exe "$env:RUNNER_TEMP\next.exe" -Force
+          git checkout -- package.json
+          # back to the real build for the next steps
+          python scripts/build_win.py electron-v${{ env.ELECTRON_VERSION }}-win32-x64.zip | Out-Null
+          Copy-Item "$env:RUNNER_TEMP\current.exe" dist\3zT-Browser-Setup.exe
+          node tests/update-test.mjs "$env:LOCALAPPDATA\Programs\3zT\3zT.exe" "$env:RUNNER_TEMP\next.exe" 9.9.9
+
       - name: Uninstall test
         shell: pwsh
         run: |
@@ -125,7 +141,11 @@ jobs:
         run: |
           v="v$(node -p "require('./package.json').version")"
           if gh release view "$v" >/dev/null 2>&1; then echo "::notice title=release::$v already published"; exit 0; fi
-          notes="Download **3zT-Browser-Setup.exe** below and run it. Windows 10/11, 64-bit. No administrator rights needed."
+          # what's new (English + Arabic) from CHANGELOG.md; the browser's "Details" button reads these parts
+          changes="$(node -e "const s=require('fs').readFileSync('CHANGELOG.md','utf8').replace(/\r/g,'');const v=require('./package.json').version;const p=s.split(/^## /m).find(x=>x.split('\n')[0].trim()===v);process.stdout.write(p?'## What\'s new in '+p.trim():'')")"
+          notes="Download **3zT-Browser-Setup.exe** below and run it. Windows 10/11, 64-bit. No administrator rights needed. Installed copies update themselves."
+          [ -n "$changes" ] && notes="$notes"$'\n\n'"$changes"
           [ -f tests/out/bench.md ] && notes="$notes"$'\n\n### Memory on this build\nSame 3 websites in 3 tabs, new profiles, GitHub Windows machine, two rounds averaged:\n\n'"$(cat tests/out/bench.md)"
-          gh release create "$v" dist/3zT-Browser-Setup.exe --target "$GITHUB_SHA" --title "3zT $v" --notes "$notes"
+          (cd dist && sha256sum 3zT-Browser-Setup.exe | cut -d' ' -f1 > 3zT-Browser-Setup.exe.sha256)
+          gh release create "$v" dist/3zT-Browser-Setup.exe dist/3zT-Browser-Setup.exe.sha256 --target "$GITHUB_SHA" --title "3zT $v" --notes "$notes"
           echo "::notice title=release::published $v"

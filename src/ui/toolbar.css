@@ -174,3 +174,29 @@ body.web.tinted.light #bar,body.web.tinted.light #tabs,body.web.tinted.light #wi
 #dlBtn.ind .rf{stroke-dashoffset:75;animation:dlspin 1s linear infinite;transform-origin:18px 18px}
 #dlBtn.done .rf{stroke:#7ee2a8;stroke-dashoffset:0}
 @keyframes dlspin{to{transform:rotate(360deg)}}
+
+/* downloads list under the download button */
+.dli{cursor:default;align-items:center;min-height:52px}
+.dli.ok{cursor:pointer}
+.dli .fi{flex:none;width:28px;height:28px;border-radius:5px}
+.dli .fi.ph{display:grid;place-items:center;background:rgba(255,255,255,.12);font-size:8px;font-weight:700;opacity:.8}
+.dli .dt{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.dli .ds{font-size:11px;opacity:.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dli .ds.bad{color:#ff8a80;opacity:.9}
+.dli.gone .t{text-decoration:line-through;opacity:.6}
+.dli .pb{display:block;height:3px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden}
+.dli .pb i{display:block;height:100%;background:#8ab4f8;border-radius:2px;transition:width .3s}
+.dli .pb.paused i{background:#c8a24a}
+.dli .pb.ind i{width:30%!important;animation:dlind 1.2s linear infinite}
+@keyframes dlind{from{transform:translateX(-120%)}to{transform:translateX(400%)}}
+.dli .ab{flex:none;width:28px;height:28px;border-radius:50%;display:grid;place-items:center;border:0;background:transparent;color:inherit;cursor:pointer;opacity:.7;padding:0}
+.dli .ab:hover{opacity:1;background:rgba(255,255,255,.14)}
+.dli .ab svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#drop.wide{width:400px}
+/* the green "updated" note */
+#toast.ok{background:rgba(24,72,48,.96);border-color:rgba(126,226,168,.35);color:#dff7e8}
+#toast.ok .alt{color:#dff7e8;border-color:rgba(223,247,232,.35);padding:3px 10px;font-size:12px}
+#toast.ok .alt:hover{background:rgba(223,247,232,.12)}
+ul.notes{margin:2px 0 6px;padding:0 28px 0 12px;font-size:12.5px;line-height:1.7}
+html[dir=ltr] ul.notes{padding:0 12px 0 28px}
+ul.notes li{margin:2px 0}

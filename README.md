@@ -76,7 +76,12 @@ There are two performance modes in Settings:
 To make 3zT your default browser: **⋮ menu → Settings → Default browser → Make default**, then pick
 **3zT** in the Windows page that opens (Windows only lets you choose this yourself).
 
-To update, run the newer setup; your tabs, bookmarks, passwords and settings stay.
+**Updates are automatic and silent.** While you browse, 3zT checks this repository's releases,
+downloads a newer setup in the background and checks its SHA-256 against GitHub's. When you close
+the browser it installs it with no windows or questions. The next time you open 3zT, a small green
+note says it was updated, with a **Details** button that lists what changed (from
+[CHANGELOG.md](CHANGELOG.md)); it disappears after 3 seconds. Your tabs, bookmarks, passwords and
+settings stay. (Version 0.8.0 had no updater: install 0.9.0 or newer once by hand.)
 To uninstall, use **Windows Settings → Apps → 3zT → Uninstall**. Your profile is kept unless you
 delete `%APPDATA%\3zT Browser` yourself.
 
@@ -145,7 +150,11 @@ otherwise run the extensions listed below, because in 3zT they do not add proces
   - each file downloads over several connections at once (Chromium parallel downloading);
   - pause, resume, cancel and retry, also after closing the browser;
   - speed, size and time left; a progress ring on the toolbar button;
-  - downloads page (`zeus://downloads`) with search, "show in folder" and file icons.
+  - the download button in the toolbar opens a list of this session's downloads: click a file to
+    open it, the folder button to show it in File Explorer, or pause / resume / cancel / retry;
+    the list starts empty each time the browser opens;
+  - downloads page (`zeus://downloads`, `Ctrl+J`) with the full history, search, "show in folder"
+    and file icons.
 
 ### Passwords
 - Saves and fills passwords. They are encrypted with Windows' own protection (DPAPI through
@@ -219,8 +228,9 @@ Passwords are imported separately from a CSV file you export in Chrome
 - 3zT itself only connects to: the websites you open, Google for search suggestions and translation
   when you use them, `easylist.to` for the ad-block lists, `sponsor.ajay.app` when you watch YouTube
   with SponsorBlock on (only a 4-character hash prefix of the video ID is sent, the same privacy
-  method SponsorBlock uses), and Google's extension servers when you install or update a Chrome
-  Web Store extension.
+  method SponsorBlock uses), Google's extension servers when you install or update a Chrome
+  Web Store extension, and GitHub (`api.github.com`) every few hours to look for a 3zT update
+  (installed copies only; nothing about you is sent).
 - Private windows keep nothing after they close.
 - Passwords are encrypted with Windows DPAPI.
 
@@ -236,7 +246,7 @@ Passwords are imported separately from a CSV file you export in Chrome
 | `Ctrl+F` | Find in page |
 | `Ctrl+R` / `F5` (`Ctrl+Shift+R` without cache) | Reload |
 | `Alt+←` / `Alt+→` | Back / forward |
-| `Ctrl+H` / `Ctrl+J` | History / downloads |
+| `Ctrl+H` / `Ctrl+J` | History / downloads page |
 | `Ctrl+D` | Bookmark this page |
 | `Ctrl+P` | Print |
 | `Ctrl` `+` / `-` / `0` | Zoom in / out / reset |
@@ -303,6 +313,7 @@ src/
   features.js          built-in SponsorBlock, Clean YouTube, Ambient light, Twitch ad blocking
   adblock.js           the ad blocker (EasyList / EasyPrivacy matcher)
   downloads.js         the download manager
+  updater.js           silent updates from GitHub releases
   passwords.js         encrypted password store
   chrome-import.js     reads bookmarks, favicons and new-tab settings from Chrome
   ext-import.js        copies Chrome extensions over and patches them for Electron
@@ -315,7 +326,8 @@ src/
 assets/                logo and icons
 installer/             Inno Setup script and wizard images
 scripts/               build_win.py (app folder), patch_exe.py (icon and name inside the .exe)
-tests/                 e2e.mjs (end-to-end test), bench.ps1 (memory comparison)
+tests/                 e2e.mjs (end-to-end test), update-test.mjs (silent update test),
+                       bench.ps1 (memory comparison)
 ```
 
 Internal pages use the `zeus://` address scheme (`zeus://settings`, `zeus://downloads`,
@@ -333,8 +345,13 @@ DevTools Protocol. On every push, GitHub Actions on Windows:
 4. installs **Dark Reader** and **uBlock Origin Lite** from the real Chrome Web Store with the
    store's "Add to 3zT" button, checks that Dark Reader really darkens a website, restarts the browser,
    checks both are still there and removes them again,
-5. uninstalls and checks everything was removed,
-6. on releases, runs the memory comparison with Chrome and Brave.
+5. tests the silent update: a newer build is offered as a fake release, the running browser must
+   download and verify it, install it silently after being closed, reopen by itself if started
+   during the install, and show the green note with the release notes,
+6. uninstalls and checks everything was removed,
+7. runs the memory comparison with Chrome and Brave,
+8. publishes a release with the setup, its SHA-256 and the notes from `CHANGELOG.md` when the
+   version number changes.
 
 ## Known limits
 
