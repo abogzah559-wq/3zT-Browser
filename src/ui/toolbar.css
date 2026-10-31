@@ -106,8 +106,9 @@ body.translated #act{color:#8ab4f8;background:rgba(138,180,248,.18)}
 body:not(.isweb) #star{display:none}
 #load{position:absolute;left:14px;right:14px;bottom:-1px;height:2px;border-radius:2px;overflow:hidden;opacity:0}
 body.loading #load{opacity:1}
-#load::after{content:"";position:absolute;top:0;bottom:0;width:30%;background:#8ab4f8;animation:ld 1s linear infinite}
-@keyframes ld{from{left:-30%}to{left:100%}}
+/* the moving bar only exists while a page loads (an endless hidden animation kept the bar busy all the time) */
+body.loading #load::after{content:"";position:absolute;top:0;bottom:0;left:0;width:30%;background:#8ab4f8;animation:ld 1s linear infinite;will-change:transform}
+@keyframes ld{from{transform:translateX(-100%)}to{transform:translateX(340%)}}
 
 /* ---------- menus ---------- */
 #backdrop{position:fixed;inset:0;background:transparent}
@@ -200,3 +201,52 @@ body.web.tinted.light #bar,body.web.tinted.light #tabs,body.web.tinted.light #wi
 ul.notes{margin:2px 0 6px;padding:0 28px 0 12px;font-size:12.5px;line-height:1.7}
 html[dir=ltr] ul.notes{padding:0 12px 0 28px}
 ul.notes li{margin:2px 0}
+
+/* ---------- site permissions ---------- */
+#perm{position:fixed;top:calc(var(--strip,56px) + 6px);left:50%;transform:translateX(-50%);z-index:30;
+  background:rgba(22,22,28,.97);border:1px solid rgba(255,255,255,.12);border-radius:14px;box-shadow:0 10px 30px rgba(0,0,0,.5);color:#eee;font-size:13px;
+  animation:pin .16s ease-out}
+#perm[hidden]{display:none}
+@keyframes pin{from{opacity:0;transform:translate(-50%,-4px)}to{opacity:1;transform:translate(-50%,0)}}
+#perm.ask{display:flex;align-items:center;gap:10px;padding:8px 10px 8px 14px;white-space:nowrap;overflow:hidden}
+#perm .pi{display:flex;gap:4px;color:#8ab4f8}
+#perm .pi svg,#perm .ph svg{width:18px;height:18px}
+#perm .pt{max-width:440px;overflow:hidden;text-overflow:ellipsis}
+#perm .pt b{font-weight:600}
+#perm button{font:inherit;cursor:pointer;border-radius:9px;padding:5px 12px;border:1px solid rgba(255,255,255,.18);background:transparent;color:inherit}
+#perm button:hover{background:rgba(255,255,255,.08)}
+#perm .pa{background:#8ab4f8;border-color:#8ab4f8;color:#111}
+#perm .pa:hover{background:#9cc0fa}
+/* a thin line that runs out while the question waits (stops while the mouse is on it) */
+#perm .pbar{position:absolute;left:0;bottom:0;height:2px;width:100%;background:#8ab4f8;opacity:.55;transform-origin:left;animation:pdrain 6s linear forwards}
+html[dir=rtl] #perm .pbar{transform-origin:right}
+#perm.hold .pbar{animation:none;opacity:.25}
+@keyframes pdrain{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+#perm.device,#perm.screen{width:min(560px,calc(100vw - 32px));padding:12px}
+#perm .ph{display:flex;align-items:center;gap:10px;padding:2px 4px 10px;color:#ddd}
+#perm .ph svg{color:#8ab4f8;flex:none}
+#perm .pl{display:flex;flex-direction:column;gap:4px;max-height:260px;overflow:auto}
+#perm .pd{text-align:start;border:0;padding:9px 12px;background:rgba(255,255,255,.05)}
+#perm .pd:hover{background:rgba(138,180,248,.18)}
+#perm .pn{padding:8px 4px;opacity:.6}
+#perm .pf{display:flex;justify-content:flex-end;padding-top:10px}
+#perm .pg-t{font-size:11.5px;opacity:.6;margin:6px 4px}
+#perm .pg-t small{opacity:.8}
+#perm .pg{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;max-height:330px;overflow:auto}
+#perm .ps{display:flex;flex-direction:column;gap:6px;padding:6px;border:1px solid rgba(255,255,255,.1);border-radius:10px;background:rgba(255,255,255,.03)}
+#perm .ps:hover{border-color:#8ab4f8;background:rgba(138,180,248,.1)}
+#perm .ps img,#perm .ps .pe{width:100%;aspect-ratio:16/9;object-fit:contain;background:#000;border-radius:6px;display:block}
+#perm .ps span{font-size:11.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:start}
+#permChip{color:#ff8a80}
+#permChip svg{width:16px;height:16px}
+#permChip[hidden]{display:none}
+/* the site's permissions in the shield panel */
+.prow{flex-wrap:nowrap}
+.prow .pk svg{width:16px;height:16px;opacity:.8}
+.seg{display:inline-flex;border:1px solid rgba(255,255,255,.16);border-radius:10px;overflow:hidden;flex:none}
+.seg button{font:inherit;font-size:11.5px;padding:3px 8px;border:0;background:transparent;color:#ddd;cursor:pointer}
+.seg button+button{border-inline-start:1px solid rgba(255,255,255,.12)}
+.seg button:hover{background:rgba(255,255,255,.08)}
+.seg button.on{background:#8ab4f8;color:#111}
+.seg button.on.off{background:#ff8a80}
+.seg button.on.ask{background:rgba(255,255,255,.18);color:#fff}

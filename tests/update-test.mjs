@@ -25,6 +25,10 @@ async function until(fn, ms, every = 500) { const end = Date.now() + ms; while (
 /* fake GitHub "latest release" */
 const setup = fs.readFileSync(nextSetup);
 const digest = crypto.createHash('sha256').update(setup).digest('hex');
+// a throw-away signing key for this test (the real key lives only in the GitHub secret)
+const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+const PUB = publicKey.export({ type: 'spki', format: 'der' }).toString('base64');
+const SIG = crypto.sign(null, Buffer.from(`3zT-Browser-Setup.exe\n${nextVer}\n${digest}`), privateKey).toString('base64');
 const changelog = fs.readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
 const section = changelog.split(/^## /m).find(s => /^\d/.test(s)) || '';
 const body = 'Test release.\n\n## ' + section;
@@ -32,8 +36,9 @@ let served = 0;
 const srv = http.createServer((req, res) => {
   if (req.url.startsWith('/latest.json')) {
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ tag_name: 'v' + nextVer, body, assets: [{ name: '3zT-Browser-Setup.exe', browser_download_url: 'http://127.0.0.1:8777/setup.exe', digest: 'sha256:' + digest }] }));
-  } else if (req.url.startsWith('/setup.exe')) { served++; res.setHeader('Content-Length', setup.length); res.end(setup); }
+    res.end(JSON.stringify({ tag_name: 'v' + nextVer, body, assets: [{ name: '3zT-Browser-Setup.exe', browser_download_url: 'http://127.0.0.1:8777/setup.exe', digest: 'sha256:' + digest }, { name: '3zT-Browser-Setup.exe.sig', browser_download_url: 'http://127.0.0.1:8777/setup.sig' }] }));
+  } else if (req.url.startsWith('/setup.sig')) { res.end(SIG); }
+  else if (req.url.startsWith('/setup.exe')) { served++; res.setHeader('Content-Length', setup.length); res.end(setup); }
   else { res.statusCode = 404; res.end(); }
 }).listen(8777, '127.0.0.1');
 
@@ -58,7 +63,7 @@ async function main() {
   try { fs.rmSync(UPD, { recursive: true, force: true }); } catch (e) {}
 
   // 1-2. run, find and download the update in the background
-  const env = { ...process.env, ZEUS_UPDATE_URL: 'http://127.0.0.1:8777/latest.json', ZEUS_UPDATE_DELAY: '3000' };
+  const env = { ...process.env, ZEUS_UPDATE_URL: 'http://127.0.0.1:8777/latest.json', ZEUS_UPDATE_DELAY: '3000', ZEUS_UPDATE_PUBKEY: PUB };
   const logFd = fs.openSync(LOG, 'w');
   spawn(exe, ['--remote-debugging-port=9334', '--enable-logging=stderr'], { env, detached: true, stdio: ['ignore', logFd, logFd] }).unref();
   const up = await until(() => cdp(9334, 'ui/toolbar.html', '!!document.getElementById("addr")'), 60000);

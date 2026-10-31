@@ -7,6 +7,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { site } = require('./domains');
 
 const LISTS = [
   { name: 'easylist', url: 'https://easylist.to/easylist/easylist.txt' },
@@ -96,11 +97,8 @@ class AdBlocker {
 
   static hostOf(u) { try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ''; } }
   /* rough "same site" check: compare the last two labels (three for things like co.uk / com.sa) */
-  static site(host) {
-    const p = host.split('.');
-    const n = p.length > 2 && /^(co|com|net|org|gov|edu|ac)$/.test(p[p.length - 2]) && p[p.length - 1].length === 2 ? 3 : 2;
-    return p.slice(-n).join('.');
-  }
+  // registrable domain from the Public Suffix List (decides "third-party" and the per-site switch)
+  static site(host) { return site(host); }
   inSet(set, host) {
     let h = host;
     for (;;) {
