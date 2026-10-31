@@ -97,5 +97,39 @@ Root: HKCU; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueN
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,3zT}"; Flags: nowait postinstall skipifsilent
 
+; silent update: the browser was opened while this setup was running -> open it again now
+Filename: "{app}\{#AppExe}"; Parameters: "{code:RelaunchParams}"; Flags: nowait; Check: WantRelaunch
+
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\resources\app"
+
+[Code]
+{ silent updates (src/updater.js): the browser writes these files in %APPDATA%\3zT Browser\update }
+function UpdDir(): String;
+begin
+  Result := ExpandConstant('{userappdata}\3zT Browser\update');
+end;
+
+function WantRelaunch(): Boolean;
+begin
+  Result := FileExists(UpdDir() + '\relaunch.flag');
+end;
+
+function RelaunchParams(Param: String): String;
+var
+  S: AnsiString;
+begin
+  Result := '';
+  if LoadStringFromFile(UpdDir() + '\relaunch.flag', S) then Result := String(S);
+  DeleteFile(UpdDir() + '\relaunch.flag');
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  { files are in place: the browser may start normally from now on }
+  if CurStep = ssPostInstall then
+  begin
+    DeleteFile(UpdDir() + '\installing.lock');
+    DeleteFile(UpdDir() + '\pending.json');
+  end;
+end;

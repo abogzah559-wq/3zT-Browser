@@ -99,45 +99,38 @@ function installOnQuit() {
   const pend = readJson(pendingFile());
   if (!pend || !pend.file || !fs.existsSync(pend.file) || !newer(pend.version, app.getVersion())) return false;
   try {
+    // the setup removes this lock when it has finished copying (installer/3zT.iss)
     fs.writeFileSync(lockFile(), String(Date.now()));
     // remember what to show on the next start
     fs.writeFileSync(path.join(dir(), 'updated.json'), JSON.stringify({ from: app.getVersion(), to: pend.version, body: pend.body || '' }));
-    // wait for this browser to exit fully, then run the setup silently and remove the lock
-    const lg = path.join(dir(), 'install.log').replace(/'/g, "''");
-    const ps = [
-      `$ErrorActionPreference='SilentlyContinue'`,
-      `function L($m) { Add-Content -LiteralPath '${lg}' -Value ((Get-Date -Format o) + ' ' + $m) }`,
-      `L 'waiting for 3zT to close'`,
-      `Wait-Process -Id ${process.pid} -Timeout 60`,
-      `Start-Sleep -Milliseconds 800`,
-      `L 'running setup'`,
-      `$p = Start-Process -FilePath '${pend.file.replace(/'/g, "''")}' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/NOCANCEL' -Wait -PassThru`,
-      `L ('setup finished, code ' + $p.ExitCode)`,
-      `Remove-Item -LiteralPath '${pendingFile().replace(/'/g, "''")}'`,
-      `Remove-Item -LiteralPath '${pend.file.replace(/'/g, "''")}'`,
-      `Remove-Item -LiteralPath '${lockFile().replace(/'/g, "''")}'`,
-      `L 'done'`
-    ].join('; ');
-    try { fs.writeFileSync(path.join(dir(), 'install.log'), new Date().toISOString() + ' starting installer helper\n'); } catch (e) {}
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+    // the setup itself, silent; it waits for / closes what is left of this browser before replacing files
+    const child = spawn(pend.file, ['/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/NOCANCEL', '/CLOSEAPPLICATIONS'],
       { detached: true, stdio: 'ignore', windowsHide: true });
-    child.on('error', e => { try { fs.appendFileSync(path.join(dir(), 'install.log'), 'spawn error ' + e.message + '\n'); } catch (x) {} });
+    child.on('error', () => { try { fs.unlinkSync(lockFile()); } catch (x) {} });
     child.unref();
     return true;
   } catch (e) { log('install on quit failed', e && e.message); try { fs.unlinkSync(lockFile()); } catch (x) {} return false; }
 }
 
-/* called first thing on start: if an update is being installed right now, start again once it is done */
+/* called first thing on start: an update is being installed right now -> ask the setup to open
+   3zT again (with the same arguments) when it is done, and close this copy at once */
 function waitIfInstalling() {
   if (process.platform !== 'win32') return false;
   let at = 0; try { at = +fs.readFileSync(lockFile(), 'utf8') || fs.statSync(lockFile()).mtimeMs; } catch (e) { return false; }
   if (Date.now() - at > 3 * 60 * 1000) { try { fs.unlinkSync(lockFile()); } catch (e) {} return false; }   // stale
-  const exe = process.execPath.replace(/'/g, "''"), lock = lockFile().replace(/'/g, "''");
-  const args = process.argv.slice(1).map(a => `'${String(a).replace(/'/g, "''")}'`).join(',');
-  const ps = `$i=0; while ((Test-Path -LiteralPath '${lock}') -and $i -lt 240) { Start-Sleep -Milliseconds 500; $i++ }; Start-Process -FilePath '${exe}'${args ? ' -ArgumentList ' + args : ''}`;
-  spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', ps],
-    { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  const q = a => (/[\s"]/.test(a) ? '"' + String(a).replace(/"/g, '\\"') + '"' : String(a));
+  try { fs.writeFileSync(path.join(dir(), 'relaunch.flag'), process.argv.slice(1).map(q).join(' ')); } catch (e) { return false; }
   return true;
+}
+
+/* leftovers of an update that is already installed (or older than this version) */
+function cleanup() {
+  try {
+    const pend = readJson(pendingFile());
+    if (pend && !newer(pend.version, app.getVersion())) { try { fs.unlinkSync(pendingFile()); } catch (e) {} }
+    const keep = pend && newer(pend.version, app.getVersion()) ? path.basename(pend.file || '') : '';
+    for (const n of fs.readdirSync(dir())) if (/^3zT-Setup-.*\.exe(\.part)?$/.test(n) && n !== keep) { try { fs.unlinkSync(path.join(dir(), n)); } catch (e) {} }
+  } catch (e) {}
 }
 
 /* after an update: what to show once (then forgotten) */
@@ -151,6 +144,7 @@ function takeUpdated(lang) {
 
 function start(opts = {}) {
   log = opts.log || log;
+  cleanup();
   if (!installed() && !process.env.ZEUS_UPDATE_URL) return false;
   clearTimeout(timer);
   timer = setTimeout(function tick() { check(); timer = setTimeout(tick, EVERY_MS); }, FIRST_CHECK_MS);
