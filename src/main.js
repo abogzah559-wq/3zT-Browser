@@ -19,10 +19,13 @@ const EXT = require('./ext-import');
 const PW = require('./passwords');
 const FEAT = require('./features');
 const { DownloadManager } = require('./downloads');
+const UPD = require('./updater');
 
 // the app is called "3zT"; its profile folder keeps the older name so nothing is lost after updating
 app.setPath('userData', path.join(app.getPath('appData'), '3zT Browser'));
 app.setName('3zT');
+// an update is being installed right now: open again by itself as soon as it is done
+if (UPD.waitIfInstalling()) process.exit(0);
 if (process.platform === 'win32') app.setAppUserModelId('com.3zo.3ztbrowser');
 
 /* settings that must be known before the app is ready */
@@ -53,7 +56,8 @@ if (early.hwAccel !== false) {
   app.userAgentFallback = `Mozilla/5.0 (${plat}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`;
 })();
 
-if (!app.requestSingleInstanceLock()) { app.quit(); }
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) { app.quit(); }
 
 /* never block the browser with an error box: log it and keep going */
 process.on('uncaughtException', err => { console.error('[3zT] uncaught', err && err.stack || err); });
@@ -1128,7 +1132,7 @@ function openDownloads(w) {
 function dlSummary() {
   const live = dl ? dl.list().filter(r => r.state === 'progressing') : [];
   let got = 0, all = 0; for (const r of live) { got += r.received || 0; all += r.total || 0; }
-  return { active: live.length, progress: all ? got / all : -1 };
+  return { active: live.length, progress: all ? got / all : -1, session: dl ? dl.sessionList().length : 0 };
 }
 function setupDownloadIpc() {
   const okPage = e => { try { return isDownloads(e.senderFrame.url); } catch (x) { return false; } };
@@ -1143,6 +1147,30 @@ function setupDownloadIpc() {
     const t = tabOfWc(e.sender);
     const ses = t && t.win.private ? t.view.webContents.session : session.defaultSession;
     const ok = dl.action(id, cmd, ses); dlNotify(r || { id }, 'refresh'); return ok;
+  });
+  // the bar's download list: this run's downloads only (they leave the list when the browser closes)
+  const iconCache = new Map();
+  const fileIcon = async r => {
+    if (!r.path || r.state !== 'completed') return '';
+    if (iconCache.has(r.path)) return iconCache.get(r.path);
+    let u = ''; try { if (fs.existsSync(r.path)) u = (await app.getFileIcon(r.path, { size: 'normal' })).toDataURL(); } catch (x) {}
+    iconCache.set(r.path, u); return u;
+  };
+  ipcMain.handle('dl:session', async e => {
+    if (!uiWin(e)) return [];
+    return Promise.all(dl.sessionList().slice(0, 30).map(async r => ({
+      id: r.id, name: r.name, state: r.state, paused: !!r.paused, received: r.received || 0, total: r.total || 0, speed: r.speed || 0,
+      canResume: r.canResume !== false, exists: r.state === 'completed' && r.path ? fs.existsSync(r.path) : true, icon: await fileIcon(r)
+    })));
+  });
+  ipcMain.on('dl:uiAct', (e, id, cmd) => {
+    const w = uiWin(e); if (!w) return;
+    const r = dl.get(id); if (!r) return;
+    if (cmd === 'open') { if (r.path && r.state === 'completed') shell.openPath(r.path); return; }
+    if (cmd === 'show') { if (r.path) shell.showItemInFolder(r.path); return; }
+    if (!['pause', 'resume', 'cancel', 'retry'].includes(cmd)) return;
+    const ses = w.private && w.tabs[0] && w.tabs[0].view ? w.tabs[0].view.webContents.session : session.defaultSession;
+    dl.action(id, cmd, ses); dlNotify(r, 'refresh');
   });
   ipcMain.handle('dl:clear', e => { if (!okPage(e)) return false; dl.clear(); dlNotify({}, 'refresh'); return true; });
   ipcMain.handle('dl:folder', e => { if (okPage(e)) shell.openPath(dl.folder()); return true; });
@@ -1659,6 +1687,8 @@ app.on('second-instance', (e, argv) => {
   if (u) w.createTab(u);
 });
 app.on('before-quit', () => { if (!quitting) { quitting = true; saveSession(); } for (const s of stores()) s.flush(); });
+// a downloaded update is installed silently once the browser has closed
+app.on('will-quit', () => { if (gotLock) { try { UPD.installOnQuit(); } catch (e) {} } });   // never from a second copy that is only handing over a link
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null);
@@ -1734,6 +1764,17 @@ app.whenReady().then(async () => {
   // keep the Windows registration pointing at this copy if the folder was moved
   if (settings.data.registeredExe && settings.data.registeredExe !== process.execPath) registerBrowser();
   setTimeout(checkDefault, 4000);
+  // just updated: a short green note in the bar, with the release notes behind "Details"
+  try {
+    const u = UPD.takeUpdated(settings.data.lang === 'en' ? 'en' : 'ar');
+    const w = wins[0];
+    if (u && w) {
+      const send = () => { if (!w.ui.webContents.isDestroyed()) w.ui.webContents.send('updated', u); };
+      if (w.ui.webContents.isLoading()) w.ui.webContents.once('did-finish-load', () => setTimeout(send, 700)); else setTimeout(send, 700);
+    }
+  } catch (e) {}
+  // look for updates in the background (installed copies only)
+  UPD.start({ log: (...a) => console.log('[3zT]', ...a) });
 });
 
 app.on('window-all-closed', () => app.quit());

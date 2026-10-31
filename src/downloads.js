@@ -18,11 +18,13 @@ class DownloadManager {
     this.live = new Map();            // id -> Electron DownloadItem
     this.speed = new Map();           // id -> { t, b, v }
     this.seq = Date.now();
+    this.session = [];                // ids downloaded since the browser opened (the bar's download list)
     // anything that was running when the browser closed can be resumed
     for (const r of this.store.data) if (r.state === 'progressing' || r.state === 'paused') r.state = 'interrupted';
   }
 
   list() { return this.store.data; }
+  sessionList() { return this.session.map(id => this.get(id)).filter(Boolean); }
   get(id) { return this.store.data.find(r => r.id === id) || null; }
   activeCount() { return [...this.live.values()].filter(i => i.getState() === 'progressing').length; }
 
@@ -46,6 +48,7 @@ class DownloadManager {
       }
     }
     if (!resumed) this.store.data.unshift(rec);
+    this.session = [rec.id, ...this.session.filter(x => x !== rec.id)];
     if (this.store.data.length > 300) this.store.data.length = 300;
     this.live.set(rec.id, item);
     this.speed.set(rec.id, { t: Date.now(), b: rec.received, v: 0 });

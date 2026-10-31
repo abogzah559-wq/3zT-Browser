@@ -37,6 +37,10 @@ const ICO = {
   key: '<svg viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3M14 9l2 2"/></svg>',
   yt: '<svg viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="3.5"/><path d="M10.5 9.5v5l4-2.5z"/></svg>',
   dl: '<svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></svg>',
+  folder: '<svg viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h4l2 2.2h7a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>',
+  pause: '<svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></svg>',
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg>',
+  retry: '<svg viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></svg>',
   mute: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>'
 };
 
@@ -246,6 +250,8 @@ let openKind = null;
 function expand(on) { ui.send('ui:expand', on ? true : (toastOn ? stripH + 64 : false)); }
 function openDrop(kind, anchor) {
   openKind = kind;
+  if (kind === 'dl' && toastOn) { clearTimeout(toastT); hideToast(); }
+  $('drop').classList.toggle('wide', kind === 'dl');
   $('drop').hidden = false; $('backdrop').hidden = false;
   expand(true);
   renderMenu(kind);
@@ -287,6 +293,39 @@ async function renderMenu(kind) {
       <div class="row"><span class="lbl">${L('المانع لكل المواقع', 'Blocker for all sites')}</span>
         <button class="chip${S.adblock ? ' on' : ''}" data-a="adAll">${S.adblock ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
       <div class="note">${L('المجموع من البداية:', 'Total so far:')} ${Number(S.blockedTotal || 0).toLocaleString('en')} · ${L('القواعد:', 'rules:')} ${Number(S.adRules || 0).toLocaleString('en')}</div>`;
+  } else if (kind === 'dl') {
+    const items = await ui.invoke('dl:session') || [];
+    if (openKind !== 'dl') return;
+    const size = b => { if (!b) return '0 ' + L('ك.ب', 'KB'); const u = en() ? ['B', 'KB', 'MB', 'GB'] : ['بايت', 'ك.ب', 'م.ب', 'ج.ب']; let i = 0; while (b >= 1024 && i < 3) { b /= 1024; i++; } return (i ? b.toFixed(b < 10 ? 1 : 0) : b) + ' ' + u[i]; };
+    let h = `<div class="hd">${L('التنزيلات', 'Downloads')}</div>`;
+    if (!items.length) h += `<div class="note">${L('ما فيه تنزيلات من فتحت المتصفح.', 'Nothing downloaded since the browser opened.')}</div>`;
+    for (const x of items) {
+      const ext = ((x.name || '').split('.').pop() || '').slice(0, 4).toUpperCase();
+      const ico = x.icon ? `<img class="fi" src="${esc(x.icon)}" alt="">` : `<span class="fi ph">${esc(ext)}</span>`;
+      let st = '', bar = '', acts = '';
+      if (x.state === 'progressing') {
+        const pct = x.total ? Math.min(100, x.received / x.total * 100) : 0;
+        st = x.paused ? L('متوقف مؤقتاً', 'Paused') + ' · ' + size(x.received) : (x.total ? Math.floor(pct) + '% · ' : '') + size(x.received) + (x.total ? ' ' + L('من', 'of') + ' ' + size(x.total) : '') + (x.speed ? ' · ' + size(x.speed) + L('/ث', '/s') : '');
+        bar = `<span class="pb${x.paused ? ' paused' : ''}${x.total ? '' : ' ind'}"><i style="width:${pct}%"></i></span>`;
+        acts = `<button class="ab" data-dla="${x.paused ? 'resume' : 'pause'}" title="${x.paused ? L('استئناف', 'Resume') : L('إيقاف مؤقت', 'Pause')}">${x.paused ? ICO.play : ICO.pause}</button><button class="ab" data-dla="cancel" title="${L('إلغاء', 'Cancel')}">${ICO.x}</button>`;
+      } else if (x.state === 'completed') {
+        st = x.exists ? size(x.total || x.received) : L('الملف انحذف أو انتقل', 'File moved or deleted');
+        if (x.exists) acts = `<button class="ab" data-dla="show" title="${L('عرض في المجلد', 'Show in folder')}">${ICO.folder}</button>`;
+      } else {
+        st = x.state === 'cancelled' ? L('انلغى', 'Cancelled') : L('توقف التنزيل', 'Download stopped');
+        acts = `<button class="ab" data-dla="${x.state === 'interrupted' && x.canResume && x.received ? 'resume' : 'retry'}" title="${L('إعادة المحاولة', 'Retry')}">${ICO.retry}</button>`;
+      }
+      const openable = x.state === 'completed' && x.exists;
+      h += `<div class="mi dli${openable ? ' ok' : ''}${x.state === 'completed' && !x.exists ? ' gone' : ''}" data-dlid="${esc(x.id)}"${openable ? ` title="${L('فتح الملف', 'Open file')}"` : ''}>
+        ${ico}<span class="dt"><span class="t">${esc(x.name)}</span><span class="ds${x.state === 'cancelled' || x.state === 'interrupted' ? ' bad' : ''}">${esc(st)}</span>${bar}</span>${acts}</div>`;
+    }
+    h += `<div class="sep"></div><button class="mi" data-a="downloads">${ICO.dl}<span class="t">${L('كل التنزيلات', 'All downloads')}</span><span class="sub">Ctrl+J</span></button>`;
+    d.innerHTML = h;
+  } else if (kind === 'notes') {
+    const u = updateInfo || { to: '', notes: [] };
+    d.innerHTML = `<div class="hd">${L('وش الجديد في', "What's new in")} 3zT ${esc(u.to)}</div>`
+      + (u.notes.length ? `<ul class="notes">${u.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>` : `<div class="note">${L('تحسينات وإصلاحات.', 'Improvements and fixes.')}</div>`)
+      + `<div class="sep"></div><button class="mi" data-a="relnotes">${ICO.globe}<span class="t">${L('صفحة النسخة في GitHub', 'Release page on GitHub')}</span></button>`;
   } else if (kind === 'ext') {
     d.innerHTML = `<div class="note">${L('جاري التحميل…', 'Loading…')}</div>`;
     const items = await ui.invoke('ext:list') || [];
@@ -332,6 +371,8 @@ async function renderMenu(kind) {
 $('drop').addEventListener('mousedown', e => { if (openKind === 'sug') e.preventDefault(); });
 $('drop').addEventListener('click', async e => {
   const t = e.target;
+  const dla = t.closest('[data-dla]'); if (dla) { const id = dla.closest('[data-dlid]').dataset.dlid; ui.send('dl:uiAct', id, dla.dataset.dla); if (dla.dataset.dla === 'show') closeDrop(); else setTimeout(() => openKind === 'dl' && renderMenu('dl'), 150); return; }
+  const dli = t.closest('.dli.ok'); if (dli) { ui.send('dl:uiAct', dli.dataset.dlid, 'open'); closeDrop(); return; }
   const rm = t.closest('[data-rm]'); if (rm) { await ui.invoke('ext:remove', rm.dataset.rm); renderMenu('ext'); return; }
   const sg = t.closest('[data-sg]'); if (sg) { go(sg.dataset.sg); return; }
   const opt = t.closest('[data-opt]'); if (opt) { ui.send('ext:options', opt.dataset.opt); closeDrop(); return; }
@@ -348,6 +389,7 @@ $('drop').addEventListener('click', async e => {
   if (simple[cmd]) { ui.send(...simple[cmd]); closeDrop(); return; }
   switch (cmd) {
     case 'zoomReset': ui.send('tab', 'zoomReset'); break;
+    case 'relnotes': closeDrop(); go('https://github.com/abogzah559-wq/3zT-Browser/releases/tag/v' + (updateInfo ? updateInfo.to : '')); break;
     case 'adSite': ui.send('tab', 'adSite'); break;
     case 'adAll': ui.send('set', 'adblock', !S.adblock); break;
     case 'restore': ui.send('set', 'restoreTabs', !S.restoreTabs); break;
@@ -444,6 +486,7 @@ function toast(text, btn, opts = {}) {
   t.innerHTML = (opts.sub ? `<span class="t2"><span>${esc(text)}</span><small>${esc(opts.sub)}</small></span>` : `<span>${esc(text)}</span>`)
     + btns.map((b, i) => `<button class="${b.alt ? 'alt' : ''}" data-i="${i}">${esc(b.label)}</button>`).join('');
   t.querySelectorAll('button').forEach(b => { b.onclick = () => { const x = btns[+b.dataset.i]; hideToast(); x.fn && x.fn(); }; });
+  t.classList.toggle('ok', !!opts.ok);
   t.hidden = false; toastOn = true;
   if (!openKind) ui.send('ui:expand', stripH + 80);
   clearTimeout(toastT); toastT = setTimeout(() => { hideToast(); opts.onTimeout && opts.onTimeout(); }, opts.ms || 5000);
@@ -457,18 +500,26 @@ ui.on('pw-offer', o => {
     { sub: `${o.username || L('(بدون اسم مستخدم)', '(no username)')} · ${o.host}`, ms: 20000 });
 });
 function hideToast() { $('toast').hidden = true; toastOn = false; if (!openKind) ui.send('ui:expand', false); }
+/* after a silent update: a calm green note for 3 seconds, "Details" shows what changed */
+let updateInfo = null;
+ui.on('updated', u => {
+  updateInfo = { to: String(u.to || ''), notes: Array.isArray(u.notes) ? u.notes.slice(0, 30) : [] };
+  toast(L(`تم تحديث 3zT إلى ${updateInfo.to}`, `3zT was updated to ${updateInfo.to}`),
+    [{ label: L('التفاصيل', 'Details'), alt: true, fn: () => openDrop('notes', $('menuBtn')) }], { ok: true, ms: 3000 });
+});
 let dlDoneUntil = 0;
 function drawDl() {
   const b = $('dlBtn'), d = S.dl || { active: 0, progress: -1 };
-  const show = d.active > 0 || Date.now() < dlDoneUntil;
+  const show = d.active > 0 || d.session > 0 || Date.now() < dlDoneUntil;
   b.hidden = !show; if (!show) return;
   b.classList.toggle('done', !d.active);
   b.classList.toggle('ind', d.active > 0 && d.progress < 0);
   $('dlRing').style.strokeDashoffset = d.active && d.progress >= 0 ? String(100.5 * (1 - d.progress)) : '';
   b.title = d.active ? L(`جاري تنزيل ${d.active}`, `${d.active} downloading`) : L('التنزيلات', 'Downloads');
 }
-$('dlBtn').onclick = () => ui.send('misc', 'downloads');
+$('dlBtn').onclick = () => (openKind === 'dl' ? closeDrop() : openDrop('dl', $('dlBtn')));
 ui.on('download', d => {
+  if (openKind === 'dl') { dlDoneUntil = d.state === 'completed' ? Date.now() + 8000 : dlDoneUntil; return; }   // the list is open: it already shows it
   const page = { label: L('التنزيلات', 'Downloads'), fn: () => ui.send('misc', 'downloads') };
   if (d.state === 'completed') { dlDoneUntil = Date.now() + 8000; setTimeout(drawDl, 8100); drawDl(); toast(L('تم التنزيل: ', 'Downloaded: ') + d.name, [{ label: L('فتح المجلد', 'Show'), fn: () => ui.send('download:show', d.path) }, page]); }
   else if (d.state === 'interrupted') toast(L('توقف التنزيل: ', 'Download stopped: ') + d.name, page);
