@@ -16,6 +16,13 @@ const { app, net } = require('electron');
 const REPO = 'abogzah559-wq/3zT-Browser';
 const API = process.env.ZEUS_UPDATE_URL || `https://api.github.com/repos/${REPO}/releases/latest`;
 const ASSET = '3zT-Browser-Setup.exe';
+// the project's update-signing public key (Ed25519). Releases carry 3zT-Browser-Setup.exe.sig, made in CI with
+// the private key that only GitHub Actions holds (secret UPDATE_SIGNING_KEY). No valid signature, no update.
+const PUBLIC_KEY = 'MCowBQYDK2VwAyEAVz6B4sGbgoTfKFrZZ/1Yr08tgxYQc879WRlYKxCY+s4=';
+// automated tests point the browser at a fake release (ZEUS_UPDATE_URL); only then may they bring their own key
+const KEY = crypto.createPublicKey({ key: Buffer.from(process.env.ZEUS_UPDATE_URL && process.env.ZEUS_UPDATE_PUBKEY || PUBLIC_KEY, 'base64'), format: 'der', type: 'spki' });
+// what is signed: the file name, the version and the file's SHA-256
+const signedText = (ver, sha) => `${ASSET}\n${ver}\n${sha}`;
 const FIRST_CHECK_MS = +(process.env.ZEUS_UPDATE_DELAY || 60 * 1000);
 const EVERY_MS = 4 * 3600 * 1000;
 
@@ -71,6 +78,15 @@ async function check() {
       if (sh) { const t = await (await net.fetch(sh.browser_download_url)).text(); want = (t.match(/[0-9a-f]{64}/i) || [''])[0].toLowerCase(); }
     }
     if (!/^[0-9a-f]{64}$/.test(want)) return log('update: no checksum, skipped');
+    // the signature must match this version and checksum before anything is downloaded
+    const sigAsset = (rel.assets || []).find(a => a.name === ASSET + '.sig');
+    if (!sigAsset) return log('update: not signed, skipped');
+    let sigOk = false;
+    try {
+      const sig = Buffer.from((await (await net.fetch(sigAsset.browser_download_url)).text()).trim(), 'base64');
+      sigOk = sig.length === 64 && crypto.verify(null, Buffer.from(signedText(ver, want)), KEY, sig);
+    } catch (e) {}
+    if (!sigOk) return log('update: bad signature, skipped');
     fs.mkdirSync(dir(), { recursive: true });
     const file = path.join(dir(), `3zT-Setup-${ver}.exe`), part = file + '.part';
     const d = await net.fetch(asset.browser_download_url);
@@ -151,4 +167,4 @@ function start(opts = {}) {
   return true;
 }
 
-module.exports = { start, check, installOnQuit, waitIfInstalling, takeUpdated, installed, newer, notesFor };
+module.exports = { start, check, installOnQuit, waitIfInstalling, takeUpdated, installed, newer, notesFor, signedText };

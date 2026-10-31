@@ -12,6 +12,7 @@ import { spawn, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import http from 'node:http';
 
 const argv = process.argv.slice(2);
 const exe = argv.find(a => !a.startsWith('--'));
@@ -55,7 +56,7 @@ async function connect(t) {
   ws.onmessage = m => { const d = JSON.parse(m.data); if (d.id && wait.has(d.id)) { wait.get(d.id)(d); wait.delete(d.id); } else listeners.forEach(f => f(d)); };
   // every call gives up after 30 s so a stuck page can never hang the whole test
   const send = (method, params = {}) => new Promise(r => { const i = ++id; wait.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); setTimeout(() => { if (wait.has(i)) { wait.delete(i); r({ error: { message: 'timeout ' + method } }); } }, 30000); });
-  const ev = async expr => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); return r.result && r.result.result ? r.result.result.value : undefined; };
+  const ev = async (expr, userGesture = false) => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true, userGesture }); return r.result && r.result.result ? r.result.result.value : undefined; };
   return { send, ev, on: f => listeners.push(f), close: () => ws.close() };
 }
 async function find(match, tries = 60) {
@@ -127,11 +128,78 @@ async function storeInstall(ext) {
   c.close();
 }
 
+/* site permissions: the question bar, Allow / Block / ignored, remembering, the site panel, screen sharing */
+const PERM_PAGE = `<!doctype html><title>perm</title><body><pre id=o></pre><script>
+const log = m => { document.getElementById('o').textContent += m + '\\n'; };
+window.out = () => document.getElementById('o').textContent;
+window.askNotif = () => Notification.requestPermission().then(r => log('notif:' + r));
+window.askGeo = () => navigator.geolocation.getCurrentPosition(() => log('geo:ok'), e => log('geo:err' + e.code), { timeout: 30000 });
+window.askWin = () => window.getScreenDetails().then(() => log('win:ok'), e => log('win:' + e.name));
+window.askScreen = () => navigator.mediaDevices.getDisplayMedia({ video: true }).then(st => { log('screen:ok'); st.getTracks().forEach(t => t.stop()); }, e => log('screen:' + e.name));
+</script>`;
+async function permissions() {
+  const srv = http.createServer((q, r) => { r.setHeader('Content-Type', 'text/html'); r.end(PERM_PAGE); }).listen(8790, '127.0.0.1');
+  try {
+    await go('http://127.0.0.1:8790/', true);
+    const t = await find(u => u.startsWith('http://127.0.0.1:8790'), 40);
+    if (!t) return ok('permission test page opens', false);
+    const page = await connect(t);
+    await poll(() => page.ev('typeof askNotif === "function"'), 15000);
+    // the toolbar of the window that shows this page (other windows may be open)
+    const pageBar = async () => {
+      for (const x of (await targets()).filter(x => x.type === 'page' && x.url.includes('ui/toolbar.html'))) {
+        const c = await connect(x); if (String(await c.ev('S && S.url')).startsWith('http://127.0.0.1:8790')) return c; c.close();
+      }
+      return toolbar();
+    };
+    const bar = async () => { const tb = await pageBar(); const v = await tb.ev(`document.getElementById('perm').hidden ? '' : document.getElementById('perm').className + '|' + document.getElementById('perm').innerText.replace(/\\n/g, ' ')`); tb.close(); return v; };
+    const click = async sel => { const tb = await pageBar(); const v = await tb.ev(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b) return false; b.click(); return true; })()`); tb.close(); return v; };
+    // 1. Allow, remembered
+    await page.ev('askNotif(), 1');
+    const b1 = await poll(bar, 8000, 200);
+    ok('permission question shows as a small bar (not a window)', /^ask\|/.test(b1 || ''), b1 || `page: ${await page.ev('out() + " " + Notification.permission + " " + document.visibilityState')}`);
+    await click('#perm [data-pc=allow]');
+    ok('"Allow" gives the permission', !!(await poll(async () => /notif:granted/.test(await page.ev('out()')), 8000)));
+    await page.ev('askNotif(), 1');
+    ok('an allowed site is not asked again', !!(await poll(async () => (await page.ev('out()')).split('notif:granted').length === 3, 8000)) && !(await bar()));
+    // 2. Block, remembered, and the page is not asked again
+    await page.ev('askGeo(), 1');
+    await poll(bar, 8000, 200);
+    await click('#perm [data-pc=block]');
+    ok('"Block" refuses', !!(await poll(async () => /geo:err1/.test(await page.ev('out()')), 8000)));
+    await page.ev('askGeo(), 1');
+    ok('a blocked site is not asked again', !!(await poll(async () => (await page.ev('out()')).split('geo:err1').length === 3, 8000)) && !(await bar()));
+    // 3. Ignored: the bar goes away by itself, the page is refused this time, the address bar shows an icon
+    await page.ev('askWin(), 1', true);
+    const b3 = await poll(bar, 8000, 200);
+    const gone = await poll(async () => !(await bar()), 12000, 300);
+    const chip = await (async () => { const tb = await pageBar(); const v = await tb.ev(`!document.getElementById('permChip').hidden`); tb.close(); return v; })();
+    ok('an ignored question closes by itself and leaves an icon in the address bar', !!b3 && !!gone && chip === true, `chip ${chip}`);
+    // 4. the site panel lists them and can change one
+    let tb = await pageBar(); await tb.ev(`document.getElementById('shield').click(), 1`); await sleep(600);
+    const panel = await tb.ev(`document.getElementById('drop').innerText`);
+    ok('the site panel lists this site\'s permissions', /الإشعارات|Notifications/.test(panel) && /موقعك|location/i.test(panel), String(panel).slice(-200));
+    await tb.ev(`document.querySelector('[data-perm="geolocation"][data-v="allow"]').click(), 1`); await sleep(500);
+    const st = await tb.ev(`JSON.stringify(S.perm && S.perm.site)`);
+    await tb.ev(`closeDrop(), 1`); tb.close();
+    ok('a permission can be changed from the panel', /"geolocation":"allow"/.test(st || ''), st);
+    // 5. screen sharing: a picker with the screens and windows, and sharing works
+    await page.ev('askScreen(), 1', true);
+    const b5 = await poll(async () => { const v = await bar(); return /^screen\|/.test(v || '') ? v : ''; }, 15000, 300);
+    const n = await (async () => { const t2 = await pageBar(); const v = await t2.ev(`document.querySelectorAll('#perm [data-pick]').length`); t2.close(); return v; })();
+    ok('screen sharing shows a picker with screens and windows', !!b5 && n > 0, `${n} choices`);
+    if (n > 0) { await click('#perm [data-pick]'); ok('sharing the chosen screen works', !!(await poll(async () => /screen:ok/.test(await page.ev('out()')), 15000))); }
+    else await click('#perm [data-pc=ignore]');
+    page.close();
+  } finally { srv.close(); }
+}
+
 async function main() {
   if (!exe) { console.error('usage: node tests/e2e.mjs <exe> [app-dir] [--store]'); process.exit(2); }
   ok('app starts', await start());
   await sleep(4000);
   await smoke();
+  await permissions();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);
     // Dark Reader really runs on websites

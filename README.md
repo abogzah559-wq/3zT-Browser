@@ -77,7 +77,9 @@ To make 3zT your default browser: **⋮ menu → Settings → Default browser �
 **3zT** in the Windows page that opens (Windows only lets you choose this yourself).
 
 **Updates are automatic and silent.** While you browse, 3zT checks this repository's releases,
-downloads a newer setup in the background and checks its SHA-256 against GitHub's. When you close
+downloads a newer setup in the background and checks it: its SHA-256 must match, and the release
+must carry the project's Ed25519 signature (made in GitHub Actions with a key only the repository's
+secrets hold; the public half is built into the browser). When you close
 the browser it installs it with no windows or questions. The next time you open 3zT, a small green
 note says it was updated, with a **Details** button that lists what changed (from
 [CHANGELOG.md](CHANGELOG.md)); it disappears after 3 seconds. Your tabs, bookmarks, passwords and
@@ -157,9 +159,26 @@ otherwise run the extensions listed below, because in 3zT they do not add proces
   - downloads page (`zeus://downloads`, `Ctrl+J`) with the full history, search, "show in folder"
     and file icons.
 
+### Site permissions
+- When a site wants something sensitive (camera, microphone, location, notifications, reading the
+  clipboard, MIDI, window placement, USB / HID / serial devices, screen sharing), a small bar
+  appears under the address bar with **Allow** and **Block**. It never blocks the browser; if you
+  ignore it, it closes after 6 seconds (it waits while the mouse is on it) and the site is refused
+  that time only. A small icon in the address bar then lets you change your mind.
+- Allow and Block are remembered for each site (private windows: until they close).
+  Camera and microphone are separate.
+- The shield button shows the current site's permissions with **Allow / Block / Ask** for each.
+  **Settings → Ads & privacy → Site permissions** lists every site and lets you flip or reset them.
+- Screen sharing shows a picker with your screens and windows (the computer's sound can be shared
+  with a whole screen). USB, HID and serial devices are picked from a list.
+- Normal browsing never asks: downloads, PDFs, video and sound, cookies, JavaScript, WebGL /
+  WebRTC, full screen, copying to the clipboard and uploading files you choose all just work.
+
 ### Passwords
 - Saves and fills passwords. They are encrypted with Windows' own protection (DPAPI through
-  Electron `safeStorage`), the same way Chrome protects them.
+  Electron `safeStorage`), the same way Chrome protects them, and are never saved unencrypted.
+- Sites are matched with the Public Suffix List: `a.github.io` and `b.github.io` are different
+  sites and never see each other's passwords; `www.bbc.co.uk` and `news.bbc.co.uk` are the same.
 - Import from a Chrome passwords CSV export. The file is read on your computer only.
 
 ### Performance tools
@@ -234,6 +253,9 @@ Passwords are imported separately from a CSV file you export in Chrome
   (installed copies only; nothing about you is sent).
 - Private windows keep nothing after they close.
 - Passwords are encrypted with Windows DPAPI.
+- Nothing sensitive (camera, microphone, location, notifications, screen...) is given to a site
+  without your answer; see *Site permissions* above.
+- Updates are signed; an update without the project's signature is never installed.
 
 ## Keyboard shortcuts
 
@@ -314,7 +336,9 @@ src/
   features.js          built-in SponsorBlock, Clean YouTube, Ambient light, Twitch ad blocking
   adblock.js           the ad blocker (EasyList / EasyPrivacy matcher)
   downloads.js         the download manager
-  updater.js           silent updates from GitHub releases
+  updater.js           silent, signed updates from GitHub releases
+  permissions.js       site permissions (what is asked, what is remembered)
+  domains.js           "same site" from the Public Suffix List (passwords, ad blocker)
   passwords.js         encrypted password store
   chrome-import.js     reads bookmarks, favicons and new-tab settings from Chrome
   ext-import.js        copies Chrome extensions over and patches them for Electron
@@ -324,9 +348,11 @@ src/
   inject/              scripts injected into YouTube / Twitch (third-party, see credits)
   vendor/chrome-web-store/
                        Chrome Web Store support (bundled electron-chrome-web-store)
+  vendor/tldts.js      Public Suffix List (bundled tldts)
 assets/                logo and icons
 installer/             Inno Setup script and wizard images
-scripts/               build_win.py (app folder), patch_exe.py (icon and name inside the .exe)
+scripts/               build_win.py (app folder), patch_exe.py (icon and name inside the .exe),
+                       sign-update.mjs (signs a release for the updater)
 tests/                 e2e.mjs (end-to-end test), update-test.mjs (silent update test),
                        bench.ps1 (memory comparison)
 ```
@@ -343,6 +369,8 @@ DevTools Protocol. On every push, GitHub Actions on Windows:
 2. installs it silently and checks the program, the desktop shortcut, the Start menu entry and the
    browser registration,
 3. checks that the toolbar and every internal page open with no script errors and that websites load,
+   then the site permissions: the question bar, Allow / Block / ignored, remembering, the site
+   panel, and screen sharing with the picker,
 4. installs **Dark Reader** and **uBlock Origin Lite** from the real Chrome Web Store with the
    store's "Add to 3zT" button, checks that Dark Reader really darkens a website, restarts the browser,
    checks both are still there and removes them again,
@@ -374,6 +402,7 @@ Third-party parts keep their licenses; the full list with license texts is in
 - [Ambient light for YouTube](https://github.com/WesselKroos/youtube-ambilight) by Wessel Kroos - MIT.
 - [TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions) `vaft` by pixeltris - MIT.
 - [electron-chrome-web-store](https://github.com/samuelmaddock/electron-browser-shell) by Samuel Maddock - MIT; [adm-zip](https://github.com/cthackers/adm-zip) - MIT; [pbf](https://github.com/mapbox/pbf) - BSD-3-Clause.
+- [tldts](https://github.com/remusao/tldts) - MIT, with the [Public Suffix List](https://publicsuffix.org) - MPL-2.0.
 - [SponsorBlock](https://sponsor.ajay.app) data - CC BY-NC-SA 4.0 (used through its public API).
 - [EasyList / EasyPrivacy](https://easylist.to) - GPL-3.0 / CC BY-SA 3.0 (downloaded at runtime).
 - Clean YouTube (Chrome Web Store) - element list adapted, credited above.

@@ -1,7 +1,7 @@
 {
   "name": "3zt-browser",
   "productName": "3zT",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "3zT Browser - a light Chromium browser with a built-in ad blocker, download manager, SponsorBlock, Clean YouTube, Ambient light and Twitch ad blocking",
   "main": "src/main.js",
   "author": "3zo",

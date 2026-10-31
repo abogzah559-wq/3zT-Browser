@@ -15,7 +15,7 @@ const KNOWN = {
   kjhigpfcihnpjchpfnboofeecckigbmb: { skip: 'declined', why: 'Video Quality Enhancer' },
   nmmhkkegccagdldgiimedpiccmgmieda: { skip: 'internal', why: 'Chrome Web Store Payments' },
   ghbmnnjooekpmoecnnnilnnbdlolhkhi: { skip: 'internal', why: 'Google Docs Offline' },
-  ahmpjcflkgiildlgicmcieglgoilbfdp: { skip: 'builtin', why: 'Free Download Manager (built-in hand-off)' },
+  ahmpjcflkgiildlgicmcieglgoilbfdp: { skip: 'builtin', why: 'Free Download Manager (download manager is built in)' },
   bgnkhhnnamicmpeenaelnjfhikgbkllg: { skip: 'builtin', why: 'AdGuard (built-in ad blocker)' },
   gighmmpiobklfepjocnamgkkbiglidom: { skip: 'builtin', why: 'AdBlock (built-in ad blocker)' },
   jpkfgepcmmchgfbjblnodjhldacghenp: { skip: 'builtin', why: 'Pie Adblock (built-in ad blocker)' },

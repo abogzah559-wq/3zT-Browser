@@ -247,9 +247,10 @@ $('act').onclick = () => { if (S.isWeb) ui.send('tab', 'translate'); };
 
 /* ---------- menus ---------- */
 let openKind = null;
-function expand(on) { ui.send('ui:expand', on ? true : (toastOn ? stripH + 64 : false)); }
+function expand(on) { ui.send('ui:expand', on ? true : permOn ? permHeight() : (toastOn ? stripH + 64 : false)); }
 function openDrop(kind, anchor) {
   openKind = kind;
+  if (kind === 'shield') permChanged = false;
   if (kind === 'dl' && toastOn) { clearTimeout(toastT); hideToast(); }
   $('drop').classList.toggle('wide', kind === 'dl');
   $('drop').hidden = false; $('backdrop').hidden = false;
@@ -292,7 +293,8 @@ async function renderMenu(kind) {
       <div class="sep"></div>
       <div class="row"><span class="lbl">${L('المانع لكل المواقع', 'Blocker for all sites')}</span>
         <button class="chip${S.adblock ? ' on' : ''}" data-a="adAll">${S.adblock ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
-      <div class="note">${L('المجموع من البداية:', 'Total so far:')} ${Number(S.blockedTotal || 0).toLocaleString('en')} · ${L('القواعد:', 'rules:')} ${Number(S.adRules || 0).toLocaleString('en')}</div>`;
+      <div class="note">${L('المجموع من البداية:', 'Total so far:')} ${Number(S.blockedTotal || 0).toLocaleString('en')} · ${L('القواعد:', 'rules:')} ${Number(S.adRules || 0).toLocaleString('en')}</div>`
+      + permPanel();
   } else if (kind === 'dl') {
     const items = await ui.invoke('dl:session') || [];
     if (openKind !== 'dl') return;
@@ -371,6 +373,7 @@ async function renderMenu(kind) {
 $('drop').addEventListener('mousedown', e => { if (openKind === 'sug') e.preventDefault(); });
 $('drop').addEventListener('click', async e => {
   const t = e.target;
+  const pv = t.closest('[data-perm]'); if (pv) { ui.send('perm:set', { kind: pv.dataset.perm, value: pv.dataset.v }); permChanged = true; setTimeout(() => openKind === 'shield' && renderMenu('shield'), 120); return; }
   const dla = t.closest('[data-dla]'); if (dla) { const id = dla.closest('[data-dlid]').dataset.dlid; ui.send('dl:uiAct', id, dla.dataset.dla); if (dla.dataset.dla === 'show') closeDrop(); else setTimeout(() => openKind === 'dl' && renderMenu('dl'), 150); return; }
   const dli = t.closest('.dli.ok'); if (dli) { ui.send('dl:uiAct', dli.dataset.dlid, 'open'); closeDrop(); return; }
   const rm = t.closest('[data-rm]'); if (rm) { await ui.invoke('ext:remove', rm.dataset.rm); renderMenu('ext'); return; }
@@ -391,6 +394,8 @@ $('drop').addEventListener('click', async e => {
     case 'zoomReset': ui.send('tab', 'zoomReset'); break;
     case 'relnotes': closeDrop(); go('https://github.com/abogzah559-wq/3zT-Browser/releases/tag/v' + (updateInfo ? updateInfo.to : '')); break;
     case 'adSite': ui.send('tab', 'adSite'); break;
+    case 'permReload': closeDrop(); ui.send('tab', 'reload'); break;
+    case 'permAll': closeDrop(); ui.send('tab', 'settings'); break;
     case 'adAll': ui.send('set', 'adblock', !S.adblock); break;
     case 'restore': ui.send('set', 'restoreTabs', !S.restoreTabs); break;
     case 'hw': ui.send('set', 'hwAccel', !S.hwAccel); break;
@@ -417,7 +422,6 @@ $('drop').addEventListener('click', async e => {
     }
     case 'ytAds': ui.send('set', 'ytAds', !S.ytAds); break;
     case 'makeDefault': closeDrop(); ui.send('misc', 'makeDefault'); toast(L('اختار "3zT" من الصفحة اللي فتحت لك', 'Pick "3zT" on the page that just opened')); break;
-    case 'fdm': ui.send('set', 'fdm', !S.fdm); break;
     case 'importLook': { const ok = await ui.invoke('ntp:import'); closeDrop(); toast(ok ? L('تم. افتح تبويب جديد عشان تشوف الشكل', 'Done. Open a new tab to see it') : L('ما لقيت إعدادات بلاك كروم في كروم', 'Black Chrome settings not found in Chrome')); break; }
   }
 });
@@ -488,7 +492,7 @@ function toast(text, btn, opts = {}) {
   t.querySelectorAll('button').forEach(b => { b.onclick = () => { const x = btns[+b.dataset.i]; hideToast(); x.fn && x.fn(); }; });
   t.classList.toggle('ok', !!opts.ok);
   t.hidden = false; toastOn = true;
-  if (!openKind) ui.send('ui:expand', stripH + 80);
+  if (!openKind && !permOn) ui.send('ui:expand', stripH + 80);
   clearTimeout(toastT); toastT = setTimeout(() => { hideToast(); opts.onTimeout && opts.onTimeout(); }, opts.ms || 5000);
 }
 ui.on('pw-offer', o => {
@@ -499,7 +503,7 @@ ui.on('pw-offer', o => {
      ...(o.update ? [] : [{ label: L('أبداً لهذا الموقع', 'Never for this site'), alt: true, fn: () => answer('never') }])],
     { sub: `${o.username || L('(بدون اسم مستخدم)', '(no username)')} · ${o.host}`, ms: 20000 });
 });
-function hideToast() { $('toast').hidden = true; toastOn = false; if (!openKind) ui.send('ui:expand', false); }
+function hideToast() { $('toast').hidden = true; toastOn = false; if (!openKind) ui.send('ui:expand', permOn ? permHeight() : false); }
 /* after a silent update: a calm green note for 3 seconds, "Details" shows what changed */
 let updateInfo = null;
 ui.on('updated', u => {
@@ -525,3 +529,99 @@ ui.on('download', d => {
   else if (d.state === 'interrupted') toast(L('توقف التنزيل: ', 'Download stopped: ') + d.name, page);
   else if (d.state === 'started') toast(L('جاري التنزيل: ', 'Downloading: ') + d.name, page);
 });
+
+/* ---------- site permissions: a small question under the address bar, never a blocking window ---------- */
+const PK = {
+  camera: ['الكاميرا', 'your camera', '<rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 11l5-3v8l-5-3z"/>'],
+  microphone: ['المايك', 'your microphone', '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/>'],
+  geolocation: ['موقعك', 'your location', '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="2.3"/>'],
+  notifications: ['الإشعارات', 'notifications', '<path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20a2 2 0 0 0 4 0"/>'],
+  'clipboard-read': ['قراءة الحافظة', 'to read the clipboard', '<rect x="6" y="4.5" width="12" height="16" rx="2"/><path d="M9.5 4.5V3h5v1.5"/>'],
+  midi: ['أجهزة MIDI', 'MIDI devices', '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M8 6v7M12 6v7M16 6v7"/>'],
+  'window-management': ['أماكن النوافذ والشاشات', 'window placement', '<rect x="3" y="5" width="11" height="9" rx="1.5"/><rect x="10" y="10" width="11" height="9" rx="1.5"/>'],
+  'idle-detection': ['يعرف إذا كنت بعيد عن الجهاز', 'to know when you are away', '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>'],
+  usb: ['جهاز USB', 'a USB device', '<path d="M12 3v13M10 6l2-3 2 3M8 9v3l4 3 4-3V9"/><circle cx="12" cy="19" r="2"/>'],
+  hid: ['جهاز HID', 'an HID device', '<rect x="3" y="7" width="18" height="10" rx="2"/><path d="M7 11h2M11 11h2M15 11h2M8 14h8"/>'],
+  serial: ['منفذ تسلسلي', 'a serial port', '<path d="M5 8h14l-2 8H7z"/><path d="M9 12h.01M12 12h.01M15 12h.01"/>'],
+  screen: ['مشاركة الشاشة', 'to share your screen', '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M9 20h6M12 16.5V20"/>']
+};
+const pName = k => (PK[k] ? L(PK[k][0], PK[k][1]) : k);
+const pIco = (k, off) => `<svg viewBox="0 0 24 24">${PK[k] ? PK[k][2] : ''}${off ? '<path d="M4 4l16 16"/>' : ''}</svg>`;
+var permQ = null, permOn = false, permT = 0, permChanged = false;   // var: used by expand() above
+const PERM_MS = 6000;               // long enough to read, short enough not to get in the way
+function permHeight() { const e = $('perm'); return Math.ceil(e.getBoundingClientRect().bottom + 14); }
+function permFit() { if (openKind) return; ui.send('ui:expand', permOn ? (permQ && permQ.type !== 'ask' ? true : permHeight()) : (toastOn ? stripH + 64 : false)); }
+function permAnswer(choice, pick) {
+  if (!permQ) return;
+  ui.send('perm:answer', { id: permQ.id, choice, pick });
+  hidePerm();
+}
+function hidePerm() { clearTimeout(permT); permQ = null; permOn = false; $('perm').hidden = true; $('perm').className = ''; permFit(); }
+function armPerm(ms) { clearTimeout(permT); permT = setTimeout(() => permAnswer('ignore'), ms); }
+ui.on('perm-cancel', id => { if (permQ && permQ.id === id) hidePerm(); });
+ui.on('perm-ask', q => {
+  permQ = q; permOn = true;
+  if (toastOn) { clearTimeout(toastT); $('toast').hidden = true; toastOn = false; }
+  const el = $('perm'); el.className = q.type;
+  if (q.type === 'ask') {
+    const what = q.kinds.map(pName);
+    const list = what.length > 1 ? what.slice(0, -1).join(L('، ', ', ')) + L(' و', ' and ') + what[what.length - 1] : what[0];
+    el.innerHTML = `<span class="pi">${q.kinds.slice(0, 2).map(k => pIco(k)).join('')}</span>
+      <span class="pt"><b>${esc(q.host)}</b> ${L('يبي يستخدم', 'wants to use')} ${esc(list)}</span>
+      <button class="pa" data-pc="allow">${L('سماح', 'Allow')}</button><button class="pb" data-pc="block">${L('رفض', 'Block')}</button>
+      <i class="pbar"></i>`;
+    armPerm(PERM_MS);
+  } else if (q.type === 'device') {
+    el.innerHTML = `<div class="ph">${pIco(q.kind)}<span><b>${esc(q.host)}</b> ${L('يبي يتصل بـ', 'wants to connect to')} ${esc(pName(q.kind))}</span></div>
+      <div class="pl">${q.devices.length ? q.devices.map(d => `<button class="pd" data-pick="${esc(d.id)}">${esc(d.name || d.id)}</button>`).join('') : `<div class="pn">${L('ما فيه أجهزة متصلة.', 'No devices found.')}</div>`}</div>
+      <div class="pf"><button class="pb" data-pc="ignore">${L('إلغاء', 'Cancel')}</button></div>`;
+  } else if (q.type === 'screen') {
+    const screens = q.sources.filter(x => x.screen), winds = q.sources.filter(x => !x.screen);
+    const grid = arr => arr.map(x => `<button class="ps" data-pick="${esc(x.id)}" title="${esc(x.name)}">${x.thumb ? `<img src="${esc(x.thumb)}" alt="">` : '<span class="pe"></span>'}<span>${esc(x.name)}</span></button>`).join('');
+    el.innerHTML = `<div class="ph">${pIco('screen')}<span><b>${esc(q.host)}</b> ${L('يبي يشوف شاشتك. اختر وش تشارك:', 'wants to see your screen. Choose what to share:')}</span></div>
+      ${screens.length ? `<div class="pg-t">${L('الشاشة كاملة', 'Entire screen')}${q.audio ? ` <small>${L('(مع صوت الجهاز)', '(with computer sound)')}</small>` : ''}</div><div class="pg">${grid(screens)}</div>` : ''}
+      ${winds.length ? `<div class="pg-t">${L('نافذة', 'A window')}</div><div class="pg">${grid(winds)}</div>` : ''}
+      <div class="pf"><button class="pb" data-pc="ignore">${L('إلغاء', 'Cancel')}</button></div>`;
+  }
+  el.hidden = false;
+  requestAnimationFrame(permFit);
+});
+$('perm').addEventListener('click', e => {
+  const c = e.target.closest('[data-pc]'); if (c) { permAnswer(c.dataset.pc); return; }
+  const p = e.target.closest('[data-pick]'); if (p) permAnswer('allow', p.dataset.pick);
+});
+// reading it: the bar waits
+$('perm').addEventListener('mouseenter', () => { if (permQ && permQ.type === 'ask') { clearTimeout(permT); $('perm').classList.add('hold'); } });
+$('perm').addEventListener('mouseleave', () => {
+  if (!permQ || permQ.type !== 'ask') return;
+  $('perm').classList.remove('hold');
+  const b = $('perm').querySelector('.pbar'); if (b) { const n = b.cloneNode(); n.style.animationDuration = '3s'; b.replaceWith(n); }
+  armPerm(3000);
+});
+
+/* the small icon in the address bar when a site was refused something on this page */
+function drawPermChip() {
+  const p = S.perm, b = $('permChip');
+  const d = p && p.denied && p.denied.length ? p.denied : [];
+  b.hidden = !d.length; if (!d.length) return;
+  $('permChipIco').innerHTML = (PK[d[0]] ? PK[d[0]][2] : '') + '<path d="M4 4l16 16"/>';
+  b.title = L('انرفض: ', 'Blocked: ') + d.map(pName).join(L('، ', ', ')) + L(' — اضغط عشان تغيّر', ' — click to change');
+}
+$('permChip').onclick = () => (openKind === 'shield' ? closeDrop() : openDrop('shield', $('shield')));
+ui.on('state', drawPermChip);
+
+/* the site's permissions inside the shield panel */
+function permPanel() {
+  const p = S.perm; if (!p) return '';
+  const kinds = [...new Set([...Object.keys(p.site || {}), ...(p.asked || []), ...(p.denied || [])])].filter(k => PK[k]);
+  let h = `<div class="sep"></div><div class="hd">${L('صلاحيات هذا الموقع', 'Permissions for this site')}</div>`;
+  if (!kinds.length) h += `<div class="note">${L('ما طلب أي صلاحية حساسة.', 'It has not asked for anything sensitive.')}</div>`;
+  for (const k of kinds) {
+    const v = (p.site || {})[k] || '';
+    h += `<div class="row prow"><span class="pk">${pIco(k, v === 'block')}</span><span class="lbl">${esc(pName(k))}</span>
+      <span class="seg"><button data-perm="${k}" data-v="allow" class="${v === 'allow' ? 'on' : ''}">${L('سماح', 'Allow')}</button><button data-perm="${k}" data-v="block" class="${v === 'block' ? 'on off' : ''}">${L('رفض', 'Block')}</button><button data-perm="${k}" data-v="" class="${!v ? 'on ask' : ''}" title="${L('يسألك كل مرة', 'Ask every time')}">${L('اسأل', 'Ask')}</button></span></div>`;
+  }
+  if (permChanged && kinds.length) h += `<button class="mi" data-a="permReload">${ICO.retry || ''}<span class="t">${L('أعد تحميل الصفحة عشان يتطبق', 'Reload the page to apply')}</span></button>`;
+  h += `<button class="mi" data-a="permAll">${ICO.gear}<span class="t">${L('صلاحيات كل المواقع', 'All site permissions')}</span></button>`;
+  return h;
+}

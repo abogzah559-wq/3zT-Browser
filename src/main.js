@@ -7,7 +7,7 @@
  */
 const {
   app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, session, dialog,
-  screen, net, shell, clipboard, nativeImage, safeStorage, protocol, webContents
+  screen, net, shell, clipboard, nativeImage, safeStorage, protocol, webContents, desktopCapturer
 } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -20,6 +20,7 @@ const PW = require('./passwords');
 const FEAT = require('./features');
 const { DownloadManager } = require('./downloads');
 const UPD = require('./updater');
+const PERM = require('./permissions');
 
 // the app is called "3zT"; its profile folder keeps the older name so nothing is lost after updating
 app.setPath('userData', path.join(app.getPath('appData'), '3zT Browser'));
@@ -197,6 +198,9 @@ class Win {
     });
     w.on('closed', () => {
       clearTimeout(this.stateTimer); this.stateTimer = null;
+      for (const q of (this.permQueue || []).slice()) { clearTimeout(q.timer); q.resolve('ignore'); }
+      this.permQueue = [];
+      if (this.private && perms) perms.forgetPartition(this.partition);   // private window: its permission answers go with it
       for (const t of this.tabs) if (t.view) destroyView(t.view);
       this.tabs = [];
       destroyView(this.ui);   // a closed BaseWindow does not free its views by itself
@@ -304,6 +308,12 @@ class Win {
         blocked: (t && t.blocked) || 0,
         blockedTotal: settings.data.adBlockedTotal || 0,
         adRules: adblock ? adblock.ruleCount : 0,
+        perm: (() => {
+          const o = PERM.originOf(url); if (!o || !perms) return null;
+          const site = perms.site(o, partOf(t));
+          const asked = t && t.permAskedOrigin === o && t.permAsked ? [...t.permAsked] : [];
+          return { origin: o, site, asked, denied: t && t.permOrigin === o && t.permDenied ? [...t.permDenied] : [] };
+        })(),
         ytAds: settings.data.ytAds !== false,
         dl: dlSummary(),
         isDefault: isDefaultCache, canDefault: process.platform === 'win32',
@@ -367,6 +377,7 @@ class Win {
   closeTab(id) {
     const t = this.tab(id); if (!t) return;
     if (!isInternal(t.url) && !this.private) { closedStack.push({ url: t.url, title: t.title }); if (closedStack.length > 25) closedStack.shift(); }
+    cancelPermissionsOf(t);
     this.releaseTab(t);
     if (t.view) destroyView(t.view);
     if (!this.tabs.length) { this.win.close(); return; }
@@ -478,7 +489,7 @@ function makeView(tab) {
   wc.on('did-start-navigation', (e, ...rest) => {
     const isMain = e && e.isMainFrame !== undefined ? e.isMainFrame : rest[2];
     const same = e && e.isSameDocument !== undefined ? e.isSameDocument : rest[1];
-    if (isMain && !same) { tab.blocked = 0; tab.win.pushState(); }
+    if (isMain && !same) { tab.blocked = 0; tab.permDenied = null; cancelPermissionsOf(tab); tab.win.pushState(); }
   });
   wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); });
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) nav(e, url); });
@@ -771,17 +782,6 @@ function openExtPopup(w, id, rect) {
   place(360, 500);
 }
 
-/* ---------- Free Download Manager hand-off (optional) ---------- */
-function fdmPath() {
-  if (process.platform !== 'win32') return '';
-  const c = [
-    path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Softdeluxe', 'Free Download Manager', 'fdm.exe'),
-    path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Softdeluxe', 'Free Download Manager', 'fdm.exe'),
-    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Softdeluxe', 'Free Download Manager', 'fdm.exe')
-  ];
-  return c.find(p => { try { return fs.existsSync(p); } catch (e) { return false; } }) || '';
-}
-
 /* ---------- keyboard ---------- */
 function handleKey(w, i) {
   if (i.type !== 'keyDown' || !w) return false;
@@ -1062,7 +1062,11 @@ const FIREFOX_UA = process.platform === 'win32'
   ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0'
   : 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0';
 const SIGNIN_URLS = ['*://accounts.google.com/*', '*://accounts.youtube.com/*'];
+let adSaveTimer = null;
+const setUpSessions = new WeakSet();
 function setupSession(ses) {
+  if (setUpSessions.has(ses)) return;   // a private window's tabs share one session: set it up once
+  setUpSessions.add(ses);
   if (setUp.has(ses)) return; setUp.add(ses);
   try { ses.protocol.handle('zeus-res', FEAT.serve); } catch (e) {}
   try { ses.setSpellCheckerEnabled(false); } catch (e) {}   // no dictionary download, less memory
@@ -1083,32 +1087,158 @@ function setupSession(ses) {
     if (!adblock.shouldBlock(d.url, page)) return cb({});
     const t = d.webContents && tabOfWc(d.webContents);
     if (t) { t.blocked = (t.blocked || 0) + 1; if (t.id === t.win.activeId) t.win.pushState(); }
-    settings.data.adBlockedTotal = (settings.data.adBlockedTotal || 0) + 1; settings.save();
+    // the running total: counted in memory, written to disk at most once a minute (not on every blocked request)
+    settings.data.adBlockedTotal = (settings.data.adBlockedTotal || 0) + 1;
+    if (!adSaveTimer) adSaveTimer = setTimeout(() => { adSaveTimer = null; settings.save(); }, 60000);
     cb({ cancel: true });
   });
-  const always = new Set(['fullscreen', 'clipboard-sanitized-write', 'pointerLock', 'window-management']);
-  const asked = new Map();
-  ses.setPermissionRequestHandler((wc, perm, cb, details) => {
-    if (always.has(perm)) return cb(true);
-    const origin = (() => { try { return new URL(details.requestingUrl || wc.getURL()).origin; } catch (e) { return ''; } })();
-    const key = origin + '|' + perm;
-    if (asked.has(key)) return cb(asked.get(key));
-    const names = {
-      media: T('الكاميرا / المايك', 'camera / microphone'), geolocation: T('موقعك', 'your location'),
-      notifications: T('الإشعارات', 'notifications'), 'clipboard-read': T('قراءة الحافظة', 'read clipboard'),
-      midi: 'MIDI', midiSysex: 'MIDI', hid: 'HID', serial: 'Serial', usb: 'USB'
-    };
-    if (!names[perm]) return cb(false);
-    const t = tabOfWc(wc), parent = (t ? t.win : focusedWin());
-    dialog.showMessageBox(parent ? parent.win : undefined, {
-      type: 'question', buttons: [T('سماح', 'Allow'), T('رفض', 'Block')], defaultId: 1, cancelId: 1,
-      title: '3zT', message: `${origin}\n${T('يطلب الوصول إلى', 'wants to use')}: ${names[perm]}`
-    }).then(r => { const ok = r.response === 0; asked.set(key, ok); cb(ok); }).catch(() => cb(false));
-  });
+  setupPermissions(ses);
   ses.on('will-download', (e, item, wc) => {
     const resumeId = dl.takeResume();
     const rec = dl.handle(item, { resumeId });
     rec.winId = (() => { const t = wc && tabOfWc(wc); const w = (t && t.win) || focusedWin(); return w ? w.id : null; })();
+  });
+}
+
+/* ---------- site permissions (src/permissions.js) ---------- */
+let perms = null;
+const partOf = t => (t && t.win && t.win.private ? t.win.partition : null);
+let permSeq = 0;
+const permWait = new Map();          // id -> { tab, resolve, timer }
+/* ask in the bar of the tab's window (one question at a time per window); resolves 'allow' | 'block' | 'ignore' */
+function askPermission(tab, q) {
+  return new Promise(resolve => {
+    const w = tab && tab.win;
+    if (!w || w.win.isDestroyed() || w.ui.webContents.isDestroyed()) return resolve('ignore');
+    const id = ++permSeq;
+    const item = { id, tab, q, resolve };
+    (w.permQueue || (w.permQueue = [])).push(item);
+    if (w.permQueue.length === 1) showPermission(w);
+  });
+}
+function showPermission(w) {
+  const item = w.permQueue && w.permQueue[0]; if (!item) return;
+  if (w.ui.webContents.isDestroyed()) return finishPermission(w, item.id, 'ignore');
+  if (item.tab.id !== w.activeId && item.q.type === 'ask') w.activate(item.tab.id);   // the question is about the page you can see
+  w.ui.webContents.send('perm-ask', Object.assign({ id: item.id }, item.q));
+  // a question nobody answers never hangs the page (the bar itself closes much sooner)
+  item.timer = setTimeout(() => finishPermission(w, item.id, 'ignore'), item.q.type === 'ask' ? 60000 : 10 * 60000);
+}
+function finishPermission(w, id, choice, extra) {
+  const q = w.permQueue || []; const i = q.findIndex(x => x.id === id); if (i < 0) return;
+  const [item] = q.splice(i, 1);
+  clearTimeout(item.timer);
+  if (!w.ui.webContents.isDestroyed()) w.ui.webContents.send('perm-cancel', id);
+  item.resolve(choice, extra);
+  if (q.length && i === 0) setTimeout(() => showPermission(w), 250);
+}
+/* a page went away (closed or left): drop its questions */
+function cancelPermissionsOf(tab) {
+  const w = tab.win; if (!w || !w.permQueue) return;
+  for (const x of w.permQueue.slice()) if (x.tab === tab) finishPermission(w, x.id, 'ignore');
+}
+function permNote(tab, origin, kinds) {   // refused this time: the bar shows a small icon to change it
+  if (!tab) return;
+  tab.permDenied = tab.permDenied && tab.permOrigin === origin ? tab.permDenied : new Set();
+  tab.permOrigin = origin;
+  for (const k of kinds) tab.permDenied.add(k);
+  if (tab.id === tab.win.activeId) tab.win.pushState();
+}
+function permAsked(tab, origin, kinds) {
+  if (!tab) return;
+  if (tab.permAskedOrigin !== origin) { tab.permAskedOrigin = origin; tab.permAsked = new Set(); }
+  for (const k of kinds) tab.permAsked.add(k);
+}
+const hostLabel = o => { try { return new URL(o).host; } catch (e) { return o; } };
+function setupPermissions(ses) {
+  const tabOf = wc => (wc && !wc.isDestroyed() ? tabOfWc(wc) : null);
+  // 1. a site asks (camera, microphone, location, notifications...)
+  ses.setPermissionRequestHandler((wc, permission, cb, details) => {
+    if (PERM.ALWAYS.has(permission)) return cb(true);
+    const kinds = PERM.kindsOf(permission, details);
+    if (!kinds.length) return cb(false);                    // anything else sensitive: no
+    const origin = PERM.originOf((details && details.requestingUrl) || (wc && wc.getURL()));
+    const tab = tabOf(wc);
+    if (!origin || !tab) return cb(false);                  // our own pages, extension popups...
+    const part = partOf(tab);
+    permAsked(tab, origin, kinds);
+    const saved = kinds.map(k => perms.get(origin, k, part));
+    if (saved.every(v => v === 'allow')) return cb(true);
+    if (saved.some(v => v === 'block')) { permNote(tab, origin, kinds.filter((k, i) => saved[i] === 'block')); return cb(false); }
+    const ask = kinds.filter((k, i) => saved[i] !== 'allow');
+    askPermission(tab, { type: 'ask', host: hostLabel(origin), kinds: ask }).then(choice => {
+      if (choice === 'allow' || choice === 'block') for (const k of ask) perms.set(origin, k, choice, part);
+      else permNote(tab, origin, ask);
+      if (choice === 'block') permNote(tab, origin, ask);
+      cb(choice === 'allow');
+    });
+  });
+  // 2. a site checks what it may use (navigator.permissions, device labels...)
+  ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
+    if (PERM.ALWAYS.has(permission)) return true;
+    const origin = PERM.originOf(requestingOrigin || (details && (details.requestingUrl || details.securityOrigin)) || '');
+    const part = partOf(tabOf(wc));
+    if (permission === 'media') {
+      const k = PERM.checkKind(permission, details);
+      if (!origin) return false;
+      if (k) return perms.get(origin, k, part) === 'allow';
+      return perms.get(origin, 'camera', part) === 'allow' && perms.get(origin, 'microphone', part) === 'allow';
+    }
+    const k = PERM.checkKind(permission, details);
+    if (!k) return true;                                    // not a permission we manage: Chromium's own behaviour
+    return !!origin && perms.get(origin, k, part) === 'allow';
+  });
+  // 3. USB / HID / serial devices: allowed sites keep their access; the device is picked in the bar
+  ses.setDevicePermissionHandler(d => {
+    const origin = PERM.originOf(d.origin || ''); if (!origin) return false;
+    return perms.get(origin, d.deviceType, null) === 'allow' || [...wins].some(w => w.private && perms.get(origin, d.deviceType, w.partition) === 'allow');
+  });
+  const pickDevice = (kind, frame, list, cb) => {
+    let wc = null; try { wc = frame ? webContents.fromFrame(frame) : null; } catch (e) {}
+    const tab = tabOf(wc); const origin = PERM.originOf(frame ? frame.url : wc ? wc.getURL() : '');
+    if (!tab || !origin || perms.get(origin, kind, partOf(tab)) === 'block') return cb();
+    askPermission(tab, { type: 'device', kind, host: hostLabel(origin), devices: list.slice(0, 40) }).then((choice, extra) => {
+      const pick = permWait.get(tab.id); permWait.delete(tab.id);
+      if (choice === 'allow' && pick && list.some(x => x.id === pick)) { perms.set(origin, kind, 'allow', partOf(tab)); cb(pick); }
+      else cb();
+    });
+  };
+  ses.on('select-hid-device', (e, d, cb) => { e.preventDefault(); pickDevice('hid', d.frame, (d.deviceList || []).map(x => ({ id: x.deviceId, name: x.name || x.productName || 'HID ' + x.productId })), id => cb(id || '')); });
+  ses.on('select-usb-device', (e, d, cb) => { e.preventDefault(); pickDevice('usb', d.frame, (d.deviceList || []).map(x => ({ id: x.deviceId, name: [x.manufacturerName, x.productName].filter(Boolean).join(' ') || 'USB ' + x.productId })), id => cb(id || undefined)); });
+  ses.on('select-serial-port', (e, list, wc, cb) => { e.preventDefault(); pickDevice('serial', wc && wc.mainFrame, (list || []).map(x => ({ id: x.portId, name: x.displayName || x.portName })), id => cb(id || '')); });
+  // 4. screen sharing: pick a screen or a window (asked every time, like Chrome)
+  ses.setDisplayMediaRequestHandler(async (req, cb) => {
+    let wc = null; try { wc = req.frame ? webContents.fromFrame(req.frame) : null; } catch (e) {}
+    const tab = tabOf(wc); const origin = PERM.originOf(req.securityOrigin || (req.frame && req.frame.url) || '');
+    if (!tab || !origin || perms.get(origin, 'screen', partOf(tab)) === 'block') return cb({});
+    let sources = [];
+    try { sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 256, height: 144 }, fetchWindowIcons: false }); } catch (e) {}
+    if (!sources.length) return cb({});
+    const list = sources.slice(0, 24).map(s => ({ id: s.id, name: s.name, screen: s.id.startsWith('screen:'), thumb: s.thumbnail && !s.thumbnail.isEmpty() ? s.thumbnail.toDataURL() : '' }));
+    askPermission(tab, { type: 'screen', host: hostLabel(origin), sources: list, audio: !!req.audioRequested }).then(choice => {
+      const pick = permWait.get(tab.id); permWait.delete(tab.id);
+      const src = choice === 'allow' && sources.find(s => s.id === pick);
+      if (!src) return cb({});
+      const out = { video: src };
+      if (req.audioRequested && process.platform === 'win32' && src.id.startsWith('screen:')) out.audio = 'loopback';   // the computer's sound with a whole screen
+      cb(out);
+    });
+  });
+}
+function setupPermissionIpc() {
+  ipcMain.on('perm:answer', (e, a) => {
+    const w = uiWin(e); if (!w || !a) return;
+    const item = (w.permQueue || []).find(x => x.id === a.id); if (!item) return;
+    if (a.pick != null) permWait.set(item.tab.id, String(a.pick));
+    finishPermission(w, a.id, a.choice === 'allow' ? 'allow' : a.choice === 'block' ? 'block' : 'ignore');
+  });
+  // the site panel in the bar: change a permission of the current site
+  ipcMain.on('perm:set', (e, a) => {
+    const w = uiWin(e); if (!w || !a) return;
+    const t = w.active(); const origin = t && PERM.originOf(t.url); if (!origin || !PERM.KINDS[a.kind]) return;
+    perms.set(origin, a.kind, a.value === 'allow' || a.value === 'block' ? a.value : null, partOf(t));
+    if (t.permDenied) { t.permDenied.delete(a.kind); }
+    w.pushState(); settingsChanged();
   });
 }
 
@@ -1585,6 +1715,7 @@ function setupSettingsIpc() {
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytClean: d.ytClean || {},
       dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,
+      perms: perms ? perms.all() : [],
       extensions: listExtensions(), versions: { app: app.getVersion(), chrome: process.versions.chrome }
     };
   });
@@ -1606,6 +1737,13 @@ function setupSettingsIpc() {
         return { imported: r.imported.map(x => x.name) };
       }
       case 'openStore': if (w) w.createTab(STORE_URL); return true;
+      case 'permSet': {   // arg: JSON {origin, kind, value}
+        let o = null; try { o = JSON.parse(arg); } catch (x) {}
+        if (!o || !PERM.originOf(o.origin) || !PERM.KINDS[o.kind]) return false;
+        perms.set(PERM.originOf(o.origin), o.kind, o.value === 'allow' || o.value === 'block' ? o.value : null);
+        settingsChanged(); return true;
+      }
+      case 'permClear': { const o = PERM.originOf(arg || ''); if (!o) return false; perms.clearSite(o); settingsChanged(); return true; }
       case 'extOptions': if (w && /^chrome-extension:\/\//.test(arg || '')) w.createTab(arg); return true;
       case 'unallow': settings.data.adAllow = settings.data.adAllow.filter(x => x !== arg); settings.save(); settingsChanged(); for (const x of wins) x.pushState(); return true;
       case 'open': {
@@ -1716,8 +1854,10 @@ app.whenReady().then(async () => {
   const refreshLists = () => adblock.refresh(u => net.fetch(u)).then(() => { for (const w of wins) w.pushState(); }).catch(() => {});
   setTimeout(refreshLists, 4000);
   setInterval(refreshLists, 6 * 3600 * 1000);
+  perms = new PERM.Permissions({ settings, onChange: () => { for (const w of wins) w.pushState(); } });
   setupSession(session.defaultSession);
   setupIpc();
+  setupPermissionIpc();
   passwords = new PW.PasswordStore(path.join(app.getPath('userData'), 'passwords.json'), safeStorage);
   setupPasswordIpc();
   // re-patch the copies already on disk when the patcher improves (also refreshes the shim)

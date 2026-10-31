@@ -43,6 +43,11 @@ const YT_CLEAN = [
   ['blur', 'تغبيش الصور المصغرة', 'Blur thumbnails'], ['thumbs', 'إخفاء الصور المصغرة', 'Hide thumbnails'],
   ['gray', 'يوتيوب بالأبيض والأسود', 'Black & white YouTube'], ['clean', 'الوضع النظيف (الفيديو بس)', 'Clean mode (video only)']
 ];
+const PNAME = {
+  camera: ['الكاميرا', 'Camera'], microphone: ['المايك', 'Microphone'], geolocation: ['الموقع', 'Location'], notifications: ['الإشعارات', 'Notifications'],
+  'clipboard-read': ['قراءة الحافظة', 'Clipboard'], midi: ['MIDI', 'MIDI'], 'window-management': ['أماكن النوافذ', 'Window placement'],
+  'idle-detection': ['الخمول', 'Idle detection'], usb: ['USB', 'USB'], hid: ['HID', 'HID'], serial: ['المنافذ التسلسلية', 'Serial'], screen: ['مشاركة الشاشة', 'Screen sharing']
+};
 const SB = [
   ['sponsor', 'إعلانات داخل الفيديو (رعاية)', 'Sponsors'], ['selfpromo', 'ترويج صاحب القناة لنفسه', 'Self-promotion'],
   ['interaction', 'طلب لايك واشتراك', 'Like/subscribe reminders'], ['intro', 'المقدمة', 'Intro'], ['outro', 'الخاتمة', 'Outro / end cards'],
@@ -80,6 +85,12 @@ function render() {
     row(L('مانع الإعلانات والمتتبعات', 'Ad and tracker blocker'), `${L('المحظور من البداية:', 'Blocked so far:')} ${Number(S.blockedTotal).toLocaleString('en')} · ${L('القواعد:', 'Rules:')} ${Number(S.adRules).toLocaleString('en')}`, sw(S.adblock, 'data-tog="adblock"')) +
     row(L('مواقع مستثناة من المانع', 'Sites allowed to show ads'), S.adAllow.length ? '' : L('ما فيه. تقدر تطفي المانع لموقع معيّن من زر الدرع في الشريط.', 'None. Turn the blocker off for a site from the shield button in the bar.'), '') +
     (S.adAllow.length ? `<div class="chips">${S.adAllow.map(x => `<span class="chip">${esc(x)}<button data-act="unallow" data-arg="${esc(x)}" title="${L('إزالة', 'Remove')}">✕</button></span>`).join('')}</div>` : '') +
+    group('perms', L('صلاحيات المواقع', 'Site permissions'), L('الكاميرا والمايك والموقع والإشعارات وغيرها: وش سمحت ووش رفضت لكل موقع. اضغط على الصلاحية عشان تقلبها، و⟲ عشان يرجع يسألك.', 'Camera, microphone, location, notifications and more: what you allowed or blocked for each site. Click a permission to flip it, ⟲ to be asked again.'), '',
+      (S.perms && S.perms.length ? S.perms.map(p => `<div class="row sub perm-site"><div class="tx"><div class="t" style="direction:ltr;text-align:start">${esc(p.origin.replace(/^https:\/\//, ''))}</div>
+        <div class="chips" style="padding:6px 0 0">${Object.entries(p.kinds).map(([k, v]) => `<span class="chip pchip ${v}"><button class="pflip" data-act="permSet" data-arg="${esc(JSON.stringify({ origin: p.origin, kind: k, value: v === 'allow' ? 'block' : 'allow' }))}" title="${L('اضغط عشان تقلبها', 'Click to flip')}">${v === 'allow' ? '✓' : '✕'} ${esc(PNAME[k] ? L(PNAME[k][0], PNAME[k][1]) : k)}</button><button data-act="permSet" data-arg="${esc(JSON.stringify({ origin: p.origin, kind: k, value: '' }))}" title="${L('يسألك مرة ثانية', 'Ask again')}">⟲</button></span>`).join('')}</div></div>
+        <button data-act="permClear" data-arg="${esc(p.origin)}">${L('إعادة ضبط', 'Reset')}</button></div>`).join('')
+        : row(L('ما فيه قرارات محفوظة', 'Nothing saved yet'), L('أول ما موقع يطلب صلاحية وتختار سماح أو رفض، يطلع هنا.', 'When a site asks and you choose Allow or Block, it shows up here.'), '', 'sub')),
+      S.perms ? S.perms.length : 0) +
     row(L('مسح بيانات التصفح', 'Clear browsing data'), L('يمسح السجل والكاش والكوكيز (بيطلعك من حساباتك).', 'Clears history, cache and cookies (signs you out).'), `<button data-act="clearData">${L('مسح…', 'Clear…')}</button>`));
   const sbOn = S.sponsorBlock;
   const cleanOn = YT_CLEAN.filter(([id]) => S.ytClean[id]).length;

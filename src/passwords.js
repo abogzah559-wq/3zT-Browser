@@ -10,11 +10,8 @@ const crypto = require('crypto');
 
 const originOf = u => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.origin : ''; } catch (e) { return ''; } };
 const hostOf = o => { try { return new URL(o).hostname.toLowerCase(); } catch (e) { return ''; } };
-function site(host) {
-  const p = host.replace(/^www\./, '').split('.');
-  const n = p.length > 2 && /^(co|com|net|org|gov|edu|ac)$/.test(p[p.length - 2]) && p[p.length - 1].length === 2 ? 3 : 2;
-  return p.slice(-n).join('.');
-}
+// same site = same registrable domain on the Public Suffix List, so a.github.io never sees b.github.io's passwords
+const { site } = require('./domains');
 
 /* RFC 4180 CSV (quotes, commas and new lines inside quotes) */
 function parseCSV(text) {
@@ -44,11 +41,20 @@ class PasswordStore {
     this.data = { entries: [] };
     try { this.data = JSON.parse(fs.readFileSync(file, 'utf8')); if (!Array.isArray(this.data.entries)) this.data.entries = []; } catch (e) {}
     this.t = null;
+    // entries an older version kept unencrypted: encrypt them now
+    try {
+      if (this.encrypted) {
+        let n = 0;
+        for (const e of this.data.entries) if (typeof e.password === 'string' && e.password.startsWith('b64:')) { const p = this.dec(e.password); if (p) { e.password = this.enc(p); n++; } }
+        if (n) this.flush();
+      }
+    } catch (e) {}
   }
   get encrypted() { try { return this.ss.isEncryptionAvailable(); } catch (e) { return false; } }
   enc(s) {
+    // only ever stored encrypted (Windows DPAPI); without encryption nothing is saved
     if (this.encrypted) return 'dpapi:' + this.ss.encryptString(s).toString('base64');
-    return 'b64:' + Buffer.from(s, 'utf8').toString('base64');
+    return null;
   }
   dec(s) {
     try {
@@ -69,12 +75,13 @@ class PasswordStore {
   find(origin, username) { return this.data.entries.find(e => e.origin === origin && e.username === username); }
   upsert(url, username, password, opts = {}) {
     const origin = originOf(url); if (!origin || !password) return null;
+    const sealed = this.enc(password); if (!sealed) return null;   // encryption not available: refuse
     let e = this.find(origin, username || '');
     if (e) {
       if (this.dec(e.password) === password) return { entry: e, changed: false };
-      e.password = this.enc(password); e.updated = Date.now();
+      e.password = sealed; e.updated = Date.now();
     } else {
-      e = { id: crypto.randomUUID(), origin, url: opts.keepUrl ? url : origin, username: username || '', password: this.enc(password), created: Date.now(), used: 0, note: opts.note || '' };
+      e = { id: crypto.randomUUID(), origin, url: opts.keepUrl ? url : origin, username: username || '', password: sealed, created: Date.now(), used: 0, note: opts.note || '' };
       this.data.entries.push(e);
     }
     this.save();
