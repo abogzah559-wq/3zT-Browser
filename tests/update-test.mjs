@@ -16,6 +16,7 @@ import crypto from 'node:crypto';
 const [exe, nextSetup, nextVer] = process.argv.slice(2);
 const UD = path.join(process.env.APPDATA, '3zT Browser');
 const UPD = path.join(UD, 'update');
+const LOG = path.join(process.env.RUNNER_TEMP || '.', 'update-app.log');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const results = [];
 const ok = (name, pass, info = '') => { results.push({ name, pass, info }); console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${info ? '  - ' + info : ''}`); };
@@ -37,6 +38,9 @@ const srv = http.createServer((req, res) => {
 }).listen(8777, '127.0.0.1');
 
 async function cdp(port, match, expr) {
+  try { return await cdpRaw(port, match, expr); } catch (e) { return undefined; }
+}
+async function cdpRaw(port, match, expr) {
   const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
   const t = list.find(x => x.type === 'page' && x.url.includes(match)); if (!t) return undefined;
   const ws = new WebSocket(t.webSocketDebuggerUrl);
@@ -55,7 +59,8 @@ async function main() {
 
   // 1-2. run, find and download the update in the background
   const env = { ...process.env, ZEUS_UPDATE_URL: 'http://127.0.0.1:8777/latest.json', ZEUS_UPDATE_DELAY: '3000' };
-  spawn(exe, ['--remote-debugging-port=9334'], { env, detached: true, stdio: 'ignore' }).unref();
+  const logFd = fs.openSync(LOG, 'w');
+  spawn(exe, ['--remote-debugging-port=9334', '--enable-logging=stderr'], { env, detached: true, stdio: ['ignore', logFd, logFd] }).unref();
   const up = await until(() => cdp(9334, 'ui/toolbar.html', '!!document.getElementById("addr")'), 60000);
   ok('browser starts', !!up);
   const pend = await until(() => { try { return JSON.parse(fs.readFileSync(path.join(UPD, 'pending.json'), 'utf8')); } catch (e) { return null; } }, 120000);
@@ -88,12 +93,18 @@ async function main() {
   ok('note goes away by itself', hidden === true);
   ok('update files cleaned up', !fs.existsSync(path.join(UPD, 'pending.json')) && !fs.readdirSync(UPD).some(n => n.endsWith('.exe')), fs.existsSync(UPD) ? fs.readdirSync(UPD).join(', ') : '');
 
-  try { execSync('taskkill /IM 3zT.exe /T /F', { stdio: 'ignore' }); } catch (e) {}
-  srv.close();
-  const failed = results.filter(r => !r.pass);
-  const esc = t => String(t).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
-  if (process.env.GITHUB_ACTIONS) console.log(`::${failed.length ? 'error' : 'notice'} title=update ${results.length - failed.length}/${results.length}::` + esc(results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + r.info : ''}`).join('\n')));
-  process.exit(failed.length ? 1 : 0);
+  finish();
 }
-setTimeout(() => { console.log('::error title=update::timed out'); process.exit(1); }, 15 * 60 * 1000).unref();
-main().catch(e => { console.log('::error title=update::' + String(e && e.stack || e).replace(/\n/g, '%0A')); process.exit(1); });
+function finish(extra = '') {
+  try { execSync('taskkill /IM 3zT.exe /T /F', { stdio: 'ignore' }); } catch (e) {}
+  try { srv.close(); } catch (e) {}
+  const failed = results.filter(r => !r.pass);
+  let log = ''; if (failed.length || extra) { try { log = fs.readFileSync(LOG, 'utf8').split('\n').filter(l => /3zT|update|rror/i.test(l)).slice(-12).join('\n'); } catch (e) {} }
+  const esc = t => String(t).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
+  const text = results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + r.info : ''}`).join('\n') + (extra ? '\n' + extra : '') + (log ? '\n--- app log ---\n' + log : '');
+  console.log(text);
+  if (process.env.GITHUB_ACTIONS) console.log(`::${failed.length || extra ? 'error' : 'notice'} title=update ${results.length - failed.length}/${results.length}::` + esc(text));
+  process.exit(failed.length || extra ? 1 : 0);
+}
+setTimeout(() => finish('timed out after 15 minutes'), 15 * 60 * 1000).unref();
+main().catch(e => finish('crash: ' + String(e && e.stack || e)));
