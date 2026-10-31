@@ -99,12 +99,14 @@ function finish(extra = '') {
   try { execSync('taskkill /IM 3zT.exe /T /F', { stdio: 'ignore' }); } catch (e) {}
   try { srv.close(); } catch (e) {}
   const failed = results.filter(r => !r.pass);
-  let log = ''; if (failed.length || extra) { try { log = fs.readFileSync(LOG, 'utf8').split('\n').filter(l => /3zT|update|rror/i.test(l)).slice(-12).join('\n'); } catch (e) {} }
+  let ilog = ''; try { ilog = fs.readFileSync(path.join(UPD, 'install.log'), 'utf8'); } catch (e) { ilog = '(no install.log)'; }
+  extra = (extra ? extra + '\n' : '') + '--- install.log ---\n' + ilog;
+  let log = ''; if (failed.length || extra) { try { log = fs.readFileSync(LOG, 'utf8').split('\n').filter(l => /\[3zT\]/.test(l)).slice(-12).join('\n'); } catch (e) {} }
   const esc = t => String(t).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
   const text = results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + r.info : ''}`).join('\n') + (extra ? '\n' + extra : '') + (log ? '\n--- app log ---\n' + log : '');
   console.log(text);
-  if (process.env.GITHUB_ACTIONS) console.log(`::${failed.length || extra ? 'error' : 'notice'} title=update ${results.length - failed.length}/${results.length}::` + esc(text));
-  process.exit(failed.length || extra ? 1 : 0);
+  if (process.env.GITHUB_ACTIONS) console.log(`::${failed.length ? 'error' : 'notice'} title=update ${results.length - failed.length}/${results.length}::` + esc(text));
+  process.exit(failed.length ? 1 : 0);
 }
-setTimeout(() => finish('timed out after 15 minutes'), 15 * 60 * 1000).unref();
-main().catch(e => finish('crash: ' + String(e && e.stack || e)));
+setTimeout(() => { ok('finished in time', false, '15 minutes'); finish(); }, 15 * 60 * 1000).unref();
+main().catch(e => { ok('no crash in the test', false, String(e && e.stack || e)); finish(); });
