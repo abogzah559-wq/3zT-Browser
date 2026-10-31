@@ -97,16 +97,17 @@ processes, averaged 30 and 60 seconds after the last tab opened. No extensions a
 of them. The test runs twice, in opposite order, and the two results are averaged.
 
 <!-- BENCH:START -->
-Result of version 0.8.0 (GitHub `windows-latest`, two rounds in opposite order, averaged):
+Results so far (GitHub `windows-latest`, private memory, each run = two rounds averaged):
 
-| Browser | Processes | Memory (working set) | Memory (private) |
+| Run | 3zT | Brave | Google Chrome |
 |---|---|---|---|
-| **3zT 0.8.0** | 7 | **827 MB** | **399 MB** |
-| Brave | 12 | 890 MB | 440 MB |
-| Google Chrome | 34 | 1569 MB | 738 MB |
+| 0.8.0, run 1 | **399 MB** (7 processes) | 440 MB (12) | 738 MB (34) |
+| 0.8.0, run 2 | **396 MB** (7) | 436 MB (12) | 908 MB (35) |
+| 0.9.0 | 407 MB (7) | **392 MB** (10) | 870 MB (34) |
 
-In this test 3zT used about **46% less memory than Chrome** and about **9% less than Brave**,
-with fewer processes than both. Each release's own numbers are in its release notes.
+So far 3zT uses **about half the memory of Chrome** and **about the same as Brave** (a few
+percent lower or higher depending on the run), with the fewest processes. Each release's own
+numbers are in its release notes.
 <!-- BENCH:END -->
 
 Numbers change with the websites you visit and your hardware. The gap grows when you would
