@@ -103,17 +103,26 @@ function installOnQuit() {
     // remember what to show on the next start
     fs.writeFileSync(path.join(dir(), 'updated.json'), JSON.stringify({ from: app.getVersion(), to: pend.version, body: pend.body || '' }));
     // wait for this browser to exit fully, then run the setup silently and remove the lock
+    const lg = path.join(dir(), 'install.log').replace(/'/g, "''");
     const ps = [
       `$ErrorActionPreference='SilentlyContinue'`,
+      `function L($m) { Add-Content -LiteralPath '${lg}' -Value ((Get-Date -Format o) + ' ' + $m) }`,
+      `L 'waiting for 3zT to close'`,
       `Wait-Process -Id ${process.pid} -Timeout 60`,
       `Start-Sleep -Milliseconds 800`,
-      `Start-Process -FilePath '${pend.file.replace(/'/g, "''")}' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/NOCANCEL' -Wait`,
+      `L 'running setup'`,
+      `$p = Start-Process -FilePath '${pend.file.replace(/'/g, "''")}' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/SP-','/NOCANCEL' -Wait -PassThru`,
+      `L ('setup finished, code ' + $p.ExitCode)`,
       `Remove-Item -LiteralPath '${pendingFile().replace(/'/g, "''")}'`,
       `Remove-Item -LiteralPath '${pend.file.replace(/'/g, "''")}'`,
-      `Remove-Item -LiteralPath '${lockFile().replace(/'/g, "''")}'`
+      `Remove-Item -LiteralPath '${lockFile().replace(/'/g, "''")}'`,
+      `L 'done'`
     ].join('; ');
-    spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', ps],
-      { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+    try { fs.writeFileSync(path.join(dir(), 'install.log'), new Date().toISOString() + ' starting installer helper\n'); } catch (e) {}
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', ps],
+      { detached: true, stdio: 'ignore', windowsHide: true });
+    child.on('error', e => { try { fs.appendFileSync(path.join(dir(), 'install.log'), 'spawn error ' + e.message + '\n'); } catch (x) {} });
+    child.unref();
     return true;
   } catch (e) { log('install on quit failed', e && e.message); try { fs.unlinkSync(lockFile()); } catch (x) {} return false; }
 }
