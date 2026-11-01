@@ -206,9 +206,15 @@ async function main() {
     if (STORE_EXTS.some(e => e.id === 'eimadpbcbfnmbkopoojfekhnkhdbieeh')) {
       await go('https://example.com/?dr', true);
       const t = await find(u => u.includes('example.com/?dr'), 40);
-      const dark = t && await poll(async () => { const c = await connect(t); const v = await c.ev(`!!document.querySelector('style.darkreader, .darkreader')`); c.close(); return v; }, 30000);
+      // its scripts run in the page (it may leave a page alone that is already dark: 3zT darkens sites itself)
+      const contexts = async () => {
+        const c = await connect(t); const names = [];
+        c.on(d => { if (d.method === 'Runtime.executionContextCreated') names.push(d.params.context.name || ''); });
+        await c.send('Runtime.enable'); await sleep(1200); c.close(); return names;
+      };
+      const names = t ? await poll(async () => { const n = await contexts(); return n.some(x => /dark reader/i.test(x)) ? n : null; }, 30000, 2000) : null;
       if (t) { const c = await connect(t); await shot(c, 'darkreader-on-example'); c.close(); }
-      ok('Dark Reader works on a website', !!dark);
+      ok('Dark Reader works on a website', !!names, names ? names.filter(Boolean).join(', ') : 'no Dark Reader script in the page');
     }
     // still there after a restart
     await stop(); ok('app restarts', await start()); await sleep(6000);
