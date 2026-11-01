@@ -3,6 +3,18 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.11.0
+
+### English
+- No more white: pages no longer flash white while loading, and every site is dark. Sites with a dark design use it; the rest are darkened automatically (photos and video stay as they are). Can be turned off in Settings → General.
+- Address bar: Arabic is written right to left, and your past searches show up (all of them when the bar is empty, matching ones while you type). Arabic Google suggestions work again.
+- Faster: a ready page process makes opening sites quicker, the browser connects to a link's site while your mouse is on it (before you click), and extensions load at the same time at start.
+
+### العربية
+- وداعاً للأبيض: الصفحات ما عاد تطلع بيضاء وقت التحميل، وكل المواقع صارت داكنة. المواقع اللي عندها وضع داكن تستخدمه، والباقي يتحول داكن تلقائياً (الصور والفيديو تبقى زي ما هي). تقدر تطفيه من الإعدادات ← عام.
+- شريط البحث: الكلام العربي يبدأ من اليمين، وتطلع عمليات البحث اللي سويتها قبل (كلها لما يكون الشريط فاضي، واللي تطابق كلامك وأنت تكتب). واقتراحات قوقل العربية رجعت تشتغل.
+- أسرع: فيه عملية جاهزة مسبقاً تخلي فتح المواقع أسرع، والمتصفح يتصل بموقع الرابط أول ما تحط الماوس عليه (قبل لا تضغط)، والإضافات تحمّل كلها مع بعض وقت التشغيل.
+
 ## 0.10.0
 
 ### English

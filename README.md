@@ -115,10 +115,34 @@ numbers are in its release notes.
 Numbers change with the websites you visit and your hardware. The gap grows when you would
 otherwise run the extensions listed below, because in 3zT they do not add processes.
 
+## Page speed compared with Chrome and Brave
+
+Measured by [`tests/speed.mjs`](tests/speed.mjs) on a GitHub Windows machine: each browser starts with a
+new profile and opens the same six websites (Wikipedia, GitHub, Stack Overflow, BBC News, CNN,
+Amazon), first with an empty cache and then again; two passes in opposite order, medians. "Usable"
+is when the page can be read and used (DOMContentLoaded), "fully loaded" is the load event.
+
+| Browser | Usable, empty cache | Fully loaded, empty cache | Usable, cached | Fully loaded, cached |
+|---|---|---|---|---|
+| **3zT 0.11** | **978 ms** | **1578 ms** | 649 ms | 968 ms |
+| Google Chrome | 1306 ms | 1643 ms | 586 ms | 802 ms |
+| Brave | 1154 ms | 1920 ms | 585 ms | 1039 ms |
+
+With a fresh cache (a site you have not opened recently) 3zT was the fastest of the three, mostly
+because ads and trackers are never downloaded. With a warm cache all three are close (within the
+run-to-run variation of the test machine). Each release's own numbers are in its release notes.
+
 ## Features
 
 ### Browsing
 - Chromium engine (the same engine as Chrome and Brave), so websites work like in Chrome.
+- Dark everywhere: no white flash while pages load; sites with a dark design use it and the rest
+  are darkened by Chromium's own dark mode for web pages (photos and video are left as they are).
+  Settings → General → *Dark mode for every site*.
+- Faster opening of links: while the mouse is on a link, 3zT already connects to that site; the
+  address bar does the same for what you type. A spare page process is kept ready.
+- Address bar in Arabic or English (Arabic right to left), with your past searches, pages you
+  visited and Google suggestions.
 - Floating toolbar that takes the colour of the website you are on and keeps it while you browse
   the site.
 - Tabs above the toolbar. Drag a tab out to make a new window, drag it onto another window's tabs
