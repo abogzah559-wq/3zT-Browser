@@ -122,15 +122,20 @@ new profile and opens the same six websites (Wikipedia, GitHub, Stack Overflow, 
 Amazon), first with an empty cache and then again; two passes in opposite order, medians. "Usable"
 is when the page can be read and used (DOMContentLoaded), "fully loaded" is the load event.
 
+Two runs on the same day, same code (ms, medians):
+
 | Browser | Usable, empty cache | Fully loaded, empty cache | Usable, cached | Fully loaded, cached |
 |---|---|---|---|---|
-| **3zT 0.11** | **978 ms** | **1578 ms** | 649 ms | 968 ms |
-| Google Chrome | 1306 ms | 1643 ms | 586 ms | 802 ms |
-| Brave | 1154 ms | 1920 ms | 585 ms | 1039 ms |
+| 3zT (run 1) | 978 | 1578 | 649 | 968 |
+| Google Chrome (run 1) | 1306 | 1643 | 586 | 802 |
+| Brave (run 1) | 1154 | 1920 | 585 | 1039 |
+| 3zT (run 2) | 634 | 1068 | 535 | 954 |
+| Google Chrome (run 2) | 494 | 1006 | 540 | 925 |
+| Brave (run 2) | 793 | 774 | 587 | 825 |
 
-With a fresh cache (a site you have not opened recently) 3zT was the fastest of the three, mostly
-because ads and trackers are never downloaded. With a warm cache all three are close (within the
-run-to-run variation of the test machine). Each release's own numbers are in its release notes.
+Honest reading: all three use the same Chromium engine and are about equally fast; which one
+"wins" changes from run to run with the network of the test machine. 3zT's advantage is that it
+gets there with half the memory of Chrome and without loading ads and trackers. Each release's own numbers are in its release notes.
 
 ## Features
 
