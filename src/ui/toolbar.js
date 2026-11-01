@@ -429,7 +429,7 @@ $('drop').addEventListener('click', async e => {
 /* ---------- address bar + suggestions (history + Google) ---------- */
 const addr = $('addr');
 let sugItems = [], sugSel = -1, sugSeq = 0, sugT = 0;
-addr.addEventListener('focus', () => { setTimeout(() => addr.select(), 0); });
+addr.addEventListener('focus', () => { setTimeout(() => { addr.select(); if (!addr.value.trim()) updateSug(); }, 0); });
 addr.addEventListener('input', () => { clearTimeout(sugT); sugT = setTimeout(updateSug, 60); });
 addr.addEventListener('blur', () => { if (openKind === 'sug') closeDrop(); addr.value = S.url; });
 addr.addEventListener('keydown', e => {
@@ -449,16 +449,35 @@ function go(v, newTab) {
 }
 async function updateSug() {
   const q = addr.value.trim(), my = ++sugSeq;
-  if (!q) { if (openKind === 'sug') closeDrop(); return; }
-  const [hist, live] = await Promise.all([ui.invoke('history:search', q, 4), ui.invoke('suggest', q, S.lang)]);
+  // empty bar: your recent searches (like Chrome)
+  if (!q) {
+    const past = await ui.invoke('search:history', '', 6) || [];
+    if (my !== sugSeq || document.activeElement !== addr) return;
+    sugItems = past.map(s => ({ v: s, label: s, ico: ICO.clock })); sugSel = -1;
+    if (!sugItems.length) { if (openKind === 'sug') closeDrop(); return; }
+    if (openKind !== 'sug') { closeDrop(); openKind = 'sug'; $('drop').hidden = false; $('backdrop').hidden = false; expand(true); }
+    drawSug(); place($('omni')); return;
+  }
+  const [past, hist, live] = await Promise.all([ui.invoke('search:history', q, 3), ui.invoke('history:search', q, 6), ui.invoke('suggest', q, S.lang)]);
   if (my !== sugSeq || document.activeElement !== addr) return;
   const items = [], seen = new Set();
-  for (const h of hist || []) { items.push({ v: h.url, label: h.title || h.url, sub: h.url.replace(/^https?:\/\/(www\.)?/, '').slice(0, 40), ico: h.favicon ? `<img src="${esc(h.favicon)}" alt="">` : ICO.clock }); seen.add(h.url); }
-  for (const s of live || []) { if (seen.has(s)) continue; items.push({ v: s, label: s, ico: ICO.search }); if (items.length >= 9) break; }
+  for (const s of past || []) { items.push({ v: s, label: s, ico: ICO.clock }); seen.add(s.toLowerCase()); }
+  let pages = 0;
+  for (const h of hist || []) {
+    if (/^https:\/\/(www\.)?google\.[a-z.]+\/search\?/i.test(h.url) || pages >= 3) continue;   // searches are listed above
+    pages++; items.push({ v: h.url, label: h.title || h.url, sub: (() => { try { return decodeURI(h.url); } catch (e) { return h.url; } })().replace(/^https?:\/\/(www\.)?/, '').slice(0, 40), ico: h.favicon ? `<img src="${esc(h.favicon)}" alt="">` : ICO.globe }); seen.add(h.url);
+  }
+  for (const s of live || []) { if (seen.has(s) || seen.has(String(s).toLowerCase())) continue; items.push({ v: s, label: s, ico: ICO.search }); if (items.length >= 9) break; }
   sugItems = items; sugSel = -1;
   if (!items.length) { if (openKind === 'sug') closeDrop(); return; }
   if (openKind !== 'sug') { closeDrop(); openKind = 'sug'; $('drop').hidden = false; $('backdrop').hidden = false; expand(true); }
   drawSug(); place($('omni'));
+  warmFor(q, items[0] && items[0].v);
+}
+function warmFor(typed, first) {
+  const site = v => { v = String(v || '').trim(); if (/^https?:\/\//i.test(v)) return v; if (!/\s/.test(v) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(v)) return 'https://' + v; return ''; };
+  const u = site(typed) || site(first) || 'https://www.google.com';
+  try { ui.send('net:warm', new URL(u).origin); } catch (e) {}
 }
 function drawSug() {
   $('drop').innerHTML = sugItems.map((s, i) =>

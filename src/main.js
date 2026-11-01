@@ -7,7 +7,7 @@
  */
 const {
   app, BaseWindow, BrowserWindow, WebContentsView, ipcMain, Menu, session, dialog,
-  screen, net, shell, clipboard, nativeImage, safeStorage, protocol, webContents, desktopCapturer
+  screen, net, shell, clipboard, nativeImage, safeStorage, protocol, webContents, desktopCapturer, nativeTheme
 } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -34,9 +34,16 @@ const early = (() => { try { return JSON.parse(fs.readFileSync(path.join(app.get
 if (early.hwAccel === false) app.disableHardwareAcceleration();
 
 /* ---------- lighter Chromium ---------- */
-app.commandLine.appendSwitch('disable-features', ['SpareRendererForSitePerProcess', 'MediaRouter', 'OptimizationHints', 'FedCm', 'WebIdentityDigitalCredentials'].join(','));
+app.commandLine.appendSwitch('disable-features', ['MediaRouter', 'OptimizationHints', 'FedCm', 'WebIdentityDigitalCredentials'].join(','));
 app.commandLine.appendSwitch('disable-background-networking');   // no hidden Chromium background downloads/pings
-app.commandLine.appendSwitch('enable-features', 'ParallelDownloading');     // every download over several connections (like a download manager)
+// no white anywhere: sites that have a dark design use it, the rest are darkened by Chromium itself
+// (smart inversion: text and backgrounds are flipped, photos are kept as they are)
+const DARK_PAGES = early.darkPages !== false;
+app.commandLine.appendSwitch('enable-features', [
+  'ParallelDownloading',                       // every download over several connections (like a download manager)
+].join(','));
+if (DARK_PAGES) app.commandLine.appendSwitch('blink-settings', 'forceDarkModeEnabled=true');   // Chromium's own "dark mode for web contents"
+const PAGE_BG = DARK_PAGES ? '#18181c' : '#ffffff';   // what shows while a page is still loading
 const FAST = early.perfMode === 'fast';   // "very fast browsing": speed first, more RAM/CPU is fine
 if (FAST) {
   app.commandLine.appendSwitch('disable-renderer-backgrounding');          // background tabs keep full speed
@@ -163,6 +170,7 @@ class Win {
     this.ui.webContents.once('did-finish-load', () => {
       if (opts.maximized) this.win.maximize();
       if (opts.show !== false) this.win.show();
+      if (process.env.ZEUS_TIMING) console.log('[timing] window shown', Math.round(performance.now()), 'ms');
       this.pushState();
       const t = this.active(); if (t && isNewtab(t.url)) this.focusAddress();
     });
@@ -445,7 +453,7 @@ function makeView(tab) {
     }
   });
   if (tab.win.private) setupSession(view.webContents.session);
-  view.setBackgroundColor(isNewtab(tab.url) ? '#000000' : '#ffffff');
+  view.setBackgroundColor(isNewtab(tab.url) ? '#000000' : PAGE_BG);
   const wc = view.webContents;
   if (tab.muted) wc.setAudioMuted(true);
 
@@ -478,7 +486,7 @@ function makeView(tab) {
   const nav = (e, url) => {
     const wasFlush = isNewtab(tab.url);
     tab.url = url;
-    view.setBackgroundColor(isNewtab(url) ? '#000000' : '#ffffff');
+    view.setBackgroundColor(isNewtab(url) ? '#000000' : PAGE_BG);
     if (isInternal(url)) { tab.favicon = ''; tab.title = ''; }
     else tab.favicon = cachedFavicon(url) || '';
     if (!tab.win.private) addHistory(url, wc.getTitle());
@@ -512,7 +520,7 @@ function makeView(tab) {
 
 function loadInto(tab, url) {
   const wc = tab.view.webContents;
-  tab.view.setBackgroundColor(isNewtab(url) ? '#000000' : '#ffffff');
+  tab.view.setBackgroundColor(isNewtab(url) ? '#000000' : PAGE_BG);
   if (isNewtab(url)) wc.loadFile(NEWTAB_FILE).catch(() => {});
   else if (isHistory(url)) wc.loadFile(HISTORY_FILE).catch(() => {});
   else if (isTasks(url)) wc.loadFile(TASKS_FILE).catch(() => {});
@@ -833,6 +841,7 @@ function toggleBookmark(w) {
 }
 
 /* ---------- address bar ---------- */
+const safeDecode = u => { try { return decodeURIComponent(u); } catch (e) { return u; } };
 function toUrl(text) {
   const t = (text || '').trim();
   if (!t) return null;
@@ -1208,17 +1217,19 @@ function setupPermissions(ses) {
   ses.on('select-serial-port', (e, list, wc, cb) => { e.preventDefault(); pickDevice('serial', wc && wc.mainFrame, (list || []).map(x => ({ id: x.portId, name: x.displayName || x.portName })), id => cb(id || '')); });
   // 4. screen sharing: pick a screen or a window (asked every time, like Chrome)
   ses.setDisplayMediaRequestHandler(async (req, cb) => {
+    // refusing: Electron wants no stream at all here (an empty object throws)
+    const deny = () => { try { cb(null); } catch (e) { try { cb({}); } catch (x) {} } };
     let wc = null; try { wc = req.frame ? webContents.fromFrame(req.frame) : null; } catch (e) {}
     const tab = tabOf(wc); const origin = PERM.originOf(req.securityOrigin || (req.frame && req.frame.url) || '');
-    if (!tab || !origin || perms.get(origin, 'screen', partOf(tab)) === 'block') return cb({});
+    if (!tab || !origin || perms.get(origin, 'screen', partOf(tab)) === 'block') return deny();
     let sources = [];
     try { sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 256, height: 144 }, fetchWindowIcons: false }); } catch (e) {}
-    if (!sources.length) return cb({});
+    if (!sources.length) return deny();
     const list = sources.slice(0, 24).map(s => ({ id: s.id, name: s.name, screen: s.id.startsWith('screen:'), thumb: s.thumbnail && !s.thumbnail.isEmpty() ? s.thumbnail.toDataURL() : '' }));
     askPermission(tab, { type: 'screen', host: hostLabel(origin), sources: list, audio: !!req.audioRequested }).then(choice => {
       const pick = permWait.get(tab.id); permWait.delete(tab.id);
       const src = choice === 'allow' && sources.find(s => s.id === pick);
-      if (!src) return cb({});
+      if (!src) return deny();
       const out = { video: src };
       if (req.audioRequested && process.platform === 'win32' && src.id.startsWith('screen:')) out.audio = 'loopback';   // the computer's sound with a whole screen
       cb(out);
@@ -1574,6 +1585,7 @@ function setupIpc() {
     if (key === 'memorySaverMin' && [0, 5, 15, 30, 60].includes(+val)) settings.data.memorySaverMin = +val;
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
     if (key === 'hwAccel') settings.data.hwAccel = !!val;
+    if (key === 'darkPages') settings.data.darkPages = !!val;
     if (key === 'adblock') settings.data.adblock = !!val;
     if (key === 'ytAds') settings.data.ytAds = !!val;
     if (key === 'dlAsk') settings.data.dlAsk = !!val;
@@ -1631,7 +1643,7 @@ function setupIpc() {
     const h = history.data;
     for (let i = h.length - 1; i >= 0 && out.length < (max || 600); i--) {
       const it = h[i];
-      if (q && !(it.url.toLowerCase().includes(q) || (it.title || '').toLowerCase().includes(q))) continue;
+      if (q && !(it.url.toLowerCase().includes(q) || (it.title || '').toLowerCase().includes(q) || safeDecode(it.url).toLowerCase().includes(q))) continue;
       if (seen.has(it.url)) continue; seen.add(it.url);
       out.push({ url: it.url, title: it.title, lastVisitTime: it.t, favicon: cachedFavicon(it.url) });
     }
@@ -1643,11 +1655,40 @@ function setupIpc() {
   });
   ipcMain.handle('history:clear', e => { if (!internalPage(e)) return false; history.data = []; history.flush(); return true; });
 
+  // warm up a connection to a site you are about to open (link under the mouse, address being typed)
+  const warmed = new Map();
+  ipcMain.on('net:warm', (e, origin) => {
+    const w = uiWin(e), t = w ? w.active() : tabOfWc(e.sender);
+    if (!t || !t.view || t.view.webContents.isDestroyed()) return;
+    let u; try { u = new URL(String(origin)); } catch (x) { return; }
+    if (!/^https?:$/.test(u.protocol)) return;
+    if (adblock && settings.data.adblock !== false && adblock.shouldBlock(u.origin + '/', t.url)) return;   // never for ad/tracker hosts
+    const now = Date.now(), last = warmed.get(u.origin) || 0;
+    if (now - last < 20000) return;
+    warmed.set(u.origin, now); if (warmed.size > 300) warmed.clear();
+    try { t.view.webContents.session.preconnect({ url: u.origin, numSockets: 1 }); } catch (x) {}
+  });
+  // your own past searches (typed in the address bar or on Google), newest first
+  ipcMain.handle('search:history', (e, text, max) => {
+    if (!uiWin(e)) return [];
+    const q = String(text || '').trim().toLowerCase(), out = [], seen = new Set();
+    const h = history.data;
+    for (let i = h.length - 1; i >= 0 && out.length < (max || 6); i--) {
+      const u = h[i].url;
+      if (!/^https:\/\/(www\.)?google\.[a-z.]+\/search\?/i.test(u)) continue;
+      let s = ''; try { s = (new URL(u).searchParams.get('q') || '').trim(); } catch (x) {}
+      const k = s.toLowerCase();
+      if (!s || seen.has(k) || (q && !k.includes(q))) continue;
+      seen.add(k); out.push(s);
+    }
+    return out;
+  });
   ipcMain.handle('suggest', async (e, q, hl) => {
     if (!internalPage(e) && !uiWin(e)) return [];
     try {
-      const r = await net.fetch('https://suggestqueries.google.com/complete/search?client=firefox&hl=' + (hl === 'en' ? 'en' : 'ar') + '&q=' + encodeURIComponent(String(q || '')));
-      const j = await r.json(); return Array.isArray(j[1]) ? j[1].slice(0, 8) : [];
+      // ie/oe=utf-8: without them Arabic suggestions came back in another text encoding and were lost
+      const r = await net.fetch('https://suggestqueries.google.com/complete/search?client=firefox&ie=utf-8&oe=utf-8&hl=' + (hl === 'en' ? 'en' : 'ar') + '&q=' + encodeURIComponent(String(q || '')));
+      const j = JSON.parse(new TextDecoder('utf-8').decode(await r.arrayBuffer())); return Array.isArray(j[1]) ? j[1].slice(0, 8) : [];
     } catch (err) { return []; }
   });
   ipcMain.handle('lang:get', () => settings.data.lang);
@@ -1710,7 +1751,7 @@ function setupSettingsIpc() {
     const d = settings.data;
     return {
       lang: d.lang, perfMode: d.perfMode || 'normal', perfActive: FAST ? 'fast' : 'normal',
-      memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, restoreTabs: !!d.restoreTabs,
+      memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, darkPages: d.darkPages !== false, darkPagesActive: DARK_PAGES, restoreTabs: !!d.restoreTabs,
       adblock: d.adblock !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytClean: d.ytClean || {},
@@ -1829,6 +1870,9 @@ app.on('before-quit', () => { if (!quitting) { quitting = true; saveSession(); }
 app.on('will-quit', () => { if (gotLock) { try { UPD.installOnQuit(); } catch (e) {} } });   // never from a second copy that is only handing over a link
 
 app.whenReady().then(async () => {
+  // dark everywhere: sites, error pages, scrollbars, form controls, the PDF viewer, menus
+  nativeTheme.themeSource = DARK_PAGES ? 'dark' : 'system';
+  if (process.env.ZEUS_TIMING) console.log('[timing] ready', Math.round(performance.now()), 'ms');
   Menu.setApplicationMenu(null);
   settings = makeStore('settings.json', {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
@@ -1876,11 +1920,12 @@ app.whenReady().then(async () => {
     settings.data.extImported = true; settings.save();
   }
   try { mergeBuiltInExtensions(); } catch (e) { console.warn('merge failed', e.message); }
-  for (const p of settings.data.extensions.slice()) {
-    try { await loadExtensionDir(p); } catch (e) { console.warn('extension failed', p, e.message); }
-  }
-  // extensions from the Chrome Web Store (installs, loads and keeps them updated)
-  try { await setupWebStore(); } catch (e) { console.warn('web store failed', e.message); }
+  // all extensions load at the same time (not one after another): the window opens sooner
+  await Promise.all([
+    ...settings.data.extensions.slice().map(p => loadExtensionDir(p).catch(e => console.warn('extension failed', p, e.message))),
+    // extensions from the Chrome Web Store (installs, loads and keeps them updated)
+    setupWebStore().catch(e => console.warn('web store failed', e.message))
+  ]);
   // a new extension (from the store or anywhere): refresh the bar and the settings page
   try { extApi().on('extension-loaded', () => { for (const w of wins) w.pushState(); settingsChanged(); }); extApi().on('extension-unloaded', () => { for (const w of wins) w.pushState(); settingsChanged(); }); } catch (e) {}
 
