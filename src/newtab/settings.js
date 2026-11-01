@@ -68,6 +68,8 @@ function render() {
     row(L('اللغة', 'Language'), '', `<div class="seg"><button class="${lang === 'ar' ? 'on' : ''}" data-set="lang" data-v="ar">عربي</button><button class="${lang === 'en' ? 'on' : ''}" data-set="lang" data-v="en">English</button></div>`) +
     (S.canDefault ? row(L('المتصفح الافتراضي', 'Default browser'), L('أي رابط تضغطه برا المتصفح (ديسكورد مثلاً) يفتح هنا.', 'Links you click outside the browser open here.'),
       S.isDefault ? `<span class="muted">✓ ${L('هو الافتراضي', 'It is the default')}</span>` : `<button class="pri" data-act="makeDefault">${L('خلّه الافتراضي', 'Make default')}</button>`) : '') +
+    row(L('كل المواقع داكنة', 'Dark mode for every site'), L('المواقع اللي فيها وضع داكن تستخدمه، والباقي يتحول داكن تلقائياً (الصور والفيديو تبقى زي ما هي). ما فيه شاشة بيضاء وقت التحميل.', 'Sites with a dark design use it; the rest are darkened automatically (photos and video stay as they are). No white flash while loading.'), sw(S.darkPages, 'data-tog="darkPages"')) +
+    restart(S.darkPages !== S.darkPagesActive) +
     row(L('رجّع تبويباتي لما أفتح المتصفح', 'Restore my tabs on start'), '', sw(S.restoreTabs, 'data-tog="restoreTabs"')) +
     row(L('كلمات السر', 'Passwords'), L('عرض واستيراد كلمات السر المحفوظة.', 'View and import saved passwords.'), `<button data-open="passwords">${L('فتح', 'Open')}</button>`) +
     row(L('السجل', 'History'), '', `<button data-open="history">${L('فتح', 'Open')}</button>`));

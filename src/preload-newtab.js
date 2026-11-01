@@ -46,6 +46,20 @@ if (internal) {
     onDl: fn => ipcRenderer.on('dl:changed', () => fn())
   });
 } else if (/^https?:$/.test(location.protocol)) {
+  /* ================= faster clicks: while the mouse is on a link, connect to its site
+     (address lookup + secure connection are done before you click, like Chrome) ================= */
+  (() => {
+    const seen = new Set(); let t = 0;
+    const warm = a => {
+      let u; try { u = new URL(a.href, location.href); } catch (e) { return; }
+      if (!/^https?:$/.test(u.protocol) || u.origin === location.origin || seen.has(u.origin)) return;
+      seen.add(u.origin); if (seen.size > 80) seen.clear();
+      ipcRenderer.send('net:warm', u.origin);
+    };
+    const link = e => (e.target && e.target.closest ? e.target.closest('a[href]') : null);
+    addEventListener('pointerover', e => { clearTimeout(t); const a = link(e); if (a) t = setTimeout(() => warm(a), 60); }, { capture: true, passive: true });
+    addEventListener('pointerdown', e => { const a = link(e); if (a) warm(a); }, { capture: true, passive: true });
+  })();
   /* ================= Google sign-in: look like Firefox (Google blocks Electron browsers) ================= */
   if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) {
     let ua = '';
