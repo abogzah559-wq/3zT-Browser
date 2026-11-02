@@ -1676,10 +1676,14 @@ function setupIpc() {
     const all = new Map();   // key -> { s, count, last }
     for (const it of history.data) {
       if (!/^https:\/\/(www\.)?google\.[a-z.]+\/search\?/i.test(it.url)) continue;
-      let s = ''; try { s = (new URL(it.url).searchParams.get('q') || '').trim(); } catch (x) {}
-      const k = s.toLowerCase(); if (!s || (q && !k.includes(q))) continue;
+      let s = '', sp = null; try { sp = new URL(it.url).searchParams; s = (sp.get('q') || '').trim(); } catch (x) {}
+      // only real searches: no Google AI Mode chats (udm=50), no long questions
+      if (!s || sp.get('udm') === '50' || s.length > 90) continue;
+      const k = s.toLowerCase(); if (q && !k.includes(q)) continue;
       const e = all.get(k) || { s, count: 0, last: 0 };
-      e.count++; e.last = Math.max(e.last, it.t || 0); all.set(k, e);
+      // Google rewrites the address a few times for one search: visits within 10 minutes count once
+      if ((it.t || 0) - e.last > 10 * 60 * 1000) e.count++;
+      e.last = Math.max(e.last, it.t || 0); all.set(k, e);
     }
     const list = [...all.values()];
     const often = list.filter(e => e.count >= 2).sort((a, b) => b.count - a.count || b.last - a.last).slice(0, Math.ceil(n / 2));
