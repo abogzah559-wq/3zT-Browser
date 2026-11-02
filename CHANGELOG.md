@@ -3,6 +3,14 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.3
+
+### English
+- The search box and the AI button on the new tab (also when it is set to Gemini) now use the Thmanyah font too.
+
+### العربية
+- مربع البحث وزر وضع AI في التبويب الجديد (حتى لو حوّلته إلى جيمناي) صاروا بخط ثمانية بعد.
+
 ## 0.12.2
 
 ### English

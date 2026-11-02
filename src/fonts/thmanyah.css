@@ -5,3 +5,5 @@
 @font-face{font-family:"Thmanyah";src:local("thmanyah serif display Medium"),local("thmanyahserifdisplay-Medium"),url("thmanyahserifdisplay-Medium.otf") format("opentype");font-weight:500;font-display:swap}
 @font-face{font-family:"Thmanyah";src:local("thmanyah serif display Bold"),local("thmanyahserifdisplay-Bold"),url("thmanyahserifdisplay-Bold.otf") format("opentype");font-weight:600 700;font-display:swap}
 @font-face{font-family:"Thmanyah";src:local("thmanyah serif display Black"),local("thmanyahserifdisplay-Black"),url("thmanyahserifdisplay-Black.otf") format("opentype");font-weight:800 900;font-display:swap}
+/* text boxes and buttons do not take the page font by themselves */
+input,button,textarea,select{font-family:inherit}
