@@ -68,6 +68,10 @@ jobs:
           if ($LASTEXITCODE) { $t = ($log | Select-Object -Last 15) -join '%0A'; echo "::error title=iscc::$t"; exit $LASTEXITCODE }
           Get-Item dist\3zT-Browser-Setup.exe | Format-List Name,Length
 
+      - name: Light update bundle (the app folder alone)
+        shell: bash
+        run: python scripts/make_app_bundle.py dist/3zT/resources/app dist/3zT-app.json "$ELECTRON_VERSION"
+
       - name: Test the installer (silent install, shortcut, uninstall)
         shell: pwsh
         run: |
@@ -161,5 +165,6 @@ jobs:
           # installed browsers only accept a signed update: no key, no release
           if [ -z "$UPDATE_SIGNING_KEY" ]; then echo "::warning title=release::$v not published: add the UPDATE_SIGNING_KEY secret first"; exit 0; fi
           node scripts/sign-update.mjs dist/3zT-Browser-Setup.exe "${v#v}"
-          gh release create "$v" dist/3zT-Browser-Setup.exe dist/3zT-Browser-Setup.exe.sha256 dist/3zT-Browser-Setup.exe.sig --target "$GITHUB_SHA" --title "3zT $v" --notes "$notes"
+          node scripts/sign-update.mjs dist/3zT-app.json "${v#v}"
+          gh release create "$v" dist/3zT-Browser-Setup.exe dist/3zT-Browser-Setup.exe.sha256 dist/3zT-Browser-Setup.exe.sig dist/3zT-app.json dist/3zT-app.json.sig --target "$GITHUB_SHA" --title "3zT $v" --notes "$notes"
           echo "::notice title=release::published $v"
