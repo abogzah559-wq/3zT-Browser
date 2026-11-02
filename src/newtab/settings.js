@@ -70,6 +70,7 @@ function render() {
       S.isDefault ? `<span class="muted">✓ ${L('هو الافتراضي', 'It is the default')}</span>` : `<button class="pri" data-act="makeDefault">${L('خلّه الافتراضي', 'Make default')}</button>`) : '') +
     row(L('كل المواقع داكنة', 'Dark mode for every site'), L('المواقع اللي فيها وضع داكن تستخدمه، والباقي يتحول داكن تلقائياً (الصور والفيديو تبقى زي ما هي). ما فيه شاشة بيضاء وقت التحميل.', 'Sites with a dark design use it; the rest are darkened automatically (photos and video stay as they are). No white flash while loading.'), sw(S.darkPages, 'data-tog="darkPages"')) +
     restart(S.darkPages !== S.darkPagesActive) +
+    row(L('خط ثمانية لكل المواقع', 'Thmanyah font on every site'), L('يحط خط ثمانية على نصوص المواقع (يوتيوب، قوقل، إكس...). الأيقونات تبقى زي ما هي، ولو موقع تخرب طفّه. يحتاج خط ثمانية مثبّت على الويندوز.', 'Puts the Thmanyah font on website text (YouTube, Google, X...). Icons keep their own font; turn it off if a site breaks. Needs the Thmanyah font installed on Windows.'), sw(S.siteFont, 'data-tog="siteFont"')) +
     row(L('رجّع تبويباتي لما أفتح المتصفح', 'Restore my tabs on start'), '', sw(S.restoreTabs, 'data-tog="restoreTabs"')) +
     row(L('كلمات السر', 'Passwords'), L('عرض واستيراد كلمات السر المحفوظة.', 'View and import saved passwords.'), `<button data-open="passwords">${L('فتح', 'Open')}</button>`) +
     row(L('السجل', 'History'), '', `<button data-open="history">${L('فتح', 'Open')}</button>`));

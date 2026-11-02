@@ -159,6 +159,7 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
 - Search from the address bar with Google.
 - Interface in the [Thmanyah](https://thmanyah.com) font (top bar, new tab and the browser's own pages) when it is
   installed on Windows; otherwise the previous font is used. The font files are not shipped with 3zT.
+  Settings → General → *Thmanyah font on every site* puts it on websites' text too (icons keep their font).
 - History page with search. Bookmarks (star button or `Ctrl+D`) show as shortcuts on the new tab page.
 - Restore your tabs when the browser opens (can be turned off).
 - Opens links for other programs (`mailto:`, `discord://`, `claude://`, ...) through Windows, asking
