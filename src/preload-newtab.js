@@ -136,6 +136,19 @@ if (internal) {
     try { on = ipcRenderer.sendSync('yt:adblock'); } catch (e) {}
     if (on) {
       const code = `(() => {
+        // what we replace must still look built in: YouTube checks Function.prototype.toString to spot blockers
+        const native = new WeakMap();
+        const fts = Function.prototype.toString;
+        const ts = function toString() { return native.has(this) ? native.get(this) : fts.call(this); };
+        native.set(ts, fts.call(fts));
+        Function.prototype.toString = ts;
+        const disguise = (f, orig) => { native.set(f, fts.call(orig)); try { Object.defineProperty(f, 'name', { value: orig.name }); } catch (e) {} return f; };
+        // the "Ad blockers are not allowed" popup: YouTube decides with these flags (uBlock Origin sets the same ones)
+        const fixed = (obj, key, value) => { try { Object.defineProperty(obj, key, { configurable: true, get() { return value; }, set() {} }); } catch (e) {} };
+        fixed(Object.prototype, 'adBlocksFound', 0);
+        fixed(Object.prototype, 'hasAllowedInstreamAd', true);
+        const noPopup = () => { try { const p = window.yt && yt.config_ && yt.config_.openPopupConfig; if (p && p.supportedPopups) p.supportedPopups.adBlockMessageViewModel = false; } catch (e) {} };
+        noPopup(); const np = setInterval(noPopup, 200); setTimeout(() => clearInterval(np), 30000);
         const KEYS = ['adPlacements', 'adSlots', 'playerAds', 'adBreakHeartbeatParams'];
         const clean = o => {
           try {
@@ -147,14 +160,21 @@ if (internal) {
           return o;
         };
         const jp = JSON.parse;
-        JSON.parse = function () { return clean(jp.apply(this, arguments)); };
+        JSON.parse = disguise(function parse() { return clean(jp.apply(this, arguments)); }, jp);
         const rj = Response.prototype.json;
-        Response.prototype.json = function () { return rj.apply(this, arguments).then(clean); };
+        Response.prototype.json = disguise(function json() { return rj.apply(this, arguments).then(clean); }, rj);
         let pr;
         try { Object.defineProperty(window, 'ytInitialPlayerResponse', { configurable: true, get() { return pr; }, set(v) { pr = clean(v); } }); } catch (e) {}
         // anything that still slips through: mute, fast-forward, press "skip"
         let muted = null;
         setInterval(() => {
+          // if the popup still opens: close it and keep the video playing
+          const enf = document.querySelector('ytd-enforcement-message-view-model');
+          if (enf) {
+            const d = enf.closest('tp-yt-paper-dialog'); if (d) d.remove(); else enf.remove();
+            document.querySelectorAll('tp-yt-iron-overlay-backdrop').forEach(x => x.remove());
+            const v0 = document.querySelector('#movie_player video'); if (v0 && v0.paused) v0.play().catch(() => {});
+          }
           const p = document.querySelector('#movie_player'); if (!p) return;
           const v = p.querySelector('video');
           if (p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')) {
@@ -172,7 +192,9 @@ if (internal) {
         ytd-promoted-video-renderer, ytd-display-ad-renderer, ytd-compact-promoted-video-renderer, ytd-action-companion-ad-renderer,
         ytd-player-legacy-desktop-watch-ads-renderer, ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-ads"],
         #masthead-ad, #player-ads, .ytp-ad-overlay-container, .ytp-ad-message-container, ytd-merch-shelf-renderer,
-        ytd-rich-item-renderer:has(ytd-ad-slot-renderer), ytd-rich-section-renderer:has(ytd-statement-banner-renderer) { display: none !important; }`;
+        ytd-rich-item-renderer:has(ytd-ad-slot-renderer), ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
+        tp-yt-paper-dialog:has(ytd-enforcement-message-view-model), ytd-enforcement-message-view-model,
+        body:has(ytd-enforcement-message-view-model) tp-yt-iron-overlay-backdrop { display: none !important; }`;
       try { webFrame.insertCSS(css); } catch (e) {}
     }
   }

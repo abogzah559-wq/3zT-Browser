@@ -3,6 +3,16 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.5
+
+### English
+- YouTube's "Ad blockers are not allowed" popup no longer shows up: 3zT tells YouTube what uBlock Origin tells it, its changes look built in, and if the popup still opens it is closed and the video keeps playing.
+- Much faster updates: when only 3zT's own code changed, the update is a few MB and is swapped in within a second when you close the browser, instead of reinstalling all of Chromium. The full setup is still used when Chromium itself changes.
+
+### العربية
+- رسالة يوتيوب «مانع الإعلانات غير مسموح» ما عاد تطلع: 3zT يعطي يوتيوب نفس اللي يعطيه uBlock Origin، وتعديلاته صارت تبان كأنها من المتصفح نفسه، ولو طلعت الرسالة رغم كذا تنقفل لحالها والفيديو يكمل.
+- التحديث صار أسرع بكثير: لو التغيير في كود 3zT بس، التحديث كم ميقا ويتركّب في ثانية لما تقفل المتصفح، بدل ما يعيد تثبيت كروميوم كله. التثبيت الكامل يبقى بس لما يتغير كروميوم نفسه.
+
 ## 0.12.4
 
 ### English
