@@ -81,7 +81,9 @@ async function main() {
   const lockSeen = fs.existsSync(path.join(UPD, 'installing.lock'));
   spawn(exe, ['--remote-debugging-port=9335'], { detached: true, stdio: 'ignore' }).unref();
   const lockGone = await until(() => !fs.existsSync(path.join(UPD, 'installing.lock')), 180000);
-  ok('silent install ran and finished', lockSeen && !!lockGone, `lock seen: ${lockSeen}`);
+  // a fast machine can finish the setup before the browser is closed for good; then the lock is never
+  // seen, but the new version being in place shows the install ran
+  ok('silent install ran and finished', !!lockGone && (lockSeen || appVersion() === nextVer), `lock seen: ${lockSeen}`);
   const after = await until(() => (appVersion() === nextVer ? appVersion() : null), 30000);
   ok('installed version is the new one', after === nextVer, `app ${appVersion()}, exe ${fileVersion(exe)}`);
 
