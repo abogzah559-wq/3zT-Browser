@@ -429,7 +429,9 @@ $('drop').addEventListener('click', async e => {
 /* ---------- address bar + suggestions (history + Google) ---------- */
 const addr = $('addr');
 let sugItems = [], sugSel = -1, sugSeq = 0, sugT = 0;
-addr.addEventListener('focus', () => { setTimeout(() => { addr.select(); if (!addr.value.trim()) updateSug(); }, 0); });
+addr.addEventListener('focus', () => { setTimeout(() => addr.select(), 0); });
+// your searches show only when you click the empty bar yourself (not when a new tab puts the cursor there)
+addr.addEventListener('mousedown', () => { if (!addr.value.trim() && openKind !== 'sug') setTimeout(updateSug, 0); });
 addr.addEventListener('input', () => { clearTimeout(sugT); sugT = setTimeout(updateSug, 60); });
 addr.addEventListener('blur', () => { if (openKind === 'sug') closeDrop(); addr.value = S.url; });
 addr.addEventListener('keydown', e => {
@@ -451,7 +453,7 @@ async function updateSug() {
   const q = addr.value.trim(), my = ++sugSeq;
   // empty bar: your recent searches (like Chrome)
   if (!q) {
-    const past = await ui.invoke('search:history', '', 6) || [];
+    const past = await ui.invoke('search:history', '', 8) || [];
     if (my !== sugSeq || document.activeElement !== addr) return;
     sugItems = past.map(s => ({ v: s, label: s, ico: ICO.clock })); sugSel = -1;
     if (!sugItems.length) { if (openKind === 'sug') closeDrop(); return; }

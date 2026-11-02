@@ -3,6 +3,16 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.0
+
+### English
+- Sites that are already dark (like YouTube) now keep their own colours: white controls such as YouTube's volume bar stay white instead of turning black. Light sites are still darkened, and a site switching between light and dark is followed.
+- Your past searches show only when you click the empty address bar (not by themselves on a new tab), with the ones you search most often first, then the latest.
+
+### العربية
+- المواقع اللي هي أصلاً داكنة (زي يوتيوب) صارت تحتفظ بألوانها: الأزرار البيضاء زي شريط الصوت في يوتيوب تبقى بيضاء وما تتحول سوداء. المواقع الفاتحة لسا تتحول داكنة، ولو الموقع غيّر بين الفاتح والداكن المتصفح يتبعه.
+- عمليات البحث السابقة تطلع بس لما تضغط على شريط البحث وهو فاضي (ما تطلع لحالها في التبويب الجديد)، وأول شي اللي تبحث عنها أكثر، بعدها آخر اللي بحثت عنها.
+
 ## 0.11.0
 
 ### English

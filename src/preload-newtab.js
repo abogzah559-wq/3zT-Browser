@@ -46,6 +46,53 @@ if (internal) {
     onDl: fn => ipcRenderer.on('dl:changed', () => fn())
   });
 } else if (/^https?:$/.test(location.protocol)) {
+  /* ================= sites that are already dark keep their own colours =================
+     3zT darkens light websites. A site that is dark by itself (YouTube's dark theme, for example) but does not say
+     so would get its white bits (volume bar, sliders, icons) turned black. When the page is dark already,
+     tell Chromium "this page is dark" so it leaves it exactly as the site made it. */
+  (() => {
+    const ID = '__3zt_cs';
+    const rgb = el => {
+      const m = String(getComputedStyle(el).backgroundColor).match(/[\d.]+/g);
+      if (!m) return null;
+      const [r, g, b, a = 1] = m.map(Number);
+      return a < 0.5 ? null : (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    };
+    // the colour you actually see at a point: the first element (going outwards) that has a background
+    const seen = el => { for (; el && el.nodeType === 1; el = el.parentElement) { const l = rgb(el); if (l != null) return l; } return null; };
+    const isDark = () => {
+      const de = document.documentElement; if (!de) return false;
+      const pts = [[0.5, 0.5], [0.5, 0.12], [0.2, 0.7], [0.8, 0.7], [0.5, 0.9]];
+      let dark = 0, light = 0;
+      for (const [x, y] of pts) {
+        const l = seen(document.elementFromPoint(innerWidth * x, innerHeight * y));
+        if (l == null) continue; if (l < 0.35) dark++; else light++;
+      }
+      if (dark + light === 0) { const l = (document.body && rgb(document.body)) ?? rgb(de); return l != null && l < 0.35; }
+      return dark > light;
+    };
+    let t = 0;
+    const check = () => {
+      t = 0;
+      const de = document.documentElement; if (!de || !document.body) return;
+      const st = document.getElementById(ID);
+      const dark = isDark();
+      if (dark && !st) { const s = document.createElement('style'); s.id = ID; s.textContent = ':root{color-scheme:dark !important}'; (document.head || de).appendChild(s); }
+      else if (!dark && st) st.remove();
+    };
+    const soon = ms => { if (!t) t = setTimeout(check, ms); };
+    document.addEventListener('DOMContentLoaded', () => {
+      check();
+      // the site may switch its theme later (YouTube's dark/light switch changes attributes on <html>/<body>)
+      try {
+        const mo = new MutationObserver(() => soon(250));
+        mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'dark', 'theme', 'data-theme', 'data-color-mode'] });
+        if (document.body) mo.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'dark', 'theme', 'data-theme'] });
+      } catch (e) {}
+    }, { once: true });
+    addEventListener('load', () => { check(); setTimeout(check, 1200); setTimeout(check, 4000); }, { once: true });
+  })();
+
   /* ================= faster clicks: while the mouse is on a link, connect to its site
      (address lookup + secure connection are done before you click, like Chrome) ================= */
   (() => {
