@@ -5,6 +5,7 @@ const THEMES = {
 const TEN={space:'Space & stars',black:'True black',galaxy:'Galaxy',matrix:'Matrix',aurora:'Aurora',sunset:'Sunset',ocean:'Ocean',fireflies:'Fireflies',anime:'Anime (video)',media:'Image / video',custom:'Custom color'};
 const FONTS = {
   def:   {ar:'الافتراضي (طويل)', en:'Default (condensed)', css:'Bahnschrift,"Arial Narrow","Roboto Condensed",Oswald,Impact,sans-serif'},
+  thmanyah:{ar:'ثمانية', en:'Thmanyah', css:'"Thmanyah",Tajawal,sans-serif'},
   tajawal:{ar:'تجوال', en:'Tajawal', css:'Tajawal,Tahoma,sans-serif'},
   kufi:  {ar:'ريم كوفي', en:'Reem Kufi', css:'"Reem Kufi",Tajawal,sans-serif'},
   orbit: {ar:'أوربترون (رقمي)', en:'Orbitron (digital)', css:'Orbitron,Tajawal,sans-serif'},

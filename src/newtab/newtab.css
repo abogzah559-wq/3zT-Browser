@@ -1,5 +1,5 @@
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;overflow:hidden;font-family:system-ui,"Segoe UI",Tahoma,sans-serif;color:#fff;background:#000}
+html,body{margin:0;height:100%;overflow:hidden;font-family:"Thmanyah",system-ui,"Segoe UI",Tahoma,sans-serif;color:#fff;background:#000}
 canvas{position:fixed;inset:0;width:100%;height:100%}
 #ui{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;pointer-events:none}
 #ui>*{pointer-events:auto}
@@ -50,7 +50,7 @@ body.fs #tiles{top:60px}
 /* ---- v1.1: fonts, sizes, shortcuts manager ---- */
 #clock{font-family:var(--clockFont,Bahnschrift,"Arial Narrow",sans-serif)}
 body.plainClock #clock{font-stretch:normal;font-variation-settings:normal;letter-spacing:1px}
-#date{font-size:var(--date,17px);font-family:var(--dateFont,system-ui,sans-serif)}
+#date{font-size:var(--date,17px);font-family:var(--dateFont,"Thmanyah",system-ui,sans-serif)}
 #date{margin-top:-14px;line-height:1.2}
 #panel{width:300px}
 #panel h3{margin:6px 0 0;font-size:15px;padding-top:10px;border-top:1px solid rgba(255,255,255,.12)}

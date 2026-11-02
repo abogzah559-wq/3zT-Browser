@@ -157,6 +157,8 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
 - Find in page, zoom per website, print, page translation (Google Translate), full screen,
   developer tools.
 - Search from the address bar with Google.
+- Interface in the [Thmanyah](https://thmanyah.com) font (top bar, new tab and the browser's own pages) when it is
+  installed on Windows; otherwise the previous font is used. The font files are not shipped with 3zT.
 - History page with search. Bookmarks (star button or `Ctrl+D`) show as shortcuts on the new tab page.
 - Restore your tabs when the browser opens (can be turned off).
 - Opens links for other programs (`mailto:`, `discord://`, `claude://`, ...) through Windows, asking
@@ -435,6 +437,7 @@ Third-party parts keep their licenses; the full list with license texts is in
 - [SponsorBlock](https://sponsor.ajay.app) data - CC BY-NC-SA 4.0 (used through its public API).
 - [EasyList / EasyPrivacy](https://easylist.to) - GPL-3.0 / CC BY-SA 3.0 (downloaded at runtime).
 - Clean YouTube (Chrome Web Store) - element list adapted, credited above.
+- Thmanyah font by [Thmanyah](https://thmanyah.com) - free to use, not redistributed: 3zT only uses the copy you install.
 
 The video on the new tab page is a short anime clip used as a background. It is not covered by the
 MIT License and belongs to its rights holders; it will be removed on request.
