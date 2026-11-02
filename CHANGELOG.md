@@ -3,6 +3,14 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.1
+
+### English
+- Past searches in the address bar no longer include your Google AI Mode chats, and a search counts once even when Google opens it a few times, so the list really shows what you search most, then the latest.
+
+### العربية
+- عمليات البحث السابقة في الشريط ما عاد تطلع فيها سوالفك مع وضع AI من قوقل، والبحث ينحسب مرة وحدة حتى لو قوقل فتحه أكثر من مرة، فالقائمة صارت فعلاً: اللي تبحث عنه أكثر أول، بعدها آخر اللي بحثت عنه.
+
 ## 0.12.0
 
 ### English
