@@ -3,6 +3,14 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.4
+
+### English
+- New switch in Settings → General: "Thmanyah font on every site". It puts the Thmanyah font on the text of websites (YouTube, Google, X...), while icons and code keep their own font. Off by default; needs the Thmanyah font installed on Windows.
+
+### العربية
+- زر جديد في الإعدادات ← عام: «خط ثمانية لكل المواقع». يحط خط ثمانية على نصوص المواقع (يوتيوب، قوقل، إكس...)، والأيقونات والأكواد تبقى بخطها. مطفي افتراضياً، ويحتاج خط ثمانية مثبّت على الويندوز.
+
 ## 0.12.3
 
 ### English

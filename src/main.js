@@ -499,7 +499,7 @@ function makeView(tab) {
     const same = e && e.isSameDocument !== undefined ? e.isSameDocument : rest[1];
     if (isMain && !same) { tab.blocked = 0; tab.permDenied = null; cancelPermissionsOf(tab); tab.win.pushState(); }
   });
-  wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); });
+  wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); tab.siteFontKey = null; applySiteFont(tab); });
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) nav(e, url); });
   wc.on('audio-state-changed', upd);
   wc.on('context-menu', (e, p) => contextMenu(tab, p));
@@ -1425,6 +1425,24 @@ function setupSiteIpc() {
   ipcMain.handle('amb:set', (e, obj) => { if (!isYT(senderHost(e)) || !obj || typeof obj !== 'object') return false; Object.assign(amb().data, obj); amb().save(); return true; });
   ipcMain.handle('amb:remove', (e, keys) => { if (!isYT(senderHost(e))) return false; for (const k of [].concat(keys || [])) delete amb().data[k]; amb().save(); return true; });
 }
+/* "Thmanyah on every site": the installed Thmanyah font over each website's own text.
+   Icons drawn with icon fonts (Material, Font Awesome and similar) and code keep their font. */
+const SITE_FONT_CSS = ['Light:300', 'Regular:400', 'Medium:500', 'Bold:600 700', 'Black:800 900']
+  .map(x => { const [n, w] = x.split(':'); return `@font-face{font-family:"Thmanyah3zT";src:local("thmanyah serif display ${n}"),local("thmanyahserifdisplay-${n}");font-weight:${w}}`; }).join('') +
+  ':where(html,body,p,a,li,dt,dd,h1,h2,h3,h4,h5,h6,span,div,label,button,input,textarea,select,td,th,caption,figcaption,blockquote,small,strong,b,em,yt-formatted-string,article,section,header,footer,nav,aside,main)' +
+  ':not(i,code,pre,kbd,samp,svg,svg *,[class*="icon" i],[class*="material" i],[class*="symbol" i],[class^="fa"],[class*=" fa-"],[class*="glyph" i],[aria-hidden="true"])' +
+  '{font-family:"Thmanyah3zT",system-ui,"Segoe UI",sans-serif!important}';
+function applySiteFont(tab) {
+  if (!tab || !tab.view) return;
+  const wc = tab.view.webContents;
+  if (wc.isDestroyed() || !/^https?:/i.test(tab.url || '')) return;
+  const on = !!settings.data.siteFont;
+  if (!on && tab.siteFontKey) { wc.removeInsertedCSS(tab.siteFontKey).catch(() => {}); tab.siteFontKey = null; }
+  if (on && !tab.siteFontKey) {
+    tab.siteFontKey = 'pending';
+    wc.insertCSS(SITE_FONT_CSS, { cssOrigin: 'author' }).then(k => { tab.siteFontKey = k; }).catch(() => { tab.siteFontKey = null; });
+  }
+}
 /* tell open YouTube tabs about changed switches */
 function pushSiteCfg() {
   for (const t of allTabs()) {
@@ -1586,6 +1604,7 @@ function setupIpc() {
     if (key === 'restoreTabs') settings.data.restoreTabs = !!val;
     if (key === 'hwAccel') settings.data.hwAccel = !!val;
     if (key === 'darkPages') settings.data.darkPages = !!val;
+    if (key === 'siteFont') { settings.data.siteFont = !!val; for (const t of allTabs()) applySiteFont(t); }
     if (key === 'adblock') settings.data.adblock = !!val;
     if (key === 'ytAds') settings.data.ytAds = !!val;
     if (key === 'dlAsk') settings.data.dlAsk = !!val;
@@ -1758,7 +1777,7 @@ function setupSettingsIpc() {
     const d = settings.data;
     return {
       lang: d.lang, perfMode: d.perfMode || 'normal', perfActive: FAST ? 'fast' : 'normal',
-      memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, darkPages: d.darkPages !== false, darkPagesActive: DARK_PAGES, restoreTabs: !!d.restoreTabs,
+      memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, darkPages: d.darkPages !== false, darkPagesActive: DARK_PAGES, siteFont: !!d.siteFont, restoreTabs: !!d.restoreTabs,
       adblock: d.adblock !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytClean: d.ytClean || {},
