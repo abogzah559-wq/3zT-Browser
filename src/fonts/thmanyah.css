@@ -1,0 +1,7 @@
+/* Thmanyah (ثمانية) - the interface font.
+   Uses the copy installed on Windows (free from thmanyah.com); the font files are not shipped with 3zT. */
+@font-face{font-family:"Thmanyah";src:local("thmanyah serif display Light"),local("thmanyahserifdisplay-Light"),url("thmanyahserifdisplay-Light.otf") format("opentype");font-weight:300;font-display:swap}
+@font-face{font-family:"Thmanyah";src:local("thmanyah serif display Regular"),local("thmanyahserifdisplay-Regular"),url("thmanyahserifdisplay-Regular.otf") format("opentype");font-weight:400;font-display:swap}
+@font-face{font-family:"Thmanyah";src:local("thmanyah serif display Medium"),local("thmanyahserifdisplay-Medium"),url("thmanyahserifdisplay-Medium.otf") format("opentype");font-weight:500;font-display:swap}
+@font-face{font-family:"Thmanyah";src:local("thmanyah serif display Bold"),local("thmanyahserifdisplay-Bold"),url("thmanyahserifdisplay-Bold.otf") format("opentype");font-weight:600 700;font-display:swap}
+@font-face{font-family:"Thmanyah";src:local("thmanyah serif display Black"),local("thmanyahserifdisplay-Black"),url("thmanyahserifdisplay-Black.otf") format("opentype");font-weight:800 900;font-display:swap}

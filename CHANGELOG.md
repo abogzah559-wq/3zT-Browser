@@ -3,6 +3,14 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.2
+
+### English
+- The browser's own pages (top bar, new tab, settings, history, downloads, passwords, tasks) now use the Thmanyah font. It is also a new choice for the clock and date on the new tab. Install the free Thmanyah font from thmanyah.com to see it; without it, the previous font is used.
+
+### العربية
+- صفحات المتصفح نفسه (الشريط العلوي، التبويب الجديد، الإعدادات، السجل، التنزيلات، كلمات المرور، المهام) صارت بخط ثمانية، وصار خيار جديد لخط الساعة والتاريخ في التبويب الجديد. ثبّت خط ثمانية المجاني من موقع ثمانية عشان يظهر، وبدونه يرجع للخط السابق.
+
 ## 0.12.1
 
 ### English
