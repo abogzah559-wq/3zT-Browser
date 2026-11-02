@@ -1671,17 +1671,20 @@ function setupIpc() {
   // your own past searches (typed in the address bar or on Google), newest first
   ipcMain.handle('search:history', (e, text, max) => {
     if (!uiWin(e)) return [];
-    const q = String(text || '').trim().toLowerCase(), out = [], seen = new Set();
-    const h = history.data;
-    for (let i = h.length - 1; i >= 0 && out.length < (max || 6); i--) {
-      const u = h[i].url;
-      if (!/^https:\/\/(www\.)?google\.[a-z.]+\/search\?/i.test(u)) continue;
-      let s = ''; try { s = (new URL(u).searchParams.get('q') || '').trim(); } catch (x) {}
-      const k = s.toLowerCase();
-      if (!s || seen.has(k) || (q && !k.includes(q))) continue;
-      seen.add(k); out.push(s);
+    // the searches you make most often first, then the latest ones
+    const q = String(text || '').trim().toLowerCase(), n = max || 6;
+    const all = new Map();   // key -> { s, count, last }
+    for (const it of history.data) {
+      if (!/^https:\/\/(www\.)?google\.[a-z.]+\/search\?/i.test(it.url)) continue;
+      let s = ''; try { s = (new URL(it.url).searchParams.get('q') || '').trim(); } catch (x) {}
+      const k = s.toLowerCase(); if (!s || (q && !k.includes(q))) continue;
+      const e = all.get(k) || { s, count: 0, last: 0 };
+      e.count++; e.last = Math.max(e.last, it.t || 0); all.set(k, e);
     }
-    return out;
+    const list = [...all.values()];
+    const often = list.filter(e => e.count >= 2).sort((a, b) => b.count - a.count || b.last - a.last).slice(0, Math.ceil(n / 2));
+    const recent = list.filter(e => !often.includes(e)).sort((a, b) => b.last - a.last);
+    return [...often, ...recent].slice(0, n).map(e => e.s);
   });
   ipcMain.handle('suggest', async (e, q, hl) => {
     if (!internalPage(e) && !uiWin(e)) return [];
