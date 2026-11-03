@@ -434,3 +434,66 @@ if (internal) {
   }, true);
   document.addEventListener('keydown', e => { if (e.key === 'Enter' && isPw(e.target)) offer(e.target.form); }, true);
 }
+
+/* ================= page translation in place (3zT's translate button) ================= */
+if (/^https?:$/.test(location.protocol)) {
+  let on = false, tl = 'ar', obs = null, timer = null;
+  const orig = new Map();      // text node -> its original text
+  const shown = new Map();     // text node -> the translation we put there
+  const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'CODE', 'PRE', 'TEXTAREA', 'KBD', 'SAMP', 'VAR', 'SVG', 'MATH', 'TEMPLATE']);
+  const skipEl = el => { for (let p = el; p; p = p.parentElement) { if (SKIP.has(p.tagName) || p.isContentEditable || p.getAttribute('translate') === 'no' || p.classList.contains('notranslate')) return true; } return false; };
+  const wanted = n => { const v = n.nodeValue; return v && /\p{L}/u.test(v) && v.trim().length > 0 && !(shown.get(n) === v) && n.parentElement && !skipEl(n.parentElement); };
+  const collect = root => {
+    const out = []; if (!root) return out;
+    if (root.nodeType === 3) { if (wanted(root)) out.push(root); return out; }
+    const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let n;
+    while ((n = w.nextNode())) if (wanted(n)) out.push(n);
+    return out;
+  };
+  const inView = n => { try { const r = n.parentElement.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight * 1.5 && r.width > 0; } catch (e) { return false; } };
+  async function run(nodes) {
+    if (!nodes.length) return;
+    nodes.sort((a, b) => inView(b) - inView(a));   // what you are looking at first
+    const parts = []; for (let i = 0; i < nodes.length; i += 60) parts.push(nodes.slice(i, i + 60));
+    let next = 0;
+    const worker = async () => {
+      while (on && next < parts.length) {
+        const part = parts[next++];
+        let res = []; try { res = await ipcRenderer.invoke('tr:batch', part.map(n => n.nodeValue.trim()), tl); } catch (e) {}
+        if (!on) return;
+        part.forEach((n, j) => {
+          const r = res[j]; if (!r || !n.isConnected) return;
+          const v = n.nodeValue, lead = v.match(/^\s*/)[0], trail = v.match(/\s*$/)[0], t = lead + r + trail;
+          if (!orig.has(n) || shown.get(n) !== v) orig.set(n, v);
+          shown.set(n, t); n.nodeValue = t;
+        });
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  }
+  const pending = new Set();
+  const flush = () => { timer = null; const nodes = []; for (const r of pending) if (r.isConnected) nodes.push(...collect(r)); pending.clear(); run([...new Set(nodes)]); };
+  function start() {
+    if (on) return; on = true;
+    const go = () => {
+      if (!on || !document.body) return;
+      run(collect(document.body));
+      obs = new MutationObserver(ms => {
+        for (const m of ms) {
+          if (m.type === 'characterData') { if (shown.get(m.target) !== m.target.nodeValue) pending.add(m.target); }
+          else for (const a of m.addedNodes) pending.add(a);
+        }
+        if (pending.size && !timer) timer = setTimeout(flush, 300);
+      });
+      obs.observe(document.body, { childList: true, subtree: true, characterData: true });
+    };
+    if (document.body) go(); else document.addEventListener('DOMContentLoaded', go, { once: true });
+  }
+  function stop() {
+    on = false; if (obs) { obs.disconnect(); obs = null; } clearTimeout(timer); timer = null; pending.clear();
+    for (const [n, v] of orig) if (n.isConnected && shown.get(n) === n.nodeValue) n.nodeValue = v;
+    orig.clear(); shown.clear();
+  }
+  ipcRenderer.on('tr:start', (e, lang) => { tl = lang === 'en' ? 'en' : 'ar'; start(); });
+  ipcRenderer.on('tr:stop', stop);
+}
