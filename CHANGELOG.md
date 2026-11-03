@@ -3,6 +3,14 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.7
+
+### English
+- YouTube's suggested videos on the right of a video show again. One of the signals added in 0.12.5 against the "ad blockers are not allowed" popup stopped YouTube from drawing that list; it is removed, the rest stays (no popup, no ads).
+
+### العربية
+- رجعت الفيديوهات المقترحة على يمين الفيديو في يوتيوب. وحدة من الإشارات اللي انضافت في 0.12.5 ضد رسالة «مانع الإعلانات غير مسموح» كانت توقف يوتيوب عن رسم القائمة، فانشالت، والباقي باقي (لا رسالة ولا إعلانات).
+
 ## 0.12.6
 
 ### English
