@@ -3,6 +3,14 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.6
+
+### English
+- Keyboard shortcuts (Ctrl+T, Ctrl+W, Ctrl+L, Ctrl+Tab...) work again while the keyboard is on the Arabic layout: 3zT now reads which key is pressed, not the letter it types, like Chrome.
+
+### العربية
+- اختصارات الكيبورد (Ctrl+T و Ctrl+W و Ctrl+L و Ctrl+Tab...) رجعت تشتغل والكيبورد على العربي: 3zT صار يقرأ مكان الزر نفسه مو الحرف اللي يكتبه، زي كروم.
+
 ## 0.12.5
 
 ### English
