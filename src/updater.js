@@ -162,6 +162,9 @@ function installOnQuit() {
   if (!installed()) return false;
   const pend = readJson(pendingFile());
   if (!pend || !pend.file || !fs.existsSync(pend.file) || !newer(pend.version, app.getVersion())) return false;
+  // the files on disk may already be newer than the running copy (replaced while it ran): never go back
+  const onDisk = readJson(path.join(app.getAppPath(), 'package.json'))?.version;
+  if (onDisk && !newer(pend.version, onDisk)) { try { fs.unlinkSync(pendingFile()); } catch (e) {} return false; }
   if (pend.kind === 'app') {
     try {
       applyLight(pend);
