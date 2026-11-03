@@ -146,7 +146,7 @@ if (internal) {
         // the "Ad blockers are not allowed" popup: YouTube decides with these flags (uBlock Origin sets the same ones)
         const fixed = (obj, key, value) => { try { Object.defineProperty(obj, key, { configurable: true, get() { return value; }, set() {} }); } catch (e) {} };
         fixed(Object.prototype, 'adBlocksFound', 0);
-        fixed(Object.prototype, 'hasAllowedInstreamAd', true);
+        // not 'hasAllowedInstreamAd': forcing it on every object stops YouTube from drawing the suggested videos
         const noPopup = () => { try { const p = window.yt && yt.config_ && yt.config_.openPopupConfig; if (p && p.supportedPopups) p.supportedPopups.adBlockMessageViewModel = false; } catch (e) {} };
         noPopup(); const np = setInterval(noPopup, 200); setTimeout(() => clearInterval(np), 30000);
         const KEYS = ['adPlacements', 'adSlots', 'playerAds', 'adBreakHeartbeatParams'];
