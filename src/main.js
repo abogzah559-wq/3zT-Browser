@@ -791,9 +791,17 @@ function openExtPopup(w, id, rect) {
 }
 
 /* ---------- keyboard ---------- */
+/* the key's place on the keyboard, not the letter it types: Ctrl+T must work on the Arabic layout too (where it types ف) */
+function shortcutKey(i) {
+  const code = i.code || '';
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  const map = { Equal: '=', Minus: '-', NumpadAdd: '+', NumpadSubtract: '-', Numpad0: '0' };
+  return map[code] || (i.key || '').toLowerCase();
+}
 function handleKey(w, i) {
   if (i.type !== 'keyDown' || !w) return false;
-  const c = i.control || i.meta, k = (i.key || '').toLowerCase();
+  const c = i.control || i.meta, k = (c || i.alt) ? shortcutKey(i) : (i.key || '').toLowerCase();
   const t = w.active(); const wc = t && t.view && t.view.webContents;
   if (c && !i.shift && k === 't') { w.createTab(); return true; }
   if (c && i.shift && k === 't') { reopenClosed(w); return true; }
