@@ -3,6 +3,20 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.12.8
+
+### English
+- Translate page now works in place, like Chrome: the page stays where it is and keeps working, its text is swapped for the translation, new text is translated as it appears, and other pages of the same site are translated too until you press the button again. No more trip through Google Translate's site.
+- Ctrl+Shift+T after closing and reopening the browser: closed tabs are kept across restarts, and if tabs are not restored on start, the first Ctrl+Shift+T brings back all the tabs that were open.
+- The browser's own pages show as 3zt://settings, 3zt://downloads... instead of zeus:// (the old addresses still work).
+- Past searches under the address bar all line up on the right in the Arabic interface, English ones too.
+
+### العربية
+- ترجمة الصفحة صارت داخل الصفحة نفسها زي كروم: الصفحة تبقى مكانها وتشتغل عادي، نصوصها تتبدل بالترجمة، واللي ينضاف بعدين يترجم لحاله، وباقي صفحات نفس الموقع تترجم بعد لين تضغط الزر مرة ثانية. ما عاد تنتقل لموقع ترجمة قوقل.
+- Ctrl+Shift+T بعد ما تقفل المتصفح وتفتحه: التبويبات المقفلة تنحفظ، ولو المتصفح ما يرجّع التبويبات وقت الفتح، أول Ctrl+Shift+T يرجّع كل التبويبات اللي كانت مفتوحة.
+- صفحات المتصفح نفسه صارت تطلع 3zt://settings و 3zt://downloads... بدل zeus:// (والعناوين القديمة لسا تشتغل).
+- عمليات البحث السابقة تحت الشريط كلها صارت يمين في الواجهة العربية، حتى الإنجليزي.
+
 ## 0.12.7
 
 ### English

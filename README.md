@@ -154,7 +154,7 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
   to merge it back. While dragging, move to a screen edge to snap the window: left or right half,
   a corner for a quarter, the top for full screen (a blue preview shows where it goes).
 - Private windows (nothing is saved).
-- Find in page, zoom per website, print, page translation (Google Translate), full screen,
+- Find in page, zoom per website, print, page translation in place like Chrome (Google Translate: the page stays open and usable, new text is translated too, and the rest of the site follows until you turn it off), full screen,
   developer tools.
 - Search from the address bar with Google.
 - Interface in the [Thmanyah](https://thmanyah.com) font (top bar, new tab and the browser's own pages) when it is
@@ -188,7 +188,7 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
   - the download button in the toolbar opens a list of this session's downloads: click a file to
     open it, the folder button to show it in File Explorer, or pause / resume / cancel / retry;
     the list starts empty each time the browser opens;
-  - downloads page (`zeus://downloads`, `Ctrl+J`) with the full history, search, "show in folder"
+  - downloads page (`3zt://downloads`, `Ctrl+J`) with the full history, search, "show in folder"
     and file icons.
 
 ### Site permissions
@@ -219,7 +219,7 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
 - Hardware acceleration switch, performance modes (see above).
 
 ### Settings
-- One settings page (`zeus://settings`) with collapsible groups: appearance, startup, search,
+- One settings page (`3zt://settings`) with collapsible groups: appearance, startup, search,
   privacy and ads, YouTube and Twitch, extensions, downloads, passwords, performance, default
   browser, language and "about".
 - Arabic (right-to-left) or English interface.
@@ -389,8 +389,8 @@ tests/                 e2e.mjs (end-to-end test), update-test.mjs (silent update
                        bench.ps1 (memory comparison)
 ```
 
-Internal pages use the `zeus://` address scheme (`zeus://settings`, `zeus://downloads`,
-`zeus://history`, `zeus://passwords`, `zeus://tasks`).
+Internal pages use the `3zt://` address scheme (`3zt://settings`, `3zt://downloads`,
+`3zt://history`, `3zt://passwords`, `3zt://tasks`); the old `zeus://` addresses still open them.
 
 ## Automated tests
 

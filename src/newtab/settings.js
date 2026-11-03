@@ -1,5 +1,5 @@
 'use strict';
-/* zeus://settings - everything in one tidy page, grouped into sections */
+/* 3zt://settings - everything in one tidy page, grouped into sections */
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let S = null, lang = 'ar', cur = location.hash.slice(1) || 'general';

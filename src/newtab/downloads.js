@@ -1,5 +1,5 @@
 'use strict';
-/* zeus://downloads - the built-in download manager */
+/* 3zt://downloads - the built-in download manager */
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 let lang = 'ar', D = { items: [], folder: '', ask: true };

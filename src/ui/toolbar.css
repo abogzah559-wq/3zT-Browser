@@ -95,6 +95,8 @@ body.translated #act{color:#8ab4f8;background:rgba(138,180,248,.18)}
 #addr,#findq{flex:1;min-width:0;height:100%;border:0;outline:0;background:transparent;color:#fff;font:inherit;font-size:13.5px}
 #addr{text-align:start;unicode-bidi:plaintext}
 #drop .mi .t{unicode-bidi:plaintext}
+/* Arabic interface: every suggestion lines up on the right, English ones too */
+[dir=rtl] #drop .mi .t{text-align:right}
 #addr:placeholder-shown{direction:inherit;text-align:start}
 #addr::placeholder,#findq::placeholder{color:rgba(255,255,255,.55)}
 #findq,#findCount,.fbtn{display:none}

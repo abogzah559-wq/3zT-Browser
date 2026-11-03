@@ -103,7 +103,7 @@ const isPasswords = u => same(u, PASSWORDS_URL);
 const isSettings = u => same(u, SETTINGS_URL);
 const isDownloads = u => same(u, DOWNLOADS_URL);
 const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u) || isSettings(u) || isDownloads(u);
-const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? 'zeus://history' : isTasks(u) ? 'zeus://tasks' : isPasswords(u) ? 'zeus://passwords' : isSettings(u) ? 'zeus://settings' : isDownloads(u) ? 'zeus://downloads' : u);
+const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? '3zt://history' : isTasks(u) ? '3zt://tasks' : isPasswords(u) ? '3zt://passwords' : isSettings(u) ? '3zt://settings' : isDownloads(u) ? '3zt://downloads' : u);
 
 /* ---------- tiny JSON stores (debounced, atomic save) ---------- */
 function makeStore(name, def) {
@@ -297,7 +297,7 @@ class Win {
         url: shownUrl(url),
         isNewtab: isNewtab(url),
         isWeb: /^https?:/i.test(url),
-        translated: /\.translate\.goog$/i.test(hostOf(url)),
+        translated: /\.translate\.goog$/i.test(hostOf(url)) || !!(t && t.translateSite && t.translateSite === AdBlocker.site(hostOf(url) || '')),
         loading: !!(t && t.loading),
         canGoBack: !!(wc && wc.navigationHistory.canGoBack()),
         canGoForward: !!(wc && wc.navigationHistory.canGoForward()),
@@ -499,7 +499,7 @@ function makeView(tab) {
     const same = e && e.isSameDocument !== undefined ? e.isSameDocument : rest[1];
     if (isMain && !same) { tab.blocked = 0; tab.permDenied = null; cancelPermissionsOf(tab); tab.win.pushState(); }
   });
-  wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); tab.siteFontKey = null; applySiteFont(tab); });
+  wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); tab.siteFontKey = null; applySiteFont(tab); translateOnLoad(tab); });
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) nav(e, url); });
   wc.on('audio-state-changed', upd);
   wc.on('context-menu', (e, p) => contextMenu(tab, p));
@@ -557,7 +557,9 @@ function saveSession() {
       maximized: w.win.isMaximized(),
       tabs: w.tabs.map(t => ({ url: isNewtab(t.url) ? '' : t.url, title: t.title })),
       active: Math.max(0, w.tabs.findIndex(t => t.id === w.activeId))
-    }))
+    })),
+    // closed tabs survive a restart, so Ctrl+Shift+T still brings them back
+    closed: closedStack.slice(-25)
   };
   sessionStore.flush();
 }
@@ -839,7 +841,13 @@ function zoom(w, d) {
   wc.setZoomFactor(Math.min(3, Math.max(0.3, Math.round((wc.getZoomFactor() + d) * 10) / 10))); w.pushState();
 }
 function cycle(w, dir) { if (w.tabs.length < 2) return; const i = w.tabs.findIndex(t => t.id === w.activeId); w.activate(w.tabs[(i + dir + w.tabs.length) % w.tabs.length].id); }
-function reopenClosed(w) { const c = closedStack.pop(); if (c) w.createTab(c.url); }
+function reopenClosed(w) {
+  const c = closedStack.pop(); if (!c) return;
+  // the tabs of the last session (browser closed with "restore my tabs" off): all of them, like Chrome
+  if (Array.isArray(c.group)) { for (const x of c.group) if (x && x.url) w.createTab(x.url); saveSessionSoon(); return; }
+  if (c.url) w.createTab(c.url);
+  saveSessionSoon();
+}
 function toggleBookmark(w) {
   const t = w.active(); if (!t || !/^https?:/.test(t.url)) return;
   const f = findBookmark(t.url);
@@ -853,11 +861,11 @@ const safeDecode = u => { try { return decodeURIComponent(u); } catch (e) { retu
 function toUrl(text) {
   const t = (text || '').trim();
   if (!t) return null;
-  if (/^zeus:\/\/history/i.test(t)) return HISTORY_URL;
-  if (/^zeus:\/\/tasks/i.test(t)) return TASKS_URL;
-  if (/^zeus:\/\/passwords/i.test(t)) return PASSWORDS_URL;
-  if (/^zeus:\/\/settings/i.test(t)) return SETTINGS_URL;
-  if (/^zeus:\/\/downloads/i.test(t)) return DOWNLOADS_URL;
+  if (/^(3zt|zeus):\/\/history/i.test(t)) return HISTORY_URL;
+  if (/^(3zt|zeus):\/\/tasks/i.test(t)) return TASKS_URL;
+  if (/^(3zt|zeus):\/\/passwords/i.test(t)) return PASSWORDS_URL;
+  if (/^(3zt|zeus):\/\/settings/i.test(t)) return SETTINGS_URL;
+  if (/^(3zt|zeus):\/\/downloads/i.test(t)) return DOWNLOADS_URL;
   if (/^(https?|file|chrome-extension|about|view-source):/i.test(t)) return t;
   if (/^localhost(:\d+)?(\/|$)/i.test(t) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(t)) return 'http://' + t;
   if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return 'https://' + t;
@@ -884,9 +892,46 @@ function untranslateUrl(url) {
     return `https://${host}${x.pathname}${x.search}${x.hash}`;
   } catch (e) { return url; }
 }
+/* translated in place, like Chrome: the page stays where it is and keeps working; its text is swapped
+   for the translation (new text too, as the site adds it), and every page of the same site is translated
+   until the button is pressed again */
+const trLang = () => (settings.data.lang === 'en' ? 'en' : 'ar');
 function translate(w) {
   const t = w.active(); if (!t || !/^https?:/i.test(t.url)) return;
-  navigate(w, /\.translate\.goog$/i.test(hostOf(t.url)) ? untranslateUrl(t.url) : translateUrl(t.url));
+  if (/\.translate\.goog$/i.test(hostOf(t.url))) { navigate(w, untranslateUrl(t.url)); return; }   // an old proxied page
+  const site = AdBlocker.site(hostOf(t.url) || '');
+  t.translateSite = t.translateSite === site ? null : site;
+  if (t.view && !t.view.webContents.isDestroyed()) t.view.webContents.send(t.translateSite ? 'tr:start' : 'tr:stop', trLang());
+  w.pushState();
+}
+function translateOnLoad(tab) {
+  if (!tab.translateSite || !tab.view || tab.view.webContents.isDestroyed()) return;
+  if (AdBlocker.site(hostOf(tab.url) || '') !== tab.translateSite) { tab.translateSite = null; return; }   // left the site
+  tab.view.webContents.send('tr:start', trLang());
+}
+const trCache = new Map();
+async function trFetch(texts, tl) {
+  const body = new URLSearchParams(); for (const q of texts) body.append('q', q);
+  const r = await net.fetch(`https://translate.googleapis.com/translate_a/t?client=gtx&sl=auto&tl=${tl}&format=text`, { method: 'POST', body: body.toString(), headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' } });
+  if (!r.ok) throw new Error('translate ' + r.status);
+  const j = await r.json();
+  // [[translation, lang], ...] for several texts; older shapes: [translation, lang] or "translation"
+  const list = texts.length === 1 && !Array.isArray(j[0]) ? [j] : j;
+  return list.map(x => (Array.isArray(x) ? x[0] : x));
+}
+async function trBatch(texts, tl) {
+  const out = new Array(texts.length).fill(null), todo = [];
+  texts.forEach((q, i) => { const c = trCache.get(tl + '\u0000' + q); if (c !== undefined) out[i] = c; else todo.push(i); });
+  for (let i = 0; i < todo.length;) {   // ~4000 characters per request
+    const part = []; let len = 0;
+    while (i < todo.length && part.length < 80 && (len + texts[todo[i]].length < 4000 || !part.length)) { part.push(todo[i]); len += texts[todo[i]].length; i++; }
+    try {
+      const res = await trFetch(part.map(k => texts[k]), tl);
+      part.forEach((k, j) => { const v = typeof res[j] === 'string' ? res[j] : null; out[k] = v; if (v !== null) trCache.set(tl + '\u0000' + texts[k], v); });
+    } catch (e) { console.warn('[3zT] translate', e.message); }
+  }
+  if (trCache.size > 20000) trCache.clear();
+  return out;
 }
 
 /* ---------- right-click menus ---------- */
@@ -1386,6 +1431,10 @@ function setupPasswordIpc() {
   });
   // YouTube ad blocking: asked by the page preload before YouTube's own scripts run
   ipcMain.on('signin:ua', e => { e.returnValue = FIREFOX_UA; });
+  ipcMain.handle('tr:batch', async (e, texts, tl) => {
+    if (!tabOfWc(e.sender) || !Array.isArray(texts)) return [];
+    return trBatch(texts.slice(0, 400).map(x => String(x).slice(0, 5000)), tl === 'en' ? 'en' : 'ar');
+  });
   ipcMain.on('yt:adblock', e => {
     const t = tabOfWc(e.sender);
     e.returnValue = !!(t && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com'));
@@ -1761,7 +1810,7 @@ async function runMisc(w, cmd) {
   }
 }
 
-/* ---------- settings page (zeus://settings) ---------- */
+/* ---------- settings page (3zt://settings) ---------- */
 function removeExtension(id) {
   const ext = extApi().getExtension(id); if (!ext) return false;
   extApi().removeExtension(id);
@@ -1963,6 +2012,8 @@ app.whenReady().then(async () => {
   // a new extension (from the store or anywhere): refresh the bar and the settings page
   try { extApi().on('extension-loaded', () => { for (const w of wins) w.pushState(); settingsChanged(); }); extApi().on('extension-unloaded', () => { for (const w of wins) w.pushState(); settingsChanged(); }); } catch (e) {}
 
+  // closed tabs from before the restart
+  for (const c of (Array.isArray(sessionStore.data.closed) ? sessionStore.data.closed : [])) if (c && (c.url || Array.isArray(c.group))) closedStack.push(c);
   // restore windows (old single-window format supported too)
   let saved = sessionStore.data.windows;
   if (!saved && sessionStore.data.tabs) saved = [{ tabs: sessionStore.data.tabs, active: sessionStore.data.active, bounds: settings.data.bounds, maximized: settings.data.maximized }];
@@ -1975,6 +2026,9 @@ app.whenReady().then(async () => {
       w.activate(w.tabs[act].id);
     }
   } else {
+    // not restored: what was open last time is the first thing Ctrl+Shift+T brings back
+    const last = (saved || []).flatMap(s => (s.tabs || []).map(t => ({ url: t.url, title: t.title }))).filter(t => t.url && !isInternal(t.url));
+    if (last.length) { closedStack.push({ group: last }); if (closedStack.length > 25) closedStack.shift(); }
     newWindow({ bounds: settings.data.bounds, maximized: settings.data.maximized, url: urlFromArgv(process.argv) || undefined });
   }
   // opened by Windows with a link while restoring tabs: show the link too
