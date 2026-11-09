@@ -155,7 +155,7 @@ document.addEventListener('click', async e => {
     upd = st === 'ready' ? { state: 'ready', text: L(`نزل التحديث ${r.version} وجاهز. أعد التشغيل وتثبّت في ثواني، وتبويباتك ترجع.`, `Update ${r.version} is downloaded and checked. Restart to install it; your tabs come back.`) }
       : st === 'latest' ? { state: 'latest', text: L(`عندك آخر نسخة (${r.version}) ✓`, `You have the latest version (${r.version}) ✓`) }
       : st === 'portable' ? { state: 'error', text: L('هذي النسخة غير مثبّتة بالسيت اب، فما تتحدث لحالها.', 'This copy was not installed with the setup, so it does not update itself.') }
-      : st === 'busy' ? { state: 'checking', text: L('فيه بحث شغال الحين، جرب بعد شوي.', 'A check is already running, try again in a moment.') }
+      : st === 'busy' ? { state: 'info', text: L('فيه بحث شغال الحين، جرب بعد شوي.', 'A check is already running, try again in a moment.') }
       : { state: 'error', text: L('ما قدرت أتحقق (تأكد من الإنترنت): ', 'Could not check (check the connection): ') + ((r && r.error) || '') };
     render(); return;
   }

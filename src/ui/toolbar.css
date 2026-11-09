@@ -152,7 +152,6 @@ body.loading #load::after{content:"";position:absolute;top:0;bottom:0;left:0;wid
 #shield{position:relative;color:#7ee2a8}
 #shield svg{width:17px;height:17px}
 body:not(.isweb) #shield{display:none}
-#omni.finding #shield{display:none}
 #shield.off{color:rgba(255,255,255,.45)}
 #shield.off #shOk{display:none}
 #shCount{position:absolute;top:-3px;inset-inline-end:-5px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:#2f9e63;color:#fff;

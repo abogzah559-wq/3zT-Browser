@@ -10,6 +10,8 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 // frames inside a page (iframes) only get the passkey fix below; everything else is for the page itself
 const SUB = typeof process !== 'undefined' && process.isMainFrame === false;
+// tests only: run once without the passkey fix (set from the main process, no message needed per frame)
+const NO_PASSKEY_FIX = typeof process !== 'undefined' && Array.isArray(process.argv) && process.argv.includes('--3zt-no-passkey-fix');
 const inMainWorld = code => {
   try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
   catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
@@ -50,7 +52,7 @@ const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|his
 
 if (SUB) {
   // a sign-in box embedded from another site must not open Windows' passkey window by itself either
-  if (/^https?:$/.test(location.protocol)) { let on = true; try { on = (ipcRenderer.sendSync('site:cfg') || {}).passkeyFix !== false; } catch (e) {} if (on) inMainWorld(PASSKEY_CODE); }
+  if (/^https?:$/.test(location.protocol) && !NO_PASSKEY_FIX) inMainWorld(PASSKEY_CODE);
 } else if (internal) {
   contextBridge.exposeInMainWorld('zeus', {
     getBookmarks: () => ipcRenderer.invoke('bm:get'),
@@ -310,7 +312,7 @@ if (SUB) {
      the normal way, or with the newer "immediate" mode: those are answered "no passkey" unless you clicked
      something or the site names your account. A passkey you ask for yourself ("Sign in with a passkey",
      "Use a security key") still opens Windows' window as it should. */
-  if (cfg.passkeyFix !== false) inMainWorld(PASSKEY_CODE);
+  if (cfg.passkeyFix !== false && !NO_PASSKEY_FIX) inMainWorld(PASSKEY_CODE);
 
   if (cfg.yt) {
     const yt = cfg.yt;
@@ -538,7 +540,7 @@ if (SUB) {
 }
 
 /* ================= page translation in place (3zT's translate button) ================= */
-if (/^https?:$/.test(location.protocol)) {
+if (!SUB && /^https?:$/.test(location.protocol)) {
   let on = false, tl = 'ar', obs = null, timer = null;
   const orig = new Map();      // text node -> its original text
   const shown = new Map();     // text node -> the translation we put there

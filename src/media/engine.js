@@ -52,16 +52,19 @@ class MediaEngine {
     return { ytdlp: path.join(this.toolsDir, TOOLS.ytdlp.file), gallerydl: path.join(this.toolsDir, TOOLS.gallerydl.file), ffmpegDir: ff };
   }
   copyPacked() {
+    // copied again only when a setup brought different files (a light update or "Update download tools" does not
+    // bring back an older yt-dlp); the note is written only for files that were really copied
     const pk = this.packed(); if (!pk) return;
-    const stampF = path.join(this.toolsDir, 'version.txt');
-    let stamp = ''; try { stamp = fs.readFileSync(stampF, 'utf8').trim(); } catch (e) {}
-    const want = String(this.o.version || '');
     fs.mkdirSync(this.toolsDir, { recursive: true });
+    const stampF = path.join(this.toolsDir, 'packed.json');
+    let stamp = {}; try { stamp = JSON.parse(fs.readFileSync(stampF, 'utf8')) || {}; } catch (e) {}
     for (const f of [TOOLS.ytdlp.file, TOOLS.gallerydl.file]) {
       const src = path.join(pk, f), dst = path.join(this.toolsDir, f);
-      if (fs.existsSync(src) && (!fs.existsSync(dst) || stamp !== want)) { try { fs.copyFileSync(src, dst); } catch (e) { this.log('tool copy failed', f, e.message); } }
+      let id = ''; try { const st = fs.statSync(src); id = st.size + ':' + Math.round(st.mtimeMs); } catch (e) { continue; }
+      if (fs.existsSync(dst) && stamp[f] === id) continue;
+      try { fs.copyFileSync(src, dst); stamp[f] = id; } catch (e) { this.log('tool copy failed', f, e.message); }
     }
-    try { fs.writeFileSync(stampF, want); } catch (e) {}
+    try { fs.writeFileSync(stampF, JSON.stringify(stamp)); } catch (e) {}
   }
   ready() {
     const p = this.paths();
@@ -311,8 +314,10 @@ class MediaEngine {
   }
 
   /* ---------- what is at this link (shown before downloading, to confirm) ---------- */
-  async info({ url, cookies }) {
+  async info({ url, cookies, key }) {
     await this.ensureTools();
+    if (!this.infoProcs) this.infoProcs = new Map();
+    if (key != null && this.infoProcs.has(key)) this.killTree(this.infoProcs.get(key));   // a newer link replaces the one still loading
     const p = this.paths();
     const dir = path.join(this.tmp, 'info-' + crypto.randomBytes(4).toString('hex'));
     fs.mkdirSync(dir, { recursive: true });
@@ -322,11 +327,12 @@ class MediaEngine {
     args.push('--', url);
     return new Promise(res => {
       const pr = this.run(p.ytdlp, args, this.o.jsRuntime ? { ...ENV, ELECTRON_RUN_AS_NODE: '1' } : ENV);
+      if (key != null) this.infoProcs.set(key, pr);
       let out = '', err = '';
       const t = setTimeout(() => this.killTree(pr), 45000);
       pr.stdout.setEncoding('utf8'); pr.stdout.on('data', d => { if (out.length < 30e6) out += d; });
       pr.stderr.setEncoding('utf8'); pr.stderr.on('data', d => (err = (err + d).slice(-2000)));
-      const done = r => { clearTimeout(t); fs.rm(dir, { recursive: true, force: true }, () => {}); res(r); };
+      const done = r => { clearTimeout(t); if (key != null && this.infoProcs.get(key) === pr) this.infoProcs.delete(key); fs.rm(dir, { recursive: true, force: true }, () => {}); res(r); };
       pr.on('error', e => done({ error: e.message }));
       pr.on('close', () => {
         let j = null; try { j = JSON.parse(out); } catch (e) {}

@@ -15,9 +15,13 @@ const fileUrl = p => 'file:///' + String(p).replace(/\\/g, '/').split('/').map((
 .tl input{position:absolute;inset:0;width:100%;margin:0;background:none;pointer-events:none;-webkit-appearance:none;appearance:none;height:34px}
 .tl input::-webkit-slider-thumb{pointer-events:auto;-webkit-appearance:none;width:16px;height:26px;border-radius:5px;background:#fff;cursor:ew-resize;border:2px solid var(--acc)}
 .tl input::-webkit-slider-runnable-track{background:none}
-.tt{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;margin-top:6px}
-.tt input[type=text]{width:92px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.05);color:#fff;font:inherit;direction:ltr;text-align:center}
-.tt .len{color:var(--acc);font-weight:600}
+.ttm{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;margin-top:6px}
+.ttm input[type=text]{width:92px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.05);color:#fff;font:inherit;direction:ltr;text-align:center}
+.ttm .len{color:var(--acc);font-weight:600}
+.mnote{font-size:12.5px;color:rgba(255,255,255,.55);margin-top:10px;line-height:1.7}
+.mnote.bad{color:#ff8a80}
+.tacts .go{background:#8ab4f8;color:#0b0b0f;border-color:transparent;font-weight:600}
+.tacts .go:disabled{opacity:.5;cursor:default}
 .tmode{display:flex;flex-direction:column;gap:6px;margin-top:12px;font-size:13px}
 .tmode label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;color:#ddd}
 .tmode small{display:block;color:var(--muted);font-size:12px}
@@ -26,7 +30,7 @@ const fileUrl = p => 'file:///' + String(p).replace(/\\/g, '/').split('/').map((
   document.body.insertAdjacentHTML('beforeend', `<div id="trim" hidden><div class="tbox">
   <video id="tv" controls preload="metadata"></video>
   <div class="tl"><div class="track"></div><div class="sel" id="tsel"></div><input type="range" id="ts" min="0" max="1000" value="0" step="1"><input type="range" id="te" min="0" max="1000" value="1000" step="1"></div>
-  <div class="tt"><span id="tsL"></span><input type="text" id="tsi"><button id="tsNow"></button><span id="teL"></span><input type="text" id="tei"><button id="teNow"></button><span style="flex:1"></span><span id="tlenL"></span><span class="len" id="tlen"></span></div>
+  <div class="ttm"><span id="tsL"></span><input type="text" id="tsi"><button id="tsNow"></button><span id="teL"></span><input type="text" id="tei"><button id="teNow"></button><span style="flex:1"></span><span id="tlenL"></span><span class="len" id="tlen"></span></div>
   <div class="tmode">
     <label><input type="radio" name="tm" value="fast" checked><span><span id="tmF"></span><small id="tmFs"></small></span></label>
     <label><input type="radio" name="tm" value="exact"><span><span id="tmE"></span><small id="tmEs"></small></span></label>
@@ -69,10 +73,10 @@ function openTrim(o) {
   $('tv').src = fileUrl(T.file);
   $('trim').hidden = false;
 }
-$('tv').addEventListener('loadedmetadata', () => { if (T) { T.dur = $('tv').duration || 0; if (T.e == null || T.e > T.dur) T.e = T.dur; tpaint(); } });
+$('tv').addEventListener('loadedmetadata', () => { if (T) { const d = $('tv').duration; T.dur = isFinite(d) && d > 0 ? d : 0; if (T.e == null || T.e > T.dur) T.e = T.dur; tpaint(); } });
 $('tv').addEventListener('error', () => { if (T) { $('tnote').className = 'mnote bad'; $('tnote').textContent = L('ما قدرت أعرض هذا الفيديو هنا، لكن تقدر تقصه بكتابة الأوقات.', 'This video cannot be previewed here, but you can still type the times.'); } });
 $('ts').addEventListener('input', () => { if (!T || !T.dur) return; T.s = Math.min(+$('ts').value / 1000 * T.dur, tval().e - 0.1); tpaint(); $('tv').currentTime = T.s; });
-$('te').addEventListener('input', () => { if (!T || !T.dur) return; T.e = Math.max(+$('te').value / 1000 * T.dur, T.s + 0.1); tpaint(); $('tv').currentTime = T.e; });
+$('te').addEventListener('input', () => { if (!T || !T.dur) return; T.e = Math.min(T.dur, Math.max(+$('te').value / 1000 * T.dur, T.s + 0.1)); tpaint(); $('tv').currentTime = T.e; });
 // typed or "current time": exact seconds, also when the video cannot be previewed (length unknown)
 const setBy = (which, sec) => {
   if (!T || isNaN(sec) || sec < 0) return;
@@ -100,7 +104,7 @@ $('tv').addEventListener('timeupdate', () => {
   if (!$('tv').paused && $('tv').currentTime >= e) { $('tv').pause(); $('tv').currentTime = e; }
 });
 $('tv').addEventListener('seeking', () => {
-  if (!inPart()) return;
+  if (!inPart() || $('tv').paused) return;   // paused: move anywhere, e.g. to pick a new start with "Set to current"
   const { s, e } = tval(), t = $('tv').currentTime;
   if (t < s - 0.05) $('tv').currentTime = s; else if (t > e + 0.05) $('tv').currentTime = e;
 });

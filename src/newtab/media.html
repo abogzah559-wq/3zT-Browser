@@ -10,7 +10,7 @@
 *{box-sizing:border-box}
 :root{--card:#141419;--line:rgba(255,255,255,.07);--muted:rgba(255,255,255,.55);--acc:#8ab4f8;--ok:#7ee2a8;--bad:#ff8a80}
 html,body{margin:0;background:#0b0b0f;color:#eee;font-family:"Thmanyah","Segoe UI",Tajawal,Tahoma,system-ui,sans-serif;color-scheme:dark;font-size:14px}
-.top{height:38px;display:flex;align-items:center;gap:8px;padding:0 14px;-webkit-app-region:drag;font-weight:600;font-size:13px;color:#ddd}
+.top{height:38px;display:flex;align-items:center;gap:8px;padding:0 14px;/* keep clear of Windows' minimize/close buttons */padding-left:calc(env(titlebar-area-x, 0px) + 14px);padding-right:calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 14px);-webkit-app-region:drag;font-weight:600;font-size:13px;color:#ddd}
 .top img{width:18px;height:18px;border-radius:50%}
 main{padding:4px 16px 20px}
 button{font:inherit;color:inherit;cursor:pointer;padding:7px 14px;border-radius:16px;border:1px solid rgba(255,255,255,.18);background:transparent;white-space:nowrap}
