@@ -3,6 +3,20 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.14.0
+
+### English
+- The video downloader has its own small window, separate from the browser's downloads. Before downloading it shows the video's picture, title, channel, length and link so you can confirm, and only offers the qualities the video really has.
+- Its tools (yt-dlp, gallery-dl, FFmpeg) now come with the setup: no waiting the first time. They only run while something is downloading.
+- Settings → About → Check for updates: looks for an update right away and downloads it; "Restart to update" installs it in seconds and brings your tabs back.
+- A tidier bar: the fox button is smaller, and the ad-blocker shield sits next to the extensions button.
+
+### العربية
+- محمّل الفيديو صار له نافذة صغيرة خاصة فيه، بعيد عن تنزيلات المتصفح. قبل التحميل يوريك صورة المقطع واسمه والقناة والمدة والرابط عشان تتأكد، وما يعرض إلا الجودات اللي فعلاً موجودة في المقطع.
+- أدوات التحميل صارت داخل السيت اب: ما فيه انتظار أول مرة، وما تشتغل إلا وقت التحميل.
+- الإعدادات ← حول المتصفح ← التحقق من وجود تحديث: يدوّر على تحديث الحين وينزّله، و«أعد التشغيل للتحديث» يثبّته في ثواني وترجع تبويباتك.
+- البار صار أرتب: زر الثعلب أصغر، ودرع مانع الإعلانات صار جنب زر الإضافات.
+
 ## 0.13.0
 
 ### English

@@ -70,6 +70,10 @@ async function main() {
   ok('browser starts', !!up);
   const pend = await until(() => { try { return JSON.parse(fs.readFileSync(path.join(UPD, 'pending.json'), 'utf8')); } catch (e) { return null; } }, 120000);
   ok('update found, downloaded and verified in the background', !!pend && pend.version === nextVer && fs.existsSync(pend.file), pend ? `${pend.version} (${served} download)` : 'no pending.json');
+  // Settings -> About -> "Check now" reports the waiting update
+  await cdp(9334, 'ui/toolbar.html', `ui.send('tab','go',{text:'3zt://settings',newTab:true}), 1`);
+  const chk = await until(() => cdp(9334, 'newtab/settings.html', `zeus.act('checkUpdate').then(r => JSON.stringify(r))`), 30000, 1000);
+  ok('"Check for updates" in Settings finds it', /"state":"ready"/.test(chk || '') && chk.includes(nextVer), chk || 'no answer');
   ok('nothing was shown while browsing', (await cdp(9334, 'ui/toolbar.html', 'document.getElementById("toast").hidden')) !== false);
 
   // 3. close normally
