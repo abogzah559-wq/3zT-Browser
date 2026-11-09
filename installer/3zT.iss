@@ -1,5 +1,5 @@
 ; 3zT Browser - Windows installer (Inno Setup 6.6 or newer, for the dark wizard)
-; build: ISCC installer\3zT.iss /DAppVersion=0.8.0
+; build: ISCC installer\3zT.iss /DAppVersion=<version from package.json> (CI passes it)
 ; expects the app folder in dist\3zT (made by scripts\build_win.py)
 
 #ifndef AppVersion

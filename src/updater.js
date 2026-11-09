@@ -193,9 +193,23 @@ function waitIfInstalling() {
   if (process.platform !== 'win32') return false;
   let at = 0; try { at = +fs.readFileSync(lockFile(), 'utf8') || fs.statSync(lockFile()).mtimeMs; } catch (e) { return false; }
   if (Date.now() - at > 3 * 60 * 1000) { try { fs.unlinkSync(lockFile()); } catch (e) {} return false; }   // stale
-  const q = a => (/[\s"]/.test(a) ? '"' + String(a).replace(/"/g, '\\"') + '"' : String(a));
+  const q = quoteArg;
   try { fs.writeFileSync(path.join(dir(), 'relaunch.flag'), process.argv.slice(1).map(q).join(' ')); } catch (e) { return false; }
   return true;
+}
+
+/* one command-line argument the way Windows reads it back (CommandLineToArgvW):
+   backslashes are only special right before a quote, so they are doubled there */
+function quoteArg(a) {
+  a = String(a);
+  if (a && !/[\s"]/.test(a)) return a;
+  let out = '"', bs = 0;
+  for (const ch of a) {
+    if (ch === '\\') { bs++; continue; }
+    if (ch === '"') { out += '\\'.repeat(bs * 2 + 1) + '"'; bs = 0; continue; }
+    out += '\\'.repeat(bs) + ch; bs = 0;
+  }
+  return out + '\\'.repeat(bs * 2) + '"';
 }
 
 /* leftovers of an update that is already installed (or older than this version) */
@@ -229,4 +243,4 @@ function start(opts = {}) {
   return true;
 }
 
-module.exports = { start, check, installOnQuit, waitIfInstalling, takeUpdated, installed, newer, notesFor, signedText };
+module.exports = { quoteArg, start, check, installOnQuit, waitIfInstalling, takeUpdated, installed, newer, notesFor, signedText };

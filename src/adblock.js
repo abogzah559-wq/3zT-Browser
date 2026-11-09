@@ -30,43 +30,75 @@ onclickads.net hilltopads.net clickadu.com adsterra.com a-ads.com
 bat.bing.com clarity.ms adroll.com bidswitch.net contextweb.com sovrn.com lijit.com
 yandex.ru/ads mc.yandex.ru an.yandex.ru adfox.ru`.split(/\s+/).filter(x => x && !x.includes('/'));
 
+/* EasyList resource-type options -> Electron's webRequest resourceType */
+const TYPES = {
+  script: ['script'], image: ['image'], stylesheet: ['stylesheet'], object: ['object'],
+  xmlhttprequest: ['xhr'], xhr: ['xhr'], subdocument: ['subFrame'], frame: ['subFrame'], ping: ['ping'], beacon: ['ping'],
+  media: ['media'], font: ['font'], websocket: ['webSocket'], other: ['other', 'cspReport']
+};
+const ALL_TYPES = [...new Set(Object.values(TYPES).flat())];
+// options that make a rule something other than "block this host": skipped
+const SKIP = /^(popup|csp|redirect|redirect-rule|removeparam|badfilter|~third-party|first-party|1p|document|doc|elemhide|generichide|genericblock|specifichide|header|permissions|urltransform|replace|to|method|denyallow|strict1p|strict3p|all)$/;
+
 class AdBlocker {
   constructor(dir) {
     this.dir = dir;
-    this.block = new Set(SEED);       // block everywhere
-    this.block3p = new Set();         // block only when loaded by another site
-    this.allow = new Set();           // exceptions from the lists
+    this.block = new Set(SEED);       // block everywhere, every type
+    this.block3p = new Set();         // block only when loaded by another site, every type
+    this.typed = new Map();           // host -> [{ types: Set|null, tp: bool }] rules limited to some resource types
+    this.allow = new Set();           // exceptions from the lists (every type)
+    this.allowTyped = new Map();      // host -> [Set of types]
     this.ruleCount = SEED.length;
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
     this.loadCached();
   }
 
-  /* "||host^" rules only (the bulk of the lists, cheap and safe). Site-specific and path rules are skipped. */
+  /* "||host^" rules, with their resource types and third-party option. Site-specific and path rules are skipped. */
   parse(text) {
-    const block = new Set(), block3p = new Set(), allow = new Set();
+    const out = { block: new Set(), block3p: new Set(), typed: new Map(), allow: new Set(), allowTyped: new Map() };
     const re = /^(@@)?\|\|([a-z0-9][a-z0-9.-]*\.[a-z]{2,})\^(?:\$(.*))?$/i;
     for (const raw of text.split('\n')) {
       const line = raw.trim();
-      if (!line || line[0] === '!' || line.includes('#')) continue;
+      if (!line || line[0] === '!' || line[0] === '[' || line.includes('#')) continue;
       const m = re.exec(line); if (!m) continue;
-      const host = m[2].toLowerCase(), opts = (m[3] || '').toLowerCase();
-      if (opts) {
-        if (/(^|,)domain=/.test(opts)) continue;                                   // site-specific
-        if (!m[1] && /(^|,)(popup|csp|redirect|redirect-rule|removeparam|badfilter|~third-party|first-party|1p)(,|=|$)/.test(opts)) continue;
+      const host = m[2].toLowerCase();
+      const opts = (m[3] || '').toLowerCase().split(',').map(o => o.trim()).filter(Boolean);
+      let tp = false, skip = false;
+      const yes = new Set(), no = new Set();
+      for (const o of opts) {
+        const name = o.split('=')[0];
+        if (name === 'domain' || name === 'from') { skip = true; break; }   // site-specific
+        if (o === 'third-party' || o === '3p') { tp = true; continue; }
+        if (o === 'important' || o === 'match-case') continue;
+        if (TYPES[o]) { TYPES[o].forEach(t => yes.add(t)); continue; }
+        if (o[0] === '~' && TYPES[o.slice(1)]) { TYPES[o.slice(1)].forEach(t => no.add(t)); continue; }
+        if (SKIP.test(name)) { skip = true; break; }
+        skip = true; break;                                                  // an option we don't understand: leave the rule out
       }
-      if (m[1]) { allow.add(host); continue; }
-      if (/(^|,)(third-party|3p)(,|$)/.test(opts)) block3p.add(host); else block.add(host);
+      if (skip) continue;
+      let types = null;                                                        // null = every type
+      if (yes.size) types = yes;
+      else if (no.size) types = new Set(ALL_TYPES.filter(t => !no.has(t)));
+      if (m[1]) {
+        if (!types) out.allow.add(host);
+        else { const l = out.allowTyped.get(host) || []; l.push(types); out.allowTyped.set(host, l); }
+        continue;
+      }
+      if (!types) (tp ? out.block3p : out.block).add(host);
+      else { const l = out.typed.get(host) || []; l.push({ types, tp }); out.typed.set(host, l); }
     }
-    return { block, block3p, allow };
+    return out;
   }
   apply(texts) {
-    const block = new Set(SEED), block3p = new Set(), allow = new Set();
+    const block = new Set(SEED), block3p = new Set(), allow = new Set(), typed = new Map(), allowTyped = new Map();
+    const merge = (dst, src) => src.forEach((v, k) => dst.set(k, (dst.get(k) || []).concat(v)));
     for (const t of texts) {
       const r = this.parse(t);
       r.block.forEach(h => block.add(h)); r.block3p.forEach(h => block3p.add(h)); r.allow.forEach(h => allow.add(h));
+      merge(typed, r.typed); merge(allowTyped, r.allowTyped);
     }
-    this.block = block; this.block3p = block3p; this.allow = allow;
-    this.ruleCount = block.size + block3p.size;
+    Object.assign(this, { block, block3p, allow, typed, allowTyped });
+    this.ruleCount = block.size + block3p.size + typed.size;
   }
   loadCached() {
     const texts = [];
@@ -96,29 +128,39 @@ class AdBlocker {
   }
 
   static hostOf(u) { try { return new URL(u).hostname.toLowerCase(); } catch (e) { return ''; } }
-  /* rough "same site" check: compare the last two labels (three for things like co.uk / com.sa) */
   // registrable domain from the Public Suffix List (decides "third-party" and the per-site switch)
   static site(host) { return site(host); }
-  inSet(set, host) {
+  /* the host or one of its parent domains is in the set/map: returns that key */
+  find(set, host) {
     let h = host;
     for (;;) {
-      if (set.has(h)) return true;
-      const i = h.indexOf('.'); if (i < 0) return false;
+      if (set.has(h)) return h;
+      const i = h.indexOf('.'); if (i < 0) return null;
       h = h.slice(i + 1);
     }
   }
-  /* should this request be blocked? pageUrl = the page that is loading it */
-  shouldBlock(url, pageUrl) {
+  inSet(set, host) { return this.find(set, host) !== null; }
+  /* should this request be blocked? pageUrl = the page that is loading it, type = Electron resourceType */
+  shouldBlock(url, pageUrl, type) {
     const host = AdBlocker.hostOf(url); if (!host) return false;
     if (this.inSet(this.allow, host)) return false;
-    if (this.inSet(this.block, host)) {
-      // never block a site's own resources (e.g. visiting doubleclick.net itself)
-      const page = AdBlocker.hostOf(pageUrl);
-      return !page || AdBlocker.site(page) !== AdBlocker.site(host);
+    if (type && this.allowTyped.size) {
+      for (let h = host; h;) {
+        const l = this.allowTyped.get(h); if (l && l.some(s => s.has(type))) return false;
+        const i = h.indexOf('.'); h = i < 0 ? '' : h.slice(i + 1);
+      }
     }
-    if (this.block3p.size && this.inSet(this.block3p, host)) {
-      const page = AdBlocker.hostOf(pageUrl);
-      return !!page && AdBlocker.site(page) !== AdBlocker.site(host);
+    const page = AdBlocker.hostOf(pageUrl);
+    const thirdParty = !!page && AdBlocker.site(page) !== AdBlocker.site(host);
+    // never block a site's own resources (e.g. visiting doubleclick.net itself)
+    if (this.inSet(this.block, host)) return !page || thirdParty;
+    if (this.block3p.size && this.inSet(this.block3p, host)) return thirdParty;
+    if (type && this.typed.size) {
+      for (let h = host; h;) {
+        const l = this.typed.get(h);
+        if (l && l.some(r => r.types.has(type) && (!r.tp || thirdParty) && (!page || thirdParty))) return true;
+        const i = h.indexOf('.'); h = i < 0 ? '' : h.slice(i + 1);
+      }
     }
     return false;
   }

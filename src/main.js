@@ -67,9 +67,19 @@ if (early.hwAccel !== false) {
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) { app.quit(); }
 
-/* never block the browser with an error box: log it and keep going */
-process.on('uncaughtException', err => { console.error('[3zT] uncaught', err && err.stack || err); });
-process.on('unhandledRejection', err => { console.error('[3zT] unhandled', err && err.stack || err); });
+/* never block the browser with an error box: log it (console + logs/3zt.log, kept small) and keep going */
+const LOG_FILE = path.join(app.getPath('userData'), 'logs', '3zt.log');
+function logError(kind, err) {
+  const text = `${new Date().toISOString()} ${kind} ${(err && err.stack) || err}\n`;
+  console.error('[3zT]', kind, (err && err.stack) || err);
+  try {
+    fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+    try { if (fs.statSync(LOG_FILE).size > 1024 * 1024) fs.renameSync(LOG_FILE, LOG_FILE + '.old'); } catch (e) {}
+    fs.appendFileSync(LOG_FILE, text);
+  } catch (e) {}
+}
+process.on('uncaughtException', err => logError('uncaught', err));
+process.on('unhandledRejection', err => logError('unhandled', err));
 
 // files that built-in YouTube features load into the page (must be allowed past the site's CSP, like an extension's files)
 protocol.registerSchemesAsPrivileged([{ scheme: 'zeus-res', privileges: { standard: true, secure: true, bypassCSP: true, supportFetchAPI: true, corsEnabled: true } }]);
@@ -206,9 +216,10 @@ class Win {
     });
     w.on('closed', () => {
       clearTimeout(this.stateTimer); this.stateTimer = null;
-      for (const q of (this.permQueue || []).slice()) { clearTimeout(q.timer); q.resolve('ignore'); }
+      for (const q of (this.permQueue || []).slice()) { clearTimeout(q.timer); q.resolve({ choice: 'ignore', pick: null }); }
       this.permQueue = [];
       if (this.private && perms) perms.forgetPartition(this.partition);   // private window: its permission answers go with it
+      if (this.private && dl) dl.forgetPartition(this.partition);         // ...and its downloads leave the list
       for (const t of this.tabs) if (t.view) destroyView(t.view);
       this.tabs = [];
       destroyView(this.ui);   // a closed BaseWindow does not free its views by itself
@@ -337,6 +348,7 @@ class Win {
       discarded: false, muted: false, lastActive: Date.now(), win: this
     };
     if (opts.discarded) { tab.discarded = true; tab.title = opts.title || ''; tab.favicon = cachedFavicon(tab.url); }
+    else if (opts.fromOpener) { tab.openedByPage = true; makeView(tab, opts.fromOpener); }   // Chromium loads it itself (POST, Referer, opener)
     else { makeView(tab); loadInto(tab, tab.url); }
     this.insertTab(tab, opts);
     if (opts.activate !== false) this.activate(tab.id); else this.pushState();
@@ -382,9 +394,9 @@ class Win {
     this.activate(tab.id);
   }
 
-  closeTab(id) {
+  closeTab(id, opts = {}) {
     const t = this.tab(id); if (!t) return;
-    if (!isInternal(t.url) && !this.private) { closedStack.push({ url: t.url, title: t.title }); if (closedStack.length > 25) closedStack.shift(); }
+    if (!isInternal(t.url) && !this.private && !opts.forget) { closedStack.push({ url: t.url, title: t.title }); if (closedStack.length > 25) closedStack.shift(); }
     cancelPermissionsOf(t);
     this.releaseTab(t);
     if (t.view) destroyView(t.view);
@@ -442,8 +454,10 @@ async function openExternalAsk(tab, url) {
 /* ---------- tab views ---------- */
 function destroyView(view) { try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (e) {} }
 
-function makeView(tab) {
-  const view = new WebContentsView({
+/* fromOpener: the options Chromium hands over for a window.open / target=_blank page (keeps its opener and request) */
+function makeView(tab, fromOpener) {
+  // Chromium already made the page's WebContents (same settings as the opener): the tab adopts it
+  const view = fromOpener && fromOpener.webContents ? new WebContentsView({ webContents: fromOpener.webContents }) : new WebContentsView({
     webPreferences: {
       preload: PRELOAD_TAB,            // gives an API only to our own internal pages (checked inside)
       partition: tab.win.partition,
@@ -465,8 +479,12 @@ function makeView(tab) {
     if (d.disposition === 'new-window' && d.features) {
       return { action: 'allow', overrideBrowserWindowOptions: Object.assign({ autoHideMenuBar: true, backgroundColor: '#111' }, ICON_OPT) };
     }
-    tab.win.createTab(d.url, { activate: d.disposition !== 'background-tab', after: tab.id });
-    return { action: 'deny' };
+    // a new tab made by Chromium itself, like Chrome: the site's exact request (form POST data, Referer)
+    // and window.opener are kept. Download sites depend on this; a plain loadURL of the address loses them.
+    return {
+      action: 'allow', outlivesOpener: true,
+      createWindow: options => tab.win.createTab(d.url, { activate: d.disposition !== 'background-tab', after: tab.id, fromOpener: options }).view.webContents
+    };
   });
 
   const upd = () => tab.win.pushState();
@@ -484,6 +502,7 @@ function makeView(tab) {
     storeFavicon(tab, u);
   });
   const nav = (e, url) => {
+    if (url && url !== 'about:blank') tab.committed = true;
     const wasFlush = isNewtab(tab.url);
     tab.url = url;
     view.setBackgroundColor(isNewtab(url) ? '#000000' : PAGE_BG);
@@ -812,7 +831,7 @@ function handleKey(w, i) {
   if (c && k === 'w') { if (t) w.closeTab(t.id); return true; }
   if (c && k === 'tab') { cycle(w, i.shift ? -1 : 1); return true; }
   if (c && /^[1-8]$/.test(k)) { const x = w.tabs[+k - 1]; if (x) w.activate(x.id); return true; }
-  if (c && k === '9') { w.activate(w.tabs[w.tabs.length - 1].id); return true; }
+  if (c && k === '9') { const x = w.tabs[w.tabs.length - 1]; if (x) w.activate(x.id); return true; }
   if ((c && k === 'l') || k === 'f6' || (i.alt && k === 'd')) { w.focusAddress(); return true; }
   if (k === 'f5' || (c && k === 'r')) {
     const hard = (k === 'f5' && (i.shift || c)) || (c && i.shift && k === 'r');
@@ -1117,7 +1136,6 @@ function taskRows() {
 }
 
 /* ---------- permissions + downloads for a session ---------- */
-const setUp = new WeakSet();
 /* Google blocks sign-in from Electron-based browsers ("this browser may not be secure").
    Only on Google's sign-in pages we look like Firefox (which Google allows); every other site sees Chrome. */
 const FIREFOX_UA = process.platform === 'win32'
@@ -1129,7 +1147,6 @@ const setUpSessions = new WeakSet();
 function setupSession(ses) {
   if (setUpSessions.has(ses)) return;   // a private window's tabs share one session: set it up once
   setUpSessions.add(ses);
-  if (setUp.has(ses)) return; setUp.add(ses);
   try { ses.protocol.handle('zeus-res', FEAT.serve); } catch (e) {}
   try { ses.setSpellCheckerEnabled(false); } catch (e) {}   // no dictionary download, less memory
   ses.webRequest.onBeforeSendHeaders({ urls: SIGNIN_URLS }, (d, cb) => {
@@ -1146,7 +1163,7 @@ function setupSession(ses) {
     if (!/^https?:/i.test(page)) return cb({});            // only websites (not our own pages)
     const ph = hostOf(page);
     if (ph && settings.data.adAllow.includes(AdBlocker.site(ph))) return cb({});
-    if (!adblock.shouldBlock(d.url, page)) return cb({});
+    if (!adblock.shouldBlock(d.url, page, d.resourceType)) return cb({});
     const t = d.webContents && tabOfWc(d.webContents);
     if (t) { t.blocked = (t.blocked || 0) + 1; if (t.id === t.win.activeId) t.win.pushState(); }
     // the running total: counted in memory, written to disk at most once a minute (not on every blocked request)
@@ -1157,8 +1174,11 @@ function setupSession(ses) {
   setupPermissions(ses);
   ses.on('will-download', (e, item, wc) => {
     const resumeId = dl.takeResume();
-    const rec = dl.handle(item, { resumeId });
-    rec.winId = (() => { const t = wc && tabOfWc(wc); const w = (t && t.win) || focusedWin(); return w ? w.id : null; })();
+    const t = wc && tabOfWc(wc);
+    const rec = dl.handle(item, { resumeId, partition: ses !== session.defaultSession ? ((t && t.win.partition) || 'private') : null });
+    rec.winId = (() => { const w = (t && t.win) || focusedWin(); return w ? w.id : null; })();
+    // a tab a site opened only to start this download (nothing ever showed in it): closed once the file has a place, like Chrome
+    if (t && t.openedByPage && !t.committed) { dlBlankTabs.set(rec.id, t); item.once('done', () => closeBlankTab(rec.id)); }
   });
 }
 
@@ -1166,12 +1186,12 @@ function setupSession(ses) {
 let perms = null;
 const partOf = t => (t && t.win && t.win.private ? t.win.partition : null);
 let permSeq = 0;
-const permWait = new Map();          // id -> { tab, resolve, timer }
-/* ask in the bar of the tab's window (one question at a time per window); resolves 'allow' | 'block' | 'ignore' */
+/* ask in the bar of the tab's window (one question at a time per window);
+   resolves { choice: 'allow' | 'block' | 'ignore', pick } (pick = the device or screen chosen) */
 function askPermission(tab, q) {
   return new Promise(resolve => {
     const w = tab && tab.win;
-    if (!w || w.win.isDestroyed() || w.ui.webContents.isDestroyed()) return resolve('ignore');
+    if (!w || w.win.isDestroyed() || w.ui.webContents.isDestroyed()) return resolve({ choice: 'ignore', pick: null });
     const id = ++permSeq;
     const item = { id, tab, q, resolve };
     (w.permQueue || (w.permQueue = [])).push(item);
@@ -1186,12 +1206,12 @@ function showPermission(w) {
   // a question nobody answers never hangs the page (the bar itself closes much sooner)
   item.timer = setTimeout(() => finishPermission(w, item.id, 'ignore'), item.q.type === 'ask' ? 60000 : 10 * 60000);
 }
-function finishPermission(w, id, choice, extra) {
+function finishPermission(w, id, choice, pick) {
   const q = w.permQueue || []; const i = q.findIndex(x => x.id === id); if (i < 0) return;
   const [item] = q.splice(i, 1);
   clearTimeout(item.timer);
   if (!w.ui.webContents.isDestroyed()) w.ui.webContents.send('perm-cancel', id);
-  item.resolve(choice, extra);
+  item.resolve({ choice, pick: pick == null ? null : String(pick) });
   if (q.length && i === 0) setTimeout(() => showPermission(w), 250);
 }
 /* a page went away (closed or left): drop its questions */
@@ -1228,7 +1248,7 @@ function setupPermissions(ses) {
     if (saved.every(v => v === 'allow')) return cb(true);
     if (saved.some(v => v === 'block')) { permNote(tab, origin, kinds.filter((k, i) => saved[i] === 'block')); return cb(false); }
     const ask = kinds.filter((k, i) => saved[i] !== 'allow');
-    askPermission(tab, { type: 'ask', host: hostLabel(origin), kinds: ask }).then(choice => {
+    askPermission(tab, { type: 'ask', host: hostLabel(origin), kinds: ask }).then(({ choice }) => {
       if (choice === 'allow' || choice === 'block') for (const k of ask) perms.set(origin, k, choice, part);
       else permNote(tab, origin, ask);
       if (choice === 'block') permNote(tab, origin, ask);
@@ -1259,8 +1279,7 @@ function setupPermissions(ses) {
     let wc = null; try { wc = frame ? webContents.fromFrame(frame) : null; } catch (e) {}
     const tab = tabOf(wc); const origin = PERM.originOf(frame ? frame.url : wc ? wc.getURL() : '');
     if (!tab || !origin || perms.get(origin, kind, partOf(tab)) === 'block') return cb();
-    askPermission(tab, { type: 'device', kind, host: hostLabel(origin), devices: list.slice(0, 40) }).then((choice, extra) => {
-      const pick = permWait.get(tab.id); permWait.delete(tab.id);
+    askPermission(tab, { type: 'device', kind, host: hostLabel(origin), devices: list.slice(0, 40) }).then(({ choice, pick }) => {
       if (choice === 'allow' && pick && list.some(x => x.id === pick)) { perms.set(origin, kind, 'allow', partOf(tab)); cb(pick); }
       else cb();
     });
@@ -1279,8 +1298,7 @@ function setupPermissions(ses) {
     try { sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 256, height: 144 }, fetchWindowIcons: false }); } catch (e) {}
     if (!sources.length) return deny();
     const list = sources.slice(0, 24).map(s => ({ id: s.id, name: s.name, screen: s.id.startsWith('screen:'), thumb: s.thumbnail && !s.thumbnail.isEmpty() ? s.thumbnail.toDataURL() : '' }));
-    askPermission(tab, { type: 'screen', host: hostLabel(origin), sources: list, audio: !!req.audioRequested }).then(choice => {
-      const pick = permWait.get(tab.id); permWait.delete(tab.id);
+    askPermission(tab, { type: 'screen', host: hostLabel(origin), sources: list, audio: !!req.audioRequested }).then(({ choice, pick }) => {
       const src = choice === 'allow' && sources.find(s => s.id === pick);
       if (!src) return deny();
       const out = { video: src };
@@ -1293,8 +1311,7 @@ function setupPermissionIpc() {
   ipcMain.on('perm:answer', (e, a) => {
     const w = uiWin(e); if (!w || !a) return;
     const item = (w.permQueue || []).find(x => x.id === a.id); if (!item) return;
-    if (a.pick != null) permWait.set(item.tab.id, String(a.pick));
-    finishPermission(w, a.id, a.choice === 'allow' ? 'allow' : a.choice === 'block' ? 'block' : 'ignore');
+    finishPermission(w, a.id, a.choice === 'allow' ? 'allow' : a.choice === 'block' ? 'block' : 'ignore', a.pick);
   });
   // the site panel in the bar: change a permission of the current site
   ipcMain.on('perm:set', (e, a) => {
@@ -1308,7 +1325,13 @@ function setupPermissionIpc() {
 
 /* ---------- downloads: tell the bar (notices + icon) and the downloads page ---------- */
 let dlPageTimer = null;
+const dlBlankTabs = new Map();   // download id -> empty tab that only started it
+function closeBlankTab(id) {
+  const t = dlBlankTabs.get(id); dlBlankTabs.delete(id);
+  if (t && !t.committed && t.win && t.win.tabs.includes(t)) t.win.closeTab(t.id, { forget: true });
+}
 function dlNotify(rec, ev) {
+  if (ev === 'start' || ev === 'done') closeBlankTab(rec.id);
   const w = wins.find(x => x.id === rec.winId) || focusedWin();
   if ((ev === 'start' || ev === 'done') && w && !w.ui.webContents.isDestroyed()) {
     w.ui.webContents.send('download', { id: rec.id, name: rec.name, path: rec.path, state: ev === 'start' ? 'started' : rec.state });
