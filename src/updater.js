@@ -72,7 +72,7 @@ async function check() {
     const ver = String(rel.tag_name || '').replace(/^v/, '');
     if (!ver || !newer(ver, app.getVersion())) return { state: 'latest', version: app.getVersion() };
     const asset = (rel.assets || []).find(a => a.name === ASSET);
-    if (!asset) return { state: 'latest', version: app.getVersion() };
+    if (!asset) return { state: 'error', error: 'the release has no setup file' };
     // already downloaded and verified?
     const pend = readJson(pendingFile());
     if (pend && pend.version === ver && fs.existsSync(pend.file)) return { state: 'ready', version: ver };

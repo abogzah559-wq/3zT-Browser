@@ -49,11 +49,12 @@ async function download(url, dest) {
   console.log(`mikf/gallery-dl (codeberg) ${j.tag_name}: gallery-dl.exe`);
   const dest = path.join(BIN, 'gallery-dl.exe');
   await download(exe.browser_download_url, dest);
-  if (sums) {
+  if (!sums) throw new Error('gallery-dl: no SHA256SUMS in the release');
+  {
     const txt = await (await fetch(sums.browser_download_url)).text();
     const want = (txt.split(/\r?\n/).find(l => /\sgallery-dl\.exe$/.test(l)) || '').split(/\s+/)[0];
     const got = crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
-    if (want && want !== got) throw new Error(`gallery-dl.exe checksum mismatch ${got} != ${want}`);
+    if (!want || want !== got) throw new Error(`gallery-dl.exe checksum mismatch or missing ${got} != ${want}`);
     console.log('gallery-dl.exe sha256 ok:', got === want);
   }
 }

@@ -393,10 +393,11 @@ window.probe = async () => {
   r.conditionalAfter2s = await timed(c, 2000);
   ac.abort(); r.afterAbort = await timed(c, 500);
   // the same from a sign-in box embedded from another site (iframe)
-  r.frame = await new Promise(res => { addEventListener('message', e => res(e.data), { once: true }); const f = document.createElement('iframe'); f.src = 'http://127.0.0.1:8793/?frame'; document.body.appendChild(f); setTimeout(() => res('no answer'), 5000); });
+  r.frame = await new Promise(res => { addEventListener('message', e => res(e.data), { once: true }); const f = document.createElement('iframe'); f.allow = 'publickey-credentials-get *'; f.src = 'http://127.0.0.1:8793/?frame'; document.body.appendChild(f); setTimeout(() => res('no answer'), 5000); });
   return JSON.stringify(r);
 };
-if (location.search.includes('frame')) timed(navigator.credentials.get({ publicKey: pk({ allowCredentials: [] }) }), 1500).then(v => parent.postMessage('background ' + v, '*'));
+// only 3zT's fix makes a frame say "no passkey autofill"; then its background request must be refused at once
+if (location.search.includes('frame')) PublicKeyCredential.isConditionalMediationAvailable().then(async a => parent.postMessage('autofill ' + a + ' background ' + await timed(navigator.credentials.get({ publicKey: pk({ allowCredentials: [] }) }), 1500), '*'));
 // a passkey you ask for yourself (a click): must still reach Windows
 window.mine = () => { window.ac2 = new AbortController(); window.res2 = 'waiting'; navigator.credentials.get({ signal: ac2.signal, publicKey: pk({ allowCredentials: [] }) }).then(() => (res2 = 'resolved'), e => (res2 = 'rejected ' + e.name)); return 1; };
 </script>`;
@@ -419,7 +420,7 @@ async function passkeys() {
     await run('without fix');
     await stop(); await start(); await sleep(3000);
     const w = await run('with fix');
-    ok('sign-in pages: background passkey requests do not open the Windows Security window', w.v.conditionalAvailable === false && /^rejected NotAllowedError/.test(w.v.immediate) && /^rejected NotAllowedError/.test(w.v.background) && w.v.conditionalAfter2s === 'waiting' && /rejected NotAllowedError/.test(w.v.frame || '') && !w.win, JSON.stringify(w));
+    ok('sign-in pages: background passkey requests do not open the Windows Security window', w.v.conditionalAvailable === false && /^rejected NotAllowedError/.test(w.v.immediate) && /^rejected NotAllowedError/.test(w.v.background) && w.v.conditionalAfter2s === 'waiting' && /^autofill false background rejected NotAllowedError/.test(w.v.frame || '') && !w.win, JSON.stringify(w));
     // a passkey request after a click still goes to Windows (its window opens, or the request at least is not refused at once)
     const c = await open();
     await c.ev('mine()', true);

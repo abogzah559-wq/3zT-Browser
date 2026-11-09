@@ -226,6 +226,7 @@ class Win {
         if (perms) perms.forgetPartition(this.partition);
         if (dl) dl.forgetPartition(this.partition);
         if (media) media.forgetPartition(this.partition);
+        const mw = mediaWins.get(this.partition); if (mw && !mw.isDestroyed()) mw.close();   // its downloader window ends with the session
       }
       for (const t of this.tabs) if (t.view) destroyView(t.view);
       this.tabs = [];
@@ -234,7 +235,10 @@ class Win {
       for (const x of wins) x.pushState();   // window count changed
       if (lastFocused === this) lastFocused = wins[0] || null;
       if (!quitting) saveSessionSoon();
-      if (!wins.length && !mediaWins.size) app.quit();   // a downloader window still open keeps its downloads going
+      if (!wins.length && ![...mediaWins.values()].some(m => !m.isDestroyed())) app.quit();
+      // the normal downloader window still open keeps the app (and its downloads) going; the next browser window
+      // opened from the shortcut must save its session again
+      else if (!wins.length) quitting = false;
     });
     wins.push(this);
     for (const x of wins) if (x !== this) x.pushState();
@@ -473,6 +477,7 @@ function makeView(tab, fromOpener) {
     webPreferences: {
       preload: PRELOAD_TAB,            // gives an API only to our own internal pages (checked inside)
       nodeIntegrationInSubFrames: true,   // only so the preload also reaches iframes (passkey fix); Node stays off, sandbox on
+      additionalArguments: process.env.ZEUS_NO_PASSKEY_FIX ? ['--3zt-no-passkey-fix'] : [],
       partition: tab.win.partition,
       contextIsolation: true, sandbox: true, nodeIntegration: false,
       plugins: true,                   // built-in PDF viewer
@@ -1442,7 +1447,7 @@ function openMediaWindow(url, partition) {
   mediaWinPart.set(id, partition || null);
   if (url) mediaPending.set(id, { url, partition: partition || null });
   mw.webContents.on('will-navigate', e => e.preventDefault());   // it only ever shows its own page
-  mw.webContents.setWindowOpenHandler(d => { if (/^https?:/i.test(d.url)) { const w = focusedWin(); if (w) w.createTab(d.url); } return { action: 'deny' }; });
+  mw.webContents.setWindowOpenHandler(d => { if (/^https?:/i.test(d.url)) { const w = wins.find(x => (x.private ? x.partition : null) === (partition || null)); if (w) { w.createTab(d.url); w.win.focus(); } else if (!partition) newWindow({ url: d.url }); } return { action: 'deny' }; });
   mw.once('ready-to-show', () => mw.show());
   mw.on('closed', () => {
     mediaWins.delete(key); mediaWinPart.delete(id); mediaPending.delete(id);
@@ -1488,7 +1493,7 @@ async function mediaCookies(url, ses) {
   try { return (await ses.cookies.get({})).filter(c => { const d = c.domain.replace(/^\./, ''); return d === s || d.endsWith('.' + s); }); } catch (e) { return []; }
 }
 function setupMediaIpc() {
-  const okPage = e => { try { return same(e.senderFrame.url, pathToFileURL(MEDIA_FILE).href); } catch (x) { return false; } };
+  const okPage = e => { try { return mediaWinPart.has(e.sender.id) && same(e.senderFrame.url, pathToFileURL(MEDIA_FILE).href); } catch (x) { return false; } };
   const okList = e => okPage(e) || (() => { try { return isDownloads(e.senderFrame.url); } catch (x) { return false; } })();   // trimming list files
   // the downloader window of a private session uses that session's cookies; the normal one uses yours
   const sesFor = e => {
@@ -1507,7 +1512,7 @@ function setupMediaIpc() {
     if (!okPage(e)) return { error: 'denied' };
     const url = cleanUrl(u); if (!url) return { error: 'bad-url' };
     const { ses } = sesFor(e);
-    try { return await mediaEngine().info({ url, cookies: await mediaCookies(url, ses) }); } catch (x) { return { error: String(x.message || x) }; }
+    try { return await mediaEngine().info({ url, cookies: await mediaCookies(url, ses), key: e.sender.id }); } catch (x) { return { error: String(x.message || x) }; }
   });
   // the link from the address-bar button, given once (a reload of the page does not fill it again)
   ipcMain.handle('media:take', e => { if (!okPage(e)) return null; const p = mediaPending.get(e.sender.id); if (!p || p.taken) return null; p.taken = true; return p.url; });
