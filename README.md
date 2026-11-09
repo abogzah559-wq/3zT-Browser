@@ -219,7 +219,9 @@ The former **3zT Download** app is now part of the browser.
 
 - On a page with a video or a post (YouTube, TikTok, Instagram, X, Facebook, Twitch clips, Reddit,
   Vimeo, SoundCloud, Pinterest and others, or any page that plays a real video) a small fox button
-  appears in the address bar. It opens the downloads page with the page's link filled in.
+  appears in the address bar. It opens the downloader's own small window with the page's link filled
+  in, and shows the video's picture, title, channel and length so you can confirm before downloading.
+  The downloads page has a button to open it too.
 - Save the **video** (best quality or 4K / 1440p / 1080p / 720p / 480p / 360p, as MP4), the **audio**
   as MP3, or the **photos** of a post (TikTok photo posts, Instagram, X...): every photo is shown and
   you pick the ones to keep.
@@ -232,11 +234,12 @@ The former **3zT Download** app is now part of the browser.
     and like any re-encode it is not bit-identical to the original. The result is MP4.
 - Content you can only see when signed in works too: the site's own cookies (only that site's) are
   handed to the downloader in a temporary file that is deleted when the job ends.
-- Nothing runs in the background. The first time you use it, 3zT downloads the tools it uses -
-  [yt-dlp](https://github.com/yt-dlp/yt-dlp), [gallery-dl](https://github.com/mikf/gallery-dl) and
-  [FFmpeg](https://ffmpeg.org) (yt-dlp's Windows build), about 100 MB - from their official
-  releases and checks each one against the SHA-256 checksums those releases publish. After that it
-  starts at once. If a site stops working, *Update download tools* updates yt-dlp and gallery-dl.
+- The tools it uses - [yt-dlp](https://github.com/yt-dlp/yt-dlp),
+  [gallery-dl](https://github.com/mikf/gallery-dl) and [FFmpeg](https://ffmpeg.org) (yt-dlp's Windows
+  build) - come with the setup (checked against the SHA-256 sums their releases publish when the setup
+  is built), so there is nothing to wait for. Nothing runs in the background: they only run while
+  something is downloading or being trimmed. If a site stops working, *Update download tools*
+  updates yt-dlp and gallery-dl.
 - There is no local server and no open port: the downloads page talks to the downloader through the
   browser's own internal messaging, and every program it starts is stopped when you cancel or close
   the browser.
@@ -334,7 +337,7 @@ Passwords are imported separately from a CSV file you export in Chrome
   method SponsorBlock uses), Google's extension servers when you install or update a Chrome
   Web Store extension, and GitHub (`api.github.com`) every few hours to look for a 3zT update
   (installed copies only; nothing about you is sent). The video downloader connects to the site
-  you give it and, the first time only, to `github.com` and `codeberg.org` for its tools.
+  you give it (and to GitHub / Codeberg only when you press *Update download tools*).
 - Private windows keep nothing after they close.
 - Passwords are encrypted with Windows DPAPI.
 - Nothing sensitive (camera, microphone, location, notifications, screen...) is given to a site
@@ -380,7 +383,7 @@ Everything stays on your computer in `%APPDATA%\3zT Browser`:
 | `extensions\` | extensions copied from Chrome or added from a folder |
 | `webstore\` | extensions installed from the Chrome Web Store |
 | `adblock\` | the downloaded filter lists (and a parsed copy for a faster start) |
-| `media\tools\` | yt-dlp, gallery-dl and FFmpeg for the video downloader (after its first use) |
+| `media\tools\` | the video downloader's own copies of yt-dlp and gallery-dl (they update themselves) |
 | `logs\3zt.log` | errors the browser ran into (kept under 1 MB), useful for bug reports |
 | the rest | Chromium's own cookies, cache and site storage |
 
@@ -489,9 +492,9 @@ DevTools Protocol. On every push, GitHub Actions on Windows:
 the same tabs and about the same as Brave (see the tables above). Page speed is about the same as
 both: it is the same engine.
 
-**Why does the setup or the video downloader need the internet the first time?** The setup is
-complete. The video downloader fetches its tools on first use so that people who never use it do not
-carry 100 MB of extra programs.
+**How do I get an update right now instead of waiting?** Settings → About → *Check for updates*.
+It downloads the update at once; *Restart to update* installs it in a few seconds and reopens your
+tabs.
 
 **A site's download button sends me to another page and back, and nothing downloads.** This was
 fixed in 0.13.0: new tabs now carry the site's exact request. If a site still fails, the file you
@@ -552,7 +555,7 @@ Third-party parts keep their licenses; the full list with license texts is in
 - [SponsorBlock](https://sponsor.ajay.app) data - CC BY-NC-SA 4.0 (used through its public API).
 - [EasyList / EasyPrivacy](https://easylist.to) - GPL-3.0 / CC BY-SA 3.0 (downloaded at runtime).
 - Clean YouTube (Chrome Web Store) - element list adapted, credited above.
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Unlicense, [gallery-dl](https://github.com/mikf/gallery-dl) - GPL-2.0, [FFmpeg](https://ffmpeg.org) (yt-dlp's GPL build) - GPL: downloaded on first use of the video downloader from their official releases, not shipped with 3zT.
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Unlicense, [gallery-dl](https://github.com/mikf/gallery-dl) - GPL-2.0, [FFmpeg](https://ffmpeg.org) (yt-dlp's GPL build) - GPL: shipped unmodified in the setup (`resources\\tools`) and run as separate programs.
 - Thmanyah font by [Thmanyah](https://thmanyah.com) - free to use, not redistributed: 3zT only uses the copy you install.
 
 The video on the new tab page is a short anime clip used as a background. It is not covered by the
