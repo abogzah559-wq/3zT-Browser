@@ -43,9 +43,37 @@ if (internal) {
     dlClear: () => ipcRenderer.invoke('dl:clear'),
     dlFolder: () => ipcRenderer.invoke('dl:folder'),
     dlIcon: id => ipcRenderer.invoke('dl:icon', id),
-    onDl: fn => ipcRenderer.on('dl:changed', () => fn())
+    onDl: fn => ipcRenderer.on('dl:changed', () => fn()),
+    dlDrag: id => ipcRenderer.send('dl:drag', id),
+    // built-in media downloader (downloads page)
+    mediaTake: () => ipcRenderer.invoke('media:take'),
+    mediaList: () => ipcRenderer.invoke('media:list'),
+    mediaStart: o => ipcRenderer.invoke('media:start', o),
+    mediaCancel: id => ipcRenderer.invoke('media:cancel', id),
+    mediaSave: (id, idx) => ipcRenderer.invoke('media:save', id, idx),
+    mediaTrim: (id, o) => ipcRenderer.invoke('media:trim', id, o),
+    mediaTrimFile: (id, o) => ipcRenderer.invoke('media:trimFile', id, o),
+    mediaUpdate: () => ipcRenderer.invoke('media:update'),
+    mediaShow: f => ipcRenderer.invoke('media:show', f),
+    mediaFolder: choose => ipcRenderer.invoke('media:folder', !!choose),
+    onMedia: fn => ipcRenderer.on('media:changed', () => fn()),
+    onMediaUrl: fn => ipcRenderer.on('media:url', (e, u) => fn(u)),
+    onTrimPct: fn => ipcRenderer.on('media:trimPct', (e, id, pc) => fn(id, pc))
   });
 } else if (/^https?:$/.test(location.protocol)) {
+  /* ================= a real video on this page? (shows the download button in the address bar) ================= */
+  (() => {
+    let told = false;
+    const look = v => {
+      if (told || !v || v.tagName !== 'VIDEO') return;
+      const d = v.duration, r = v.getBoundingClientRect();
+      if ((d >= 5 || d === Infinity) && r.width >= 200 && r.height >= 110) { told = true; ipcRenderer.send('media:seen'); }
+    };
+    // media events don't bubble, but a capturing listener on the window sees them
+    for (const ev of ['loadedmetadata', 'play', 'durationchange']) addEventListener(ev, e => look(e.target), { capture: true, passive: true });
+    addEventListener('load', () => setTimeout(() => { for (const v of document.querySelectorAll('video')) look(v); }, 1500), { once: true });
+  })();
+
   /* ================= sites that are already dark keep their own colours =================
      3zT darkens light websites. A site that is dark by itself (YouTube's dark theme, for example) but does not say
      so would get its white bits (volume bar, sliders, icons) turned black. When the page is dark already,
