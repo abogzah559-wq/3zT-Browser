@@ -85,9 +85,25 @@ $('tsi').addEventListener('change', () => setBy('ts', parse($('tsi').value)));
 $('tei').addEventListener('change', () => setBy('te', parse($('tei').value)));
 $('tsNow').onclick = () => setBy('ts', $('tv').currentTime);
 $('teNow').onclick = () => setBy('te', $('tv').currentTime);
-let stopAt = null;
-$('tplay').onclick = () => { const { s, e } = tval(); stopAt = e; $('tv').currentTime = s; $('tv').play(); };
-$('tv').addEventListener('timeupdate', () => { if (stopAt != null && $('tv').currentTime >= stopAt) { $('tv').pause(); stopAt = null; } });
+/* the preview only ever plays the chosen part: playing starts at its start, stops at its end,
+   and seeking outside it (also with the video's own controls) is brought back inside */
+const inPart = () => T && (T.dur || $('tv').duration);
+$('tplay').onclick = () => { if (!T) return; $('tv').currentTime = tval().s; $('tv').play(); };
+$('tv').addEventListener('play', () => {
+  if (!inPart()) return;
+  const { s, e } = tval(), t = $('tv').currentTime;
+  if (t < s - 0.05 || t >= e - 0.05) $('tv').currentTime = s;
+});
+$('tv').addEventListener('timeupdate', () => {
+  if (!inPart()) return;
+  const { e } = tval();
+  if (!$('tv').paused && $('tv').currentTime >= e) { $('tv').pause(); $('tv').currentTime = e; }
+});
+$('tv').addEventListener('seeking', () => {
+  if (!inPart()) return;
+  const { s, e } = tval(), t = $('tv').currentTime;
+  if (t < s - 0.05) $('tv').currentTime = s; else if (t > e + 0.05) $('tv').currentTime = e;
+});
 const closeTrim = () => { $('tv').pause(); $('tv').removeAttribute('src'); $('tv').load(); $('trim').hidden = true; T = null; };
 $('tcancel').onclick = async () => {
   if (T && T.busy) { if (T.jobId) await zeus.mediaCancel(T.jobId); else await zeus.mediaTrimCancel(T.listId); }
