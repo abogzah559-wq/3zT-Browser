@@ -40,6 +40,11 @@ jobs:
           curl -sSfL -o SHASUMS256.txt $base/SHASUMS256.txt
           grep " \*$f\$" SHASUMS256.txt | sed 's/ \*/  /' | sha256sum -c -
 
+      - name: Video downloader tools (yt-dlp, gallery-dl, FFmpeg; checksums checked)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/fetch_tools.mjs tools-cache
+
       - name: Build the app folder (dist/3zT)
         run: python scripts/build_win.py electron-v${{ env.ELECTRON_VERSION }}-win32-x64.zip
 

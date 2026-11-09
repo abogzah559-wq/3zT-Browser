@@ -25,6 +25,12 @@ subprocess.check_call([sys.executable, os.path.join(ROOT, 'scripts', 'patch_exe.
                        os.path.join(OUT, NAME + '.exe'), os.path.join(ROOT, 'assets', 'icon.png'), NAME, VER,
                        '--small', os.path.join(ROOT, 'assets', 'icon-small.png')])
 
+# the video downloader's tools (yt-dlp, gallery-dl, FFmpeg) from scripts/fetch_tools.mjs, outside the app folder
+TOOLS = os.path.join(ROOT, 'tools-cache')
+if os.path.isdir(TOOLS):
+    shutil.copytree(TOOLS, os.path.join(OUT, 'resources', 'tools'), dirs_exist_ok=True)
+    print('tools included:', ', '.join(sorted(os.listdir(TOOLS))))
+
 # which program file this is (icon, Electron): light updates only go to copies with the same one
 with open(os.path.join(ROOT, 'package.json'), encoding='utf-8') as f:
     EXE_GEN = str(json.load(f).get('exeGen', 1))

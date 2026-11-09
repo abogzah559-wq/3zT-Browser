@@ -41,92 +41,17 @@ html[dir=rtl] .pb.ind i{animation-direction:reverse}
 .acts button{padding:6px 12px;font-size:12.5px}
 .acts .x{padding:6px 9px;border:0;opacity:.7}.acts .x:hover{opacity:1}
 #empty{text-align:center;color:var(--muted);margin:70px 0;line-height:1.9}
-/* built-in media downloader */
-.mc{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:18px}
-.mc h2{margin:0 0 12px;font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}
-.mc h2 img{width:22px;height:22px;border-radius:50%}
-.mrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-#murl{flex:1;min-width:220px;padding:10px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.05);color:#fff;font:inherit;outline:none;direction:ltr}
-#murl:focus{border-color:var(--acc)}
-.seg{display:inline-flex;border:1px solid rgba(255,255,255,.18);border-radius:16px;overflow:hidden}
-.seg button{border:0;border-radius:0;padding:7px 13px}
-.seg button.on{background:rgba(138,180,248,.18);color:var(--acc)}
-select{font:inherit;color:inherit;background:#1b1b22;border:1px solid rgba(255,255,255,.18);border-radius:14px;padding:6px 10px}
-.go{background:var(--acc);color:#0b0b0f;border-color:transparent;font-weight:600}
-.go:hover{background:#9cc0fa}
-.go:disabled{opacity:.5;cursor:default}
-.chk{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);cursor:pointer}
-.mnote{font-size:12.5px;color:var(--muted);margin-top:10px;line-height:1.7}
-.mnote.bad{color:var(--bad)}
-.mfoot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:var(--muted)}
-.mfoot .p{direction:ltr;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px}
-.mfoot button{padding:5px 11px;font-size:12px}
-.mj{display:flex;gap:12px;align-items:center;padding:12px 14px;border:1px solid var(--line);border-radius:12px;margin-top:10px}
-.mj .tx{flex:1;min-width:0}
-.gal{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px}
-.tile{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;background:#000;cursor:pointer;border:2px solid transparent}
-.tile.on{border-color:var(--acc)}
-.tile img,.tile video{width:100%;height:100%;object-fit:cover;display:block}
-.tile .ck{position:absolute;top:6px;inset-inline-start:6px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.6);border:1px solid rgba(255,255,255,.5);display:grid;place-items:center;font-size:12px;color:transparent}
-.tile.on .ck{background:var(--acc);color:#0b0b0f;border-color:var(--acc)}
-.tile .tag{position:absolute;bottom:6px;inset-inline-end:6px;font-size:10px;background:rgba(0,0,0,.7);padding:2px 6px;border-radius:6px}
-.it[draggable=true]{cursor:grab}
-/* trimming */
-#trim{position:fixed;inset:0;background:rgba(0,0,0,.72);display:grid;place-items:center;z-index:10}
-#trim[hidden]{display:none}
-.tbox{width:min(760px,94vw);background:#121218;border:1px solid var(--line);border-radius:16px;padding:16px}
-.tbox video{width:100%;max-height:52vh;background:#000;border-radius:10px;display:block}
-.tl{position:relative;height:34px;margin:14px 6px 4px}
-.tl .track{position:absolute;inset:14px 0;height:6px;border-radius:3px;background:rgba(255,255,255,.12)}
-.tl .sel{position:absolute;top:14px;height:6px;background:var(--acc);border-radius:3px}
-.tl input{position:absolute;inset:0;width:100%;margin:0;background:none;pointer-events:none;-webkit-appearance:none;appearance:none;height:34px}
-.tl input::-webkit-slider-thumb{pointer-events:auto;-webkit-appearance:none;width:16px;height:26px;border-radius:5px;background:#fff;cursor:ew-resize;border:2px solid var(--acc)}
-.tl input::-webkit-slider-runnable-track{background:none}
-.tt{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:13px;margin-top:6px}
-.tt input[type=text]{width:92px;padding:6px 8px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.05);color:#fff;font:inherit;direction:ltr;text-align:center}
-.tt .len{color:var(--acc);font-weight:600}
-.tmode{display:flex;flex-direction:column;gap:6px;margin-top:12px;font-size:13px}
-.tmode label{display:flex;gap:8px;align-items:flex-start;cursor:pointer;color:#ddd}
-.tmode small{display:block;color:var(--muted);font-size:12px}
-.tacts{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
-
 </style>
 </head>
 <body>
 <main>
   <header><h1 id="h"></h1><input id="q" type="search"><button id="clear"></button><button id="open"></button></header>
-  <section class="mc" id="mc">
-    <h2><img src="../ui/dl-fox.png" alt=""><span id="mT"></span></h2>
-    <div class="mrow">
-      <input id="murl" spellcheck="false" autocomplete="off">
-      <button id="mpaste"></button>
-    </div>
-    <div class="mrow" style="margin-top:10px">
-      <div class="seg"><button id="m-video" class="on"></button><button id="m-audio"></button><button id="m-images"></button></div>
-      <select id="mq"><option value="best"></option><option value="2160">4K</option><option value="1440">1440p</option><option value="1080">1080p</option><option value="720">720p</option><option value="480">480p</option><option value="360">360p</option></select>
-      <label class="chk" id="mtrimL"><input type="checkbox" id="mtrim"><span id="mtrimT"></span></label>
-      <span style="flex:1"></span>
-      <button class="go" id="mgo"></button>
-    </div>
-    <div class="mnote" id="mnote"></div>
-    <div id="mjobs"></div>
-    <div class="mfoot"><span id="mwhereL"></span><span class="p" id="mwhere"></span><button id="mchg"></button><button id="mopen"></button><span style="flex:1"></span><button id="mupd"></button></div>
-  </section>
+  <div class="bar" style="justify-content:space-between"><span id="mediaHint" style="direction:inherit"></span><button id="openMedia"></button></div>
   <div class="bar"><b id="whereL" style="font-weight:400"></b><span id="where"></span><button id="ask"></button></div>
   <div id="list"></div>
   <div id="empty" hidden></div>
 </main>
-<div id="trim" hidden><div class="tbox">
-  <video id="tv" controls preload="metadata"></video>
-  <div class="tl"><div class="track"></div><div class="sel" id="tsel"></div><input type="range" id="ts" min="0" max="1000" value="0" step="1"><input type="range" id="te" min="0" max="1000" value="1000" step="1"></div>
-  <div class="tt"><span id="tsL"></span><input type="text" id="tsi"><button id="tsNow"></button><span id="teL"></span><input type="text" id="tei"><button id="teNow"></button><span style="flex:1"></span><span id="tlenL"></span><span class="len" id="tlen"></span></div>
-  <div class="tmode">
-    <label><input type="radio" name="tm" value="fast" checked><span><span id="tmF"></span><small id="tmFs"></small></span></label>
-    <label><input type="radio" name="tm" value="exact"><span><span id="tmE"></span><small id="tmEs"></small></span></label>
-  </div>
-  <div class="mnote" id="tnote"></div>
-  <div class="tacts"><button id="tplay"></button><span style="flex:1"></span><button id="tcancel"></button><button id="twhole"></button><button class="go" id="tsave"></button></div>
-</div></div>
 <script src="downloads.js"></script>
+<script src="trim.js"></script>
 </body>
 </html>

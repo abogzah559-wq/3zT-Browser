@@ -106,7 +106,8 @@ body.translated #act{color:#8ab4f8;background:rgba(138,180,248,.18)}
 #omni.finding #findq{display:block}
 #omni.finding #findCount{display:block;flex:none;font-size:12px;opacity:.7;padding:0 4px;direction:ltr}
 #omni.finding .fbtn{display:grid}
-#mediaBtn img{width:18px;height:18px;border-radius:50%;display:block;opacity:.92}
+#mediaBtn{width:22px;height:22px}
+#mediaBtn img{width:14px;height:14px;border-radius:50%;display:block;opacity:.92}
 #mediaBtn:hover img{opacity:1}
 #omni.finding #mediaBtn{display:none}
 .dli.ok[draggable=true]{cursor:grab}
@@ -149,7 +150,7 @@ body.loading #load::after{content:"";position:absolute;top:0;bottom:0;left:0;wid
 
 /* ad blocker shield */
 #shield{position:relative;color:#7ee2a8}
-#shield svg{width:16px;height:16px}
+#shield svg{width:17px;height:17px}
 body:not(.isweb) #shield{display:none}
 #omni.finding #shield{display:none}
 #shield.off{color:rgba(255,255,255,.45)}

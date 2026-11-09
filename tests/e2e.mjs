@@ -319,15 +319,18 @@ async function mediaTest() {
   try {
     await go('zeus://downloads', true);
     const dp = await connect(await find('downloads.html', 30));
-    const job = async (o, ms = 600000) => {
-      const j = await dp.ev(`zeus.mediaStart(${JSON.stringify(o)})`);
+    // the downloader has its own window (opened here from the downloads page; the address-bar button is tested below)
+    await dp.ev('zeus.mediaWindow(), 1');
+    const mp = await connect(await find('newtab/media.html', 30));
+    await poll(() => mp.ev('typeof mstart === "function"'), 15000);
+    const job = async (o, ms = 300000) => {
+      const j = await mp.ev(`zeus.mediaStart(${JSON.stringify(o)})`);
       if (!j || j.error) return j;
-      return poll(async () => { const s = await dp.ev(`zeus.mediaList().then(d => d.jobs.find(x => x.id === ${JSON.stringify(j.id)}))`); return s && s.state !== 'running' ? s : null; }, ms, 1500);
+      return poll(async () => { const s = await mp.ev(`zeus.mediaList().then(d => d.jobs.find(x => x.id === ${JSON.stringify(j.id)}))`); return s && s.state !== 'running' ? s : null; }, ms, 1500);
     };
-    const t0 = Date.now();
+    const tools = await mp.ev('zeus.mediaList().then(d => d.tools.ready)');
+    ok('download tools come with the setup (ready at once)', tools === true);
     const yt = await job({ url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', mode: 'video', q: '360' });
-    const tools = await dp.ev('zeus.mediaList().then(d => d.tools.ready)');
-    ok('download tools set up on first use (official releases, checksums checked)', tools === true, `${Math.round((Date.now() - t0) / 1000)} s`);
     // real sites from a GitHub datacenter machine: YouTube often asks such machines to sign in, so this is reported, not required
     console.log(`::notice title=media youtube::${yt && yt.state} ${yt && (yt.error || yt.file || '')}`.replace(/\n/g, ' '));
     const mp3 = await job({ url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', mode: 'audio' });
@@ -337,15 +340,17 @@ async function mediaTest() {
     const ph = await job({ url: 'https://www.tiktok.com/@yungfunnyvids/photo/7333434838539111712', mode: 'images' });
     console.log(`::notice title=media photos::${ph && ph.state} ${ph && (ph.error || (ph.items || []).length + ' items')}`.replace(/\n/g, ' '));
     // a local video made with the downloaded ffmpeg: download, trim exact and fast
-    const ff = path.join(process.env.APPDATA || '', '3zT Browser', 'media', 'tools', 'ffmpeg', 'ffmpeg.exe');
+    const ff = [path.join(path.dirname(exe), 'resources', 'tools', 'ffmpeg', 'ffmpeg.exe'), path.join(process.env.APPDATA || '', '3zT Browser', 'media', 'tools', 'ffmpeg', 'ffmpeg.exe')].find(f => fs.existsSync(f)) || '';
     if (fs.existsSync(ff)) execSync(`"${ff}" -loglevel error -y -f lavfi -i testsrc=size=640x360:rate=30 -f lavfi -i sine=frequency=440 -t 20 -c:v libx264 -g 60 -c:a aac -shortest "${vid}"`);
     const probe = f => { try { return +execSync(`"${ff.replace('ffmpeg.exe', 'ffprobe.exe')}" -v error -show_entries format=duration -of csv=p=0 "${f}"`).toString().trim(); } catch (e) { return 0; } };
+    const inf = await mp.ev(`zeus.mediaInfo('http://127.0.0.1:8792/clip.mp4')`);
+    ok('the link is shown before downloading (title, length)', !!(inf && !inf.error && inf.title && inf.duration > 19), JSON.stringify(inf).slice(0, 200));
     const lv = await job({ url: 'http://127.0.0.1:8792/clip.mp4', mode: 'video', q: 'best' }, 120000);
     ok('media download of a video link', !!(lv && lv.state === 'done' && lv.file && fs.existsSync(lv.file)), lv && (lv.error || lv.file));
     const tj = await job({ url: 'http://127.0.0.1:8792/clip.mp4', mode: 'video', q: 'best', trim: true }, 120000);
     ok('"pick a part before saving" waits with a preview file', !!(tj && tj.state === 'trim' && tj.temp && fs.existsSync(tj.temp)));
     if (tj && tj.state === 'trim') {
-      const r = await dp.ev(`zeus.mediaTrim(${JSON.stringify(tj.id)}, { start: 5.3, end: 9.1, exact: true })`);
+      const r = await mp.ev(`zeus.mediaTrim(${JSON.stringify(tj.id)}, { start: 5.3, end: 9.1, exact: true })`);
       const d = r && r.file ? probe(r.file) : 0;
       ok('frame-exact trim keeps exactly the chosen part', Math.abs(d - 3.8) < 0.15, `${d} s`);
     }
@@ -360,10 +365,15 @@ async function mediaTest() {
     await find(u => u.includes('8792/watch'), 30);
     const seen = await poll(async () => { const tb = await toolbar(); const v = await tb.ev('S.url.includes("8792/watch") && S.media && !document.getElementById("mediaBtn").hidden'); tb.close(); return v; }, 15000);
     ok('the download button shows on a page with a video', !!seen);
+    if (seen) {
+      const tb = await toolbar(); await tb.ev(`document.getElementById('mediaBtn').click(), 1`); tb.close();
+      const filled = await poll(async () => { const v = await mp.ev(`document.getElementById('murl').value`); return /8792\/watch/.test(v || '') ? v : null; }, 10000);
+      ok('the button sends the page to the downloader window', !!filled);
+    }
     await go('https://example.com/', true); await sleep(2500);
     const none = await (async () => { const tb = await toolbar(); const v = await tb.ev('document.getElementById("mediaBtn").hidden'); tb.close(); return v; })();
     ok('…and not on a page without one', none === true);
-    dp.close();
+    mp.close(); dp.close();
   } finally { srv.close(); }
 }
 

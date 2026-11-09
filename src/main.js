@@ -94,6 +94,7 @@ const TASKS_FILE = path.join(SRC, 'newtab', 'tasks.html');
 const PASSWORDS_FILE = path.join(SRC, 'newtab', 'passwords.html');
 const SETTINGS_FILE = path.join(SRC, 'newtab', 'settings.html');
 const DOWNLOADS_FILE = path.join(SRC, 'newtab', 'downloads.html');
+const MEDIA_FILE = path.join(SRC, 'newtab', 'media.html');
 const NEWTAB_URL = pathToFileURL(NEWTAB_FILE).href;
 const HISTORY_URL = pathToFileURL(HISTORY_FILE).href;
 const TASKS_URL = pathToFileURL(TASKS_FILE).href;
@@ -233,7 +234,7 @@ class Win {
       for (const x of wins) x.pushState();   // window count changed
       if (lastFocused === this) lastFocused = wins[0] || null;
       if (!quitting) saveSessionSoon();
-      if (!wins.length) app.quit();
+      if (!wins.length && !mediaWins.size) app.quit();   // a downloader window still open keeps its downloads going
     });
     wins.push(this);
     for (const x of wins) if (x !== this) x.pushState();
@@ -1421,7 +1422,34 @@ function dlSummary() {
 /* ---------- built-in media downloader (src/media): videos, audio, photo posts, trimming ----------
    Nothing starts until it is used: the engine is made on the first request, its tools are fetched once. */
 let media = null, mediaPageTimer = null;
-const mediaPending = new Map();   // downloads page webContents id -> { url, partition } from the address-bar button
+const mediaPending = new Map();   // downloader window webContents id -> { url, partition } from the address-bar button
+const mediaWins = new Map();      // partition ('' = normal browsing) -> the downloader window
+const mediaWinPart = new Map();   // downloader window webContents id -> partition
+/* the video downloader has its own small window (one for normal browsing, one per private session) */
+function openMediaWindow(url, partition) {
+  const key = partition || '';
+  let mw = mediaWins.get(key);
+  const give = () => { if (!url || mw.isDestroyed()) return; mediaPending.set(mw.webContents.id, { url, partition: partition || null }); mw.webContents.send('media:url', url); };
+  if (mw && !mw.isDestroyed()) { if (mw.isMinimized()) mw.restore(); mw.focus(); give(); return mw; }
+  mw = new BrowserWindow(Object.assign({
+    width: 560, height: 760, minWidth: 440, minHeight: 520, show: false, backgroundColor: '#0b0b0f', title: '3zT',
+    autoHideMenuBar: true, titleBarStyle: 'hidden', titleBarOverlay: { color: '#0b0b0f', symbolColor: '#dddddd', height: 38 },
+    webPreferences: { preload: PRELOAD_TAB, partition: partition || undefined, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false }
+  }, ICON_OPT));
+  mediaWins.set(key, mw);
+  const id = mw.webContents.id;
+  mediaWinPart.set(id, partition || null);
+  if (url) mediaPending.set(id, { url, partition: partition || null });
+  mw.webContents.on('will-navigate', e => e.preventDefault());   // it only ever shows its own page
+  mw.webContents.setWindowOpenHandler(d => { if (/^https?:/i.test(d.url)) { const w = focusedWin(); if (w) w.createTab(d.url); } return { action: 'deny' }; });
+  mw.once('ready-to-show', () => mw.show());
+  mw.on('closed', () => {
+    mediaWins.delete(key); mediaWinPart.delete(id); mediaPending.delete(id);
+    if (!wins.length && !mediaWins.size) app.quit();
+  });
+  mw.loadFile(MEDIA_FILE);
+  return mw;
+}
 const mediaSaved = new Set();     // jobs already added to the downloads list
 const trimOwners = new Map();     // list id -> { proc } of a running trim (for Cancel)
 function mediaEngine() {
@@ -1432,6 +1460,8 @@ function mediaEngine() {
     outDir: () => settings.data.mediaDir || path.join(app.getPath('downloads'), '3zT'),
     fetch: (u, o) => net.fetch(u, o),
     jsRuntime: process.execPath,
+    packedDir: app.isPackaged ? path.join(process.resourcesPath, 'tools') : path.join(SRC, '..', 'tools-cache'),
+    version: app.getVersion(),
     userAgent: app.userAgentFallback,
     log: (...a) => console.log('[3zT media]', ...a),
     onChange: job => {
@@ -1443,10 +1473,11 @@ function mediaEngine() {
       }
       if (!mediaPageTimer) mediaPageTimer = setTimeout(() => {
         mediaPageTimer = null;
-        for (const t of allTabs()) if (t.view && isDownloads(t.url) && !t.view.webContents.isDestroyed()) t.view.webContents.send('media:changed');
+        for (const mw of mediaWins.values()) if (!mw.isDestroyed()) mw.webContents.send('media:changed');
       }, job && job.state === 'running' ? 300 : 0);
     }
   });
+  try { media.copied = true; media.copyPacked(); } catch (e) {}   // tools from the setup, ready at once
   return media;
 }
 /* the cookies of the link's own site only (for posts you can see because you are signed in) */
@@ -1456,37 +1487,38 @@ async function mediaCookies(url, ses) {
   try { return (await ses.cookies.get({})).filter(c => { const d = c.domain.replace(/^\./, ''); return d === s || d.endsWith('.' + s); }); } catch (e) { return []; }
 }
 function setupMediaIpc() {
-  const okPage = e => { try { return isDownloads(e.senderFrame.url); } catch (x) { return false; } };
-  const sesFor = (e, url) => {
-    const p = mediaPending.get(e.sender.id);
-    const t = tabOfWc(e.sender);
-    if (p && p.url === url && p.partition) { const src = allTabs().find(x => x.win.partition === p.partition && x.view); if (src) return { ses: src.view.webContents.session, partition: p.partition }; }
-    if (t && t.win.private) return { ses: t.view.webContents.session, partition: t.win.partition };
-    return { ses: session.defaultSession, partition: null };
+  const okPage = e => { try { return same(e.senderFrame.url, pathToFileURL(MEDIA_FILE).href); } catch (x) { return false; } };
+  const okList = e => okPage(e) || (() => { try { return isDownloads(e.senderFrame.url); } catch (x) { return false; } })();   // trimming list files
+  // the downloader window of a private session uses that session's cookies; the normal one uses yours
+  const sesFor = e => {
+    const part = mediaWinPart.get(e.sender.id) || null;
+    return { ses: part ? e.sender.session : session.defaultSession, partition: part };
   };
   const cleanUrl = u => { try { const x = new URL(String(u || '').trim()); return /^https?:$/.test(x.protocol) ? x.href : null; } catch (e) { return null; } };
   // the address-bar button: open the downloads page with this page's link
   ipcMain.on('media:open', e => {
     const w = uiWin(e); if (!w) return;
     const t = w.active(); if (!t || !/^https?:/i.test(t.url)) return;
-    const ex = allTabs().find(x => isDownloads(x.url) && x.win.private === w.private);
-    const target = ex || w.createTab(DOWNLOADS_URL, { after: t.id });
-    const give = () => { if (!target.view || target.view.webContents.isDestroyed()) return; mediaPending.set(target.view.webContents.id, { url: t.url, partition: w.private ? w.partition : null }); target.view.webContents.send('media:url', t.url); };
-    if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); give(); }
-    else target.view.webContents.once('did-finish-load', give);
+    openMediaWindow(t.url, w.private ? w.partition : null);
+  });
+  ipcMain.on('media:window', e => { const t = tabOfWc(e.sender); if (!t || !isDownloads(t.url)) return; openMediaWindow('', t.win.private ? t.win.partition : null); });
+  ipcMain.handle('media:info', async (e, u) => {
+    if (!okPage(e)) return { error: 'denied' };
+    const url = cleanUrl(u); if (!url) return { error: 'bad-url' };
+    const { ses } = sesFor(e);
+    try { return await mediaEngine().info({ url, cookies: await mediaCookies(url, ses) }); } catch (x) { return { error: String(x.message || x) }; }
   });
   // the link from the address-bar button, given once (a reload of the page does not fill it again)
   ipcMain.handle('media:take', e => { if (!okPage(e)) return null; const p = mediaPending.get(e.sender.id); if (!p || p.taken) return null; p.taken = true; return p.url; });
-  ipcMain.handle('media:list', e => (okPage(e) ? { jobs: media ? media.list(partOfSender(e)) : [], tools: media ? media.toolsInfo() : { ready: mediaEngine().ready(), setup: null }, folder: settings.data.mediaDir || path.join(app.getPath('downloads'), '3zT') } : null));
+  ipcMain.handle('media:list', e => (okPage(e) ? { jobs: media ? media.list(mediaWinPart.get(e.sender.id) || null) : [], tools: media ? media.toolsInfo() : { ready: mediaEngine().ready(), setup: null }, folder: settings.data.mediaDir || path.join(app.getPath('downloads'), '3zT') } : null));
   ipcMain.handle('media:start', async (e, o) => {
     if (!okPage(e) || !o) return { error: 'denied' };
     const url = cleanUrl(o.url); if (!url) return { error: 'bad-url' };
-    const { ses, partition } = sesFor(e, url);
+    const { ses, partition } = sesFor(e);
     const cookies = await mediaCookies(url, ses);
-    const t = tabOfWc(e.sender);
     try {
       const m = mediaEngine();
-      const winId = t ? t.win.id : null;
+      const winId = (() => { const w = wins.find(x => (x.private ? x.partition : null) === partition); return w ? w.id : null; })();
       return o.mode === 'images' ? await m.startImages({ url, cookies, partition, winId }) : await m.startVideo({ url, mode: o.mode, q: o.q, trim: !!o.trim, cookies, partition, winId });
     } catch (x) { return { error: String(x.message || x) }; }
   });
@@ -1507,7 +1539,7 @@ function setupMediaIpc() {
   });
   // trim a finished download from the list: a new "(clip)" file next to it
   ipcMain.handle('media:trimFile', async (e, id, o) => {
-    if (!okPage(e) || !o) return { error: 'denied' };
+    if (!okList(e) || !o) return { error: 'denied' };
     const r = dl.get(String(id));
     if (!r || r.state !== 'completed' || !r.path || !fs.existsSync(r.path) || !/\.(mp4|webm|mov|m4v|mkv)$/i.test(r.path)) return { error: 'not-video' };
     const owner = {}; trimOwners.set(String(id), owner);
@@ -1519,7 +1551,7 @@ function setupMediaIpc() {
     } catch (x) { trimOwners.delete(String(id)); return { error: owner.cancelled ? 'cancelled' : String(x.message || x) }; }
   });
   ipcMain.handle('media:trimCancel', (e, id) => {
-    if (!okPage(e)) return false;
+    if (!okList(e)) return false;
     const o = trimOwners.get(String(id)); if (!o) return false;
     o.cancelled = true; if (media && o.proc) media.killTree(o.proc);
     return true;
@@ -1535,8 +1567,7 @@ function setupMediaIpc() {
     if (!okPage(e)) return null;
     const cur = settings.data.mediaDir || path.join(app.getPath('downloads'), '3zT');
     if (!choose) { fs.mkdirSync(cur, { recursive: true }); shell.openPath(cur); return cur; }
-    const t = tabOfWc(e.sender);
-    const r = await dialog.showOpenDialog(t ? t.win.win : undefined, { title: T('اختر مجلد الحفظ', 'Choose a folder'), defaultPath: cur, properties: ['openDirectory', 'createDirectory'] });
+    const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender) || undefined, { title: T('اختر مجلد الحفظ', 'Choose a folder'), defaultPath: cur, properties: ['openDirectory', 'createDirectory'] });
     if (!r.canceled && r.filePaths[0]) { settings.data.mediaDir = r.filePaths[0]; settings.save(); }
     return settings.data.mediaDir || cur;
   });
@@ -1548,7 +1579,7 @@ function setupMediaIpc() {
   // drag a finished download out of the list onto a website, the desktop or a folder (a real Windows drag)
   const dragIcon = (() => { let i = null; return () => i || (i = nativeImage.createFromPath(path.join(SRC, 'ui', 'app.png')).resize({ width: 32, height: 32 })); })();
   ipcMain.on('dl:drag', (e, id) => {
-    if (!uiWin(e) && !okPage(e)) return;
+    if (!uiWin(e) && !okList(e)) return;
     const r = dl.get(String(id));
     if (!r || r.state !== 'completed' || !r.path || !fs.existsSync(r.path)) return;
     let icon = dragIcon();
@@ -1904,7 +1935,7 @@ function setupIpc() {
     settings.save(); settings.flush();
     for (const w of wins) w.pushState();
     settingsChanged();
-    if (key === 'lang') for (const t of allTabs()) if (t.view && isInternal(t.url)) t.view.webContents.send('lang', settings.data.lang);
+    if (key === 'lang') { for (const t of allTabs()) if (t.view && isInternal(t.url)) t.view.webContents.send('lang', settings.data.lang); for (const mw of mediaWins.values()) mw.webContents.send('lang', settings.data.lang); }
   });
 
   ipcMain.handle('ext:list', e => (uiWin(e) ? listExtensions() : []));
@@ -2085,6 +2116,13 @@ function setupSettingsIpc() {
     switch (cmd) {
       case 'makeDefault': makeDefault(); return true;
       case 'relaunch': if (w) runMisc(w, 'relaunch'); return true;
+      // "Check for updates": looks now instead of waiting; a found update is downloaded and checked right away
+      case 'checkUpdate': {
+        if (!UPD.installed() && !process.env.ZEUS_UPDATE_URL) return { state: 'portable' };
+        return UPD.check();
+      }
+      // install it now: the browser closes, the update goes in, and 3zT opens again by itself
+      case 'installUpdate': { app.relaunch(); app.quit(); return true; }
       case 'clearData': return w ? runMisc(w, 'clearData') : false;
       case 'importBookmarks': return importChromeBookmarks();
       case 'importLook': return prepareNewtabImport();
