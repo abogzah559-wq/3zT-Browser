@@ -162,7 +162,8 @@ jobs:
           if [ -z "$UPDATE_SIGNING_KEY" ]; then echo "::warning title=release::$v not published: add the UPDATE_SIGNING_KEY secret first"; exit 0; fi
           node scripts/sign-update.mjs dist/3zT-Browser-Setup.exe "${v#v}"
           # light update bundle: made here because the update test above rebuilds dist
-          python scripts/make_app_bundle.py dist/3zT/resources/app dist/3zT-app.json "$ELECTRON_VERSION"
+          # only for copies whose program file (3zT.exe: icon, Electron) is the same: "exeGen" in package.json, written to resources/exegen.txt
+          python scripts/make_app_bundle.py dist/3zT/resources/app dist/3zT-app.json "$ELECTRON_VERSION+exe$(node -p "require('./package.json').exeGen || 1")"
           node scripts/sign-update.mjs dist/3zT-app.json "${v#v}"
           gh release create "$v" dist/3zT-Browser-Setup.exe dist/3zT-Browser-Setup.exe.sha256 dist/3zT-Browser-Setup.exe.sig dist/3zT-app.json dist/3zT-app.json.sig --target "$GITHUB_SHA" --title "3zT $v" --notes "$notes"
           echo "::notice title=release::published $v"

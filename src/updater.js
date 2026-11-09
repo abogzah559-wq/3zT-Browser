@@ -114,6 +114,13 @@ async function check() {
   finally { busy = false; }
 }
 
+/* the program file this copy runs: Electron version + the exe generation the setup wrote (new icon -> new generation) */
+function exeId() {
+  let gen = '1';
+  try { gen = fs.readFileSync(path.join(path.dirname(process.execPath), 'resources', 'exegen.txt'), 'utf8').trim() || '1'; } catch (e) {}
+  return `${process.versions.electron}+exe${gen}`;
+}
+
 /* light update: the app folder alone, signed like the setup, for the same Electron only */
 async function checkLight(rel, ver) {
   try {
@@ -127,7 +134,7 @@ async function checkLight(rel, ver) {
     const sig = Buffer.from((await (await net.fetch(sa.browser_download_url)).text()).trim(), 'base64');
     if (!(sig.length === 64 && crypto.verify(null, Buffer.from(signedText(ver, sha, APP_ASSET)), KEY, sig))) { log('update: light bundle bad signature'); return false; }
     const b = JSON.parse(buf.toString('utf8'));
-    if (b.version !== ver || b.electron !== process.versions.electron || !b.files) return false;   // new Chromium: full setup
+    if (b.version !== ver || b.electron !== exeId() || !b.files) return false;   // new Chromium or new program icon: full setup
     fs.mkdirSync(dir(), { recursive: true });
     const file = path.join(dir(), `3zT-app-${ver}.json`);
     fs.writeFileSync(file, buf);

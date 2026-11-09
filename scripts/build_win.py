@@ -22,7 +22,14 @@ os.rename(os.path.join(OUT, 'electron.exe'), os.path.join(OUT, NAME + '.exe'))
 
 # our icon + name inside the .exe (Explorer, taskbar, Task Manager)
 subprocess.check_call([sys.executable, os.path.join(ROOT, 'scripts', 'patch_exe.py'),
-                       os.path.join(OUT, NAME + '.exe'), os.path.join(ROOT, 'assets', 'icon.png'), NAME, VER])
+                       os.path.join(OUT, NAME + '.exe'), os.path.join(ROOT, 'assets', 'icon.png'), NAME, VER,
+                       '--small', os.path.join(ROOT, 'assets', 'icon-small.png')])
+
+# which program file this is (icon, Electron): light updates only go to copies with the same one
+with open(os.path.join(ROOT, 'package.json'), encoding='utf-8') as f:
+    EXE_GEN = str(json.load(f).get('exeGen', 1))
+with open(os.path.join(OUT, 'resources', 'exegen.txt'), 'w') as f:
+    f.write(EXE_GEN)
 
 # Electron's sample app is not needed
 try: os.remove(os.path.join(OUT, 'resources', 'default_app.asar'))
