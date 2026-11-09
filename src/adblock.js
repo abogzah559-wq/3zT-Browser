@@ -80,6 +80,7 @@ class AdBlocker {
       if (yes.size) types = yes;
       else if (no.size) types = new Set(ALL_TYPES.filter(t => !no.has(t)));
       if (m[1]) {
+        if (tp) continue;                                                      // a third-party-only exception: not applied (never allow too much)
         if (!types) out.allow.add(host);
         else { const l = out.allowTyped.get(host) || []; l.push(types); out.allowTyped.set(host, l); }
         continue;
@@ -102,7 +103,7 @@ class AdBlocker {
   }
   /* the lists, already parsed (compiled.json): ~10x faster at start than parsing the text lists again */
   stamp() {
-    return LISTS.map(l => { try { const st = fs.statSync(path.join(this.dir, l.name + '.txt')); return `${l.name}:${st.size}:${Math.round(st.mtimeMs)}`; } catch (e) { return l.name + ':-'; } }).join('|') + '|v2';
+    return LISTS.map(l => { try { const st = fs.statSync(path.join(this.dir, l.name + '.txt')); return `${l.name}:${st.size}:${Math.round(st.mtimeMs)}`; } catch (e) { return l.name + ':-'; } }).join('|') + '|v3|' + SEED.length + ':' + SEED.join(',').length;   // a new SEED or parser = parse again
   }
   saveCompiled() {
     try {

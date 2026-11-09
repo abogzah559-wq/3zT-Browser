@@ -99,7 +99,7 @@ $('list').addEventListener('dragstart', e => {
 });
 
 /* ================= built-in media downloader ================= */
-let mode = 'video', M = { jobs: [], tools: { ready: false }, folder: '' }, msel = new Map(), mErr = '';
+let starting = false, mode = 'video', M = { jobs: [], tools: { ready: false }, folder: '' }, msel = new Map(), mErr = '';
 const fileUrl = p => 'file:///' + String(p).replace(/\\/g, '/').split('/').map((s, i) => (i === 0 && /^[A-Za-z]:$/.test(s) ? s : encodeURIComponent(s))).join('/');
 const isPhotoLink = u => /tiktok\.com\/.*\/photo\//i.test(u);
 function setMode(m) {
@@ -112,6 +112,8 @@ function setMode(m) {
 const ERR = e => {
   e = String(e || '');
   if (e === 'bad-url') return L('الرابط غير صحيح', 'That link is not valid');
+  if (e === 'busy-update') return L('خلّ التحميلات الشغالة تخلص أول، بعدها حدّث الأدوات', 'Let the running downloads finish first, then update the tools');
+  if (e === 'cancelled') return L('انلغى', 'Cancelled');
   if (e === 'busy') return L('فيه 3 تحميلات شغالة، انتظر واحد يخلص', 'Three downloads are running, wait for one to finish');
   if (e === 'expired') return L('انتهت صلاحية هذا التحميل، ابدأه من جديد', 'This item expired, start it again');
   if (e === 'no-photos') return L('ما لقيت صور في هذا الرابط', 'No photos found at this link');
@@ -159,7 +161,7 @@ function mdraw() {
         ${j.state === 'error' ? `<button data-m="retry">${L('إعادة المحاولة', 'Retry')}</button>` : ''}</div></div>`;
   }
   $('mjobs').innerHTML = h;
-  $('mgo').disabled = false;
+  $('mgo').disabled = starting;
 }
 function gallery(j) {
   const sel = msel.get(j.id) || new Set((j.items || []).filter(x => x.type === 'image').map(x => x.i));
@@ -176,8 +178,10 @@ async function mload() { const d = await zeus.mediaList(); if (d) M = d; mdraw()
 async function mstart(url, m) {
   url = (url || '').trim(); if (!url) { mErr = L('الصق الرابط أول', 'Paste a link first'); return mdraw(); }
   if (m === 'video' && isPhotoLink(url)) m = 'images';
-  mErr = ''; $('mgo').disabled = true;
+  if (starting) return;
+  mErr = ''; starting = true; $('mgo').disabled = true;
   const r = await zeus.mediaStart({ url, mode: m, q: $('mq').value, trim: $('mtrim').checked });
+  starting = false;
   if (r && r.error) mErr = ERR(r.error);
   mload();
 }
@@ -222,8 +226,11 @@ setMode('video'); mload();
 let T = null;   // { file, jobId | listId, dur }
 const fmt = s => { s = Math.max(0, s || 0); const m = Math.floor(s / 60), x = s - m * 60; return (m >= 60 ? Math.floor(m / 60) + ':' + String(m % 60).padStart(2, '0') : m) + ':' + x.toFixed(1).padStart(4, '0'); };
 const parse = t => { const p = String(t).trim().split(':').map(Number); if (p.some(isNaN)) return NaN; return p.reduce((a, v) => a * 60 + v, 0); };
-function tval() { const d = T.dur || 0; return { s: (+$('ts').value / 1000) * d, e: (+$('te').value / 1000) * d }; }
+// the chosen times in seconds are the real state; the sliders only show them
+function tval() { return { s: T.s || 0, e: T.e != null ? T.e : (T.dur || 0) }; }
+function tsync() { if (!T.dur) return; $('ts').value = Math.round(T.s / T.dur * 1000); $('te').value = Math.round((T.e != null ? T.e : T.dur) / T.dur * 1000); }
 function tpaint() {
+  tsync();
   const { s, e } = tval();
   $('tsel').style.insetInlineStart = (+$('ts').value / 10) + '%';
   $('tsel').style.width = Math.max(0, (+$('te').value - +$('ts').value) / 10) + '%';
@@ -233,7 +240,7 @@ function tpaint() {
 }
 function openTrim(o) {
   if (!o.file) return;
-  T = Object.assign({ dur: 0 }, o);
+  T = Object.assign({ dur: 0, s: 0, e: null, busy: false }, o);
   $('tsL').textContent = L('البداية', 'Start'); $('teL').textContent = L('النهاية', 'End'); $('tlenL').textContent = L('المدة:', 'Length:');
   $('tsNow').textContent = L('من الوقت الحالي', 'Set to current'); $('teNow').textContent = L('من الوقت الحالي', 'Set to current');
   $('tmF').textContent = L('سريع وبنفس الجودة', 'Fast, same quality');
@@ -249,11 +256,18 @@ function openTrim(o) {
   $('tv').src = fileUrl(T.file);
   $('trim').hidden = false;
 }
-$('tv').addEventListener('loadedmetadata', () => { if (T) { T.dur = $('tv').duration || 0; tpaint(); } });
+$('tv').addEventListener('loadedmetadata', () => { if (T) { T.dur = $('tv').duration || 0; if (T.e == null || T.e > T.dur) T.e = T.dur; tpaint(); } });
 $('tv').addEventListener('error', () => { if (T) { $('tnote').className = 'mnote bad'; $('tnote').textContent = L('ما قدرت أعرض هذا الفيديو هنا، لكن تقدر تقصه بكتابة الأوقات.', 'This video cannot be previewed here, but you can still type the times.'); } });
-$('ts').addEventListener('input', () => { if (+$('ts').value > +$('te').value - 1) $('ts').value = +$('te').value - 1; tpaint(); $('tv').currentTime = tval().s; });
-$('te').addEventListener('input', () => { if (+$('te').value < +$('ts').value + 1) $('te').value = +$('ts').value + 1; tpaint(); $('tv').currentTime = tval().e; });
-const setBy = (which, sec) => { if (!T || !T.dur || isNaN(sec)) return; const v = Math.round(Math.min(1, Math.max(0, sec / T.dur)) * 1000); $(which).value = v; $(which === 'ts' ? 'ts' : 'te').dispatchEvent(new Event('input')); };
+$('ts').addEventListener('input', () => { if (!T || !T.dur) return; T.s = Math.min(+$('ts').value / 1000 * T.dur, tval().e - 0.1); tpaint(); $('tv').currentTime = T.s; });
+$('te').addEventListener('input', () => { if (!T || !T.dur) return; T.e = Math.max(+$('te').value / 1000 * T.dur, T.s + 0.1); tpaint(); $('tv').currentTime = T.e; });
+// typed or "current time": exact seconds, also when the video cannot be previewed (length unknown)
+const setBy = (which, sec) => {
+  if (!T || isNaN(sec) || sec < 0) return;
+  if (T.dur) sec = Math.min(sec, T.dur);
+  if (which === 'ts') T.s = sec; else T.e = sec;
+  tpaint();
+  if (T.dur) $('tv').currentTime = sec;
+};
 $('tsi').addEventListener('change', () => setBy('ts', parse($('tsi').value)));
 $('tei').addEventListener('change', () => setBy('te', parse($('tei').value)));
 $('tsNow').onclick = () => setBy('ts', $('tv').currentTime);
@@ -262,15 +276,20 @@ let stopAt = null;
 $('tplay').onclick = () => { const { s, e } = tval(); stopAt = e; $('tv').currentTime = s; $('tv').play(); };
 $('tv').addEventListener('timeupdate', () => { if (stopAt != null && $('tv').currentTime >= stopAt) { $('tv').pause(); stopAt = null; } });
 const closeTrim = () => { $('tv').pause(); $('tv').removeAttribute('src'); $('tv').load(); $('trim').hidden = true; T = null; };
-$('tcancel').onclick = closeTrim;
+$('tcancel').onclick = async () => {
+  if (T && T.busy) { if (T.jobId) await zeus.mediaCancel(T.jobId); else await zeus.mediaTrimCancel(T.listId); }
+  closeTrim(); mload();
+};
 $('twhole').onclick = async () => { if (!T || !T.jobId) return; const id = T.jobId; closeTrim(); await zeus.mediaTrim(id, { whole: true }); mload(); };
 $('tsave').onclick = async () => {
   if (!T) return;
   const { s, e } = tval(), exact = document.querySelector('input[name=tm]:checked').value === 'exact';
   if (!(e - s > 0.2)) { $('tnote').className = 'mnote bad'; $('tnote').textContent = L('اختر جزء أطول', 'Pick a longer part'); return; }
-  $('tsave').disabled = true; $('tnote').className = 'mnote'; $('tnote').textContent = L('أقص المقطع…', 'Trimming…');
+  $('tsave').disabled = true; $('twhole').disabled = true; $('tnote').className = 'mnote'; $('tnote').textContent = L('أقص المقطع…', 'Trimming…');
+  T.busy = true; const cur = T;
   const r = T.jobId ? await zeus.mediaTrim(T.jobId, { start: s, end: e, exact }) : await zeus.mediaTrimFile(T.listId, { start: s, end: e, exact });
-  $('tsave').disabled = false;
+  cur.busy = false; $('tsave').disabled = false; $('twhole').disabled = false;
+  if (T !== cur) return;   // cancelled meanwhile
   if (r && r.error) { $('tnote').className = 'mnote bad'; $('tnote').textContent = ERR(r.error); return; }
   closeTrim(); mload(); load();
 };

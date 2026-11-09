@@ -511,6 +511,8 @@ password* on the site, or cancel the window.
   Widevine module. The video downloader does not download DRM-protected video either.
 - Passkey autofill (picking a saved passkey from the username box) is not available; passkeys work
   when you choose them on the site.
+  The fix for the Windows Security window applies to the page itself; a sign-in box embedded from
+  another site inside a page (an iframe) is not covered yet.
 - The ad blocker uses the host rules of EasyList / EasyPrivacy (with their resource types); path and
   cosmetic rules are not applied.
 - Sites change often; when one stops working in the video downloader, *Update download tools*
