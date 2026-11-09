@@ -1180,7 +1180,8 @@ function setupSession(ses) {
   ses.on('will-download', (e, item, wc) => {
     const resumeId = dl.takeResume();
     const t = wc && tabOfWc(wc);
-    const rec = dl.handle(item, { resumeId, partition: ses !== session.defaultSession ? ((t && t.win.partition) || 'private') : null });
+    const hint = dlNames.get(item.getURL()); dlNames.delete(item.getURL()); if (process.env.ZEUS_DEBUG_DL) console.log('[3zT] will-download', item.getURL(), JSON.stringify(item.getFilename()), !!hint);
+    const rec = dl.handle(item, { resumeId, nameHint: hint && Date.now() - hint.t < 15000 ? hint.name : '', partition: ses !== session.defaultSession ? ((t && t.win.partition) || 'private') : null });
     rec.winId = (() => { const w = (t && t.win) || focusedWin(); return w ? w.id : null; })();
     // a tab a site opened only to start this download (nothing ever showed in it): closed once the file has a place, like Chrome
     if (t && t.openedByPage && !t.committed) { dlBlankTabs.set(rec.id, t); item.once('done', () => closeBlankTab(rec.id)); }
@@ -1331,6 +1332,16 @@ function setupPermissionIpc() {
 /* ---------- downloads: tell the bar (notices + icon) and the downloads page ---------- */
 let dlPageTimer = null;
 const dlBlankTabs = new Map();   // download id -> empty tab that only started it
+/* names pages give their downloads (<a download="ملف.pdf">): Electron loses names that are not plain English */
+const dlNames = new Map();       // absolute href -> { name, t }
+ipcMain.on('dl:name', (e, d) => {
+  e.returnValue = true;
+  if (!tabOfWc(e.sender) || !d || typeof d.href !== 'string' || typeof d.name !== 'string') return;
+  let href; try { href = new URL(d.href, e.senderFrame.url).href; } catch (x) { return; }
+  const name = d.name.trim().slice(0, 200); if (!name) return;
+  dlNames.set(href, { name, t: Date.now() }); if (process.env.ZEUS_DEBUG_DL) console.log('[3zT] dl:name', href, name);
+  if (dlNames.size > 50) dlNames.delete(dlNames.keys().next().value);
+});
 function closeBlankTab(id) {
   const t = dlBlankTabs.get(id); dlBlankTabs.delete(id);
   if (t && !t.committed && t.win && t.win.tabs.includes(t)) t.win.closeTab(t.id, { forget: true });
@@ -1608,6 +1619,7 @@ function siteCfg(host) {
   const d = settings.data, adsOn = d.adblock !== false;
   return {
     fast: FAST, lang: d.lang,
+    passkeyFix: !process.env.ZEUS_NO_PASSKEY_FIX,
     yt: isYT(host) ? { clean: ytCleanAttrs(), cleanCss: FEAT.YT_CLEAN_CSS, sponsor: d.sponsorBlock !== false ? (d.sbCats || []) : [], ambient: d.ambient !== false } : null,
     twitch: isTwitch(host) && adsOn && d.twitchAds !== false && !d.adAllow.includes('twitch.tv')
   };
