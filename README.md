@@ -109,11 +109,17 @@ Results so far (GitHub `windows-latest`, private memory, each run = two rounds a
 | 0.8.0, run 1 | **399 MB** (7 processes) | 440 MB (12) | 738 MB (34) |
 | 0.8.0, run 2 | **396 MB** (7) | 436 MB (12) | 908 MB (35) |
 | 0.9.0 | 407 MB (7) | **392 MB** (10) | 870 MB (34) |
+| 0.13.0 (before release) | **390 MB** (7) | 454 MB (10) | 906 MB (34) |
 
 So far 3zT uses **about half the memory of Chrome** and **about the same as Brave** (a few
 percent lower or higher depending on the run), with the fewest processes. Each release's own
 numbers are in its release notes.
 <!-- BENCH:END -->
+
+Each release's notes also list 3zT's own use in everyday situations (1, 5 and 10 websites, a playing
+video, a second window, a download, and memory after opening and closing 40 tabs), measured by
+[`tests/resources.mjs`](tests/resources.mjs). The GitHub machine has no graphics card, so GPU and
+video memory are not measured there.
 
 Numbers change with the websites you visit and your hardware. The gap grows when you would
 otherwise run the extensions listed below, because in 3zT they do not add processes.
