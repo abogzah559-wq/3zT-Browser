@@ -227,6 +227,7 @@ window.slowDl = () => { location.href = '/slow'; };
       // redirect to a signed, short-lived address
       if (u.pathname === '/redir') { r.writeHead(302, { Location: '/signed?exp=' + (Date.now() + 60000) + '&sig=abc' }); return r.end(); }
       if (u.pathname === '/signed') return +u.searchParams.get('exp') > Date.now() ? file('signed.bin', Buffer.from('signed')) : (r.writeHead(403), r.end());
+      if (u.pathname === '/plain-file') { r.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return r.end('plain'); }
       if (u.pathname === '/many') return file(`part-${u.searchParams.get('i')}.bin`, Buffer.from('m' + u.searchParams.get('i')));
       // breaks half way the first time, then serves the rest with Range (resume)
       if (u.pathname === '/cut') {
@@ -282,6 +283,26 @@ async function downloads() {
     const slow = await poll(async () => (await list()).find(x => x.name === 'slow.bin' && x.state === 'progressing'), 15000);
     if (slow) await dp.ev(`zeus.dlAct(${JSON.stringify(slow.id)}, 'cancel')`);
     ok('cancelling a download', !!(slow && await poll(async () => (await list()).find(x => x.id === slow.id && x.state === 'cancelled'), 10000)));
+    // a page cannot name files of another site (Chrome ignores <a download> across sites)
+    await page.ev(`document.dispatchEvent(new CustomEvent('__3zt_dl', { detail: JSON.stringify({ href: 'http://localhost:8791/plain-file', name: 'شي.exe' }) })), location.href = 'http://localhost:8791/plain-file', 1`, true);
+    const forged = await poll(async () => (await list()).find(x => (x.name === 'plain-file' || x.name === 'شي.exe') && x.state === 'completed'), 15000);
+    ok('a page cannot rename another site\'s file', !!forged && forged.name === 'plain-file', forged ? forged.name : 'no download');
+    // private window: its download is saved but not listed in normal windows
+    { const tb = await toolbar(); await tb.ev(`ui.send('tab','incognito'),1`); tb.close(); }
+    await sleep(2500);
+    const priv = await poll(async () => { for (const x of (await targets()).filter(x => x.url.includes('ui/toolbar.html'))) { const c = await connect(x); if (await c.ev('S.private')) return c; c.close(); } return null; }, 15000);
+    if (priv) {
+      await priv.ev(`ui.send('tab','go',{text:'http://127.0.0.1:8791/?private',newTab:false}),1`);
+      const pp = await connect(await find(u => u.includes('8791/?private'), 30));
+      await poll(() => pp.ev('typeof manyDl === "function"'), 15000);
+      await pp.ev(`(() => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['secret'])); a.download = 'خاص.txt'; a.click(); return 1; })()`, true);
+      await sleep(4000);
+      const inNormal = (await list()).some(x => x.name === 'خاص.txt');
+      const inPrivate = await priv.ev(`ui.invoke('dl:session').then(l => l.some(x => x.name === 'خاص.txt'))`);
+      ok('a private window\'s download stays out of normal windows\' lists', !inNormal && inPrivate === true, `normal ${inNormal}, private ${inPrivate}`);
+      pp.close();
+      await priv.ev(`ui.send('win','close'),1`); priv.close(); await sleep(1500);
+    } else ok('a private window\'s download stays out of normal windows\' lists', false, 'no private window');
     await dp.ev(`zeus.set('dlAsk', true), 1`);
     page.close(); dp.close();
   } finally { srv.close(); }

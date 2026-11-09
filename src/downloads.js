@@ -43,7 +43,7 @@ class DownloadManager {
     if (resumed && resumed.path) item.setSavePath(resumed.path);
     else {
       const dir = this.folder();
-      if (this.settings.data.dlAsk !== false && !opts.silent) {
+      if ((this.settings.data.dlAsk !== false || opts.ask) && !opts.silent) {
         // the normal Windows save window, opened by Chromium itself (doesn't block the browser)
         item.setSaveDialogOptions({ title: this.T('وين تبي تحفظ الملف؟', 'Where do you want to save the file?'), defaultPath: path.join(dir, rec.name) });
       } else {
@@ -178,7 +178,8 @@ function nameFromUrl(u) {
   try { const seg = new URL(u).pathname.split('/').filter(Boolean).pop() || ''; return decodeURIComponent(seg); } catch (e) { return ''; }
 }
 function safeName(n) {
-  n = String(n || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^[\s.]+|[\s.]+$/g, '').slice(0, 200);
+  // no path characters, and no invisible direction marks (they can disguise "invoice‮fdp.exe" as a PDF)
+  n = String(n || '').replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069\u061c\ufeff]/g, '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^[\s.]+|[\s.]+$/g, '').slice(0, 200);
   if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(n)) n = '_' + n;   // names Windows reserves
   return n;
 }

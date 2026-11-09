@@ -53,6 +53,7 @@ if (internal) {
     mediaSave: (id, idx) => ipcRenderer.invoke('media:save', id, idx),
     mediaTrim: (id, o) => ipcRenderer.invoke('media:trim', id, o),
     mediaTrimFile: (id, o) => ipcRenderer.invoke('media:trimFile', id, o),
+    mediaTrimCancel: id => ipcRenderer.invoke('media:trimCancel', id),
     mediaUpdate: () => ipcRenderer.invoke('media:update'),
     mediaShow: f => ipcRenderer.invoke('media:show', f),
     mediaFolder: choose => ipcRenderer.invoke('media:folder', !!choose),

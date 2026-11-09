@@ -116,7 +116,7 @@ class MediaEngine {
       const work = path.join(this.toolsDir, 'ffmpeg-unpack');
       fs.rmSync(work, { recursive: true, force: true }); fs.mkdirSync(work);
       const tar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
-      await new Promise((res, rej) => execFile(tar, ['-xf', zip, '-C', work], { windowsHide: true }, e => (e ? rej(new Error('ffmpeg unpack: ' + e.message)) : res())));
+      await new Promise((res, rej) => { const pr = this.run(tar, ['-xf', zip, '-C', work]); pr.on('error', e => rej(new Error('ffmpeg unpack: ' + e.message))); pr.on('close', code => (code === 0 ? res() : rej(new Error('ffmpeg unpack failed (' + code + ')')))); });
       const top = fs.readdirSync(work).find(d => fs.statSync(path.join(work, d)).isDirectory());
       const bin = top && path.join(work, top, 'bin');
       if (!bin || !fs.existsSync(path.join(bin, 'ffmpeg.exe'))) throw new Error('ffmpeg: unexpected package');
@@ -133,6 +133,8 @@ class MediaEngine {
   /* "the site stopped working": yt-dlp and gallery-dl update themselves */
   async updateTools() {
     await this.ensureTools();
+    // a running download keeps yt-dlp.exe open, so Windows would not let it replace itself
+    if ([...this.jobs.values()].some(j => j.state === 'running')) throw new Error('busy-update');
     const p = this.paths();
     const one = (bin, args) => new Promise(res => {
       let out = ''; const pr = this.run(bin, args);
@@ -220,13 +222,21 @@ class MediaEngine {
     if (job.state === 'trim') j.temp = job.temp;
     return j;
   }
-  list() { return [...this.jobs.values()].sort((a, b) => b.created - a.created).map(j => this.public(j)); }
+  /* jobs of normal browsing (part = null) or of one private session */
+  list(part) { return [...this.jobs.values()].filter(j => (j.partition || null) === (part || null)).sort((a, b) => b.created - a.created).map(j => this.public(j)); }
+  /* a private session ended: its jobs and their temporary files go */
+  forgetPartition(part) {
+    for (const j of [...this.jobs.values()]) if (j.partition === part) {
+      if (j.state === 'running') { j.state = 'cancelled'; this.killTree(j.proc); }
+      this.jobs.delete(j.id); fs.rm(j.dir, { recursive: true, force: true }, () => {});
+    }
+  }
   get(id) { const j = this.jobs.get(id); return j ? this.public(j) : null; }
 
   /* ---------- video / audio (yt-dlp) ---------- */
-  async startVideo({ url, mode, q, trim, cookies }) {
+  async startVideo({ url, mode, q, trim, cookies, partition, winId }) {
     if ([...this.jobs.values()].filter(j => j.kind === 'video' && j.state === 'running').length >= MAX_JOBS) throw new Error('busy');
-    const job = this.newJob('video', url, { mode: mode === 'audio' ? 'audio' : 'video', trim: !!trim && mode !== 'audio', stage: 'tools' });
+    const job = this.newJob('video', url, { mode: mode === 'audio' ? 'audio' : 'video', trim: !!trim && mode !== 'audio', stage: 'tools', partition: partition || null, winId });
     this.changed(job);
     try { await this.ensureTools(); } catch (e) { job.state = 'error'; job.error = 'tools: ' + e.message; this.changed(job); return this.public(job); }
     if (job.state === 'cancelled') return this.public(job);
@@ -283,8 +293,8 @@ class MediaEngine {
   }
 
   /* ---------- photos (gallery-dl) ---------- */
-  async startImages({ url, cookies }) {
-    const job = this.newJob('images', url, { items: [], stage: 'tools' });
+  async startImages({ url, cookies, partition, winId }) {
+    const job = this.newJob('images', url, { items: [], stage: 'tools', partition: partition || null, winId });
     this.changed(job);
     try { await this.ensureTools(); } catch (e) { job.state = 'error'; job.error = 'tools: ' + e.message; this.changed(job); return this.public(job); }
     if (job.state === 'cancelled') return this.public(job);
@@ -347,7 +357,7 @@ class MediaEngine {
                   key frame before the start, so it can begin up to a few seconds early.
      exact=true:  the picture is encoded again (H.264, high quality) so the cut is on the exact frame; slower,
                   and like any re-encode not bit-identical to the original. */
-  trimFile(src, start, end, exact, dest, onPct) {
+  trimFile(src, start, end, exact, dest, onPct, owner) {
     const p = this.paths();
     const dur = Math.max(0.1, end - start);
     const args = ['-hide_banner', '-nostdin', '-y', '-ss', start.toFixed(3), '-i', src, '-t', dur.toFixed(3), '-map', '0:v:0?', '-map', '0:a?'];
@@ -356,6 +366,7 @@ class MediaEngine {
     args.push('-movflags', '+faststart', '-progress', 'pipe:1', dest);
     return new Promise((res, rej) => {
       const pr = this.run(path.join(p.ffmpegDir, exe('ffmpeg')), args);
+      if (owner) owner.proc = pr;   // so Cancel can stop it
       let err = '';
       this.lines(pr.stdout, l => { const m = /^out_time_us=(\d+)/.exec(l); if (m && onPct) onPct(Math.min(99, (+m[1] / 1e6) / dur * 100)); });
       pr.stderr.on('data', d => (err = (err + d).slice(-2000)));
@@ -375,8 +386,15 @@ class MediaEngine {
       const ext = exact ? '.mp4' : path.extname(name) || '.mp4';
       const outName = this.freeName(this.outDir(), name.slice(0, name.length - path.extname(name).length) + ' (clip)' + ext);
       const dest = path.join(this.outDir(), outName);
-      try { await this.trimFile(job.temp, +start, +end, !!exact, dest, pc => { job.pct = pc; this.changed(job); }); }
-      catch (e) { try { fs.rmSync(dest, { force: true }); } catch (x) {} job.state = 'trim'; job.stage = ''; job.error = String(e.message || e); this.changed(job); throw e; }
+      let failed = null;
+      try { await this.trimFile(job.temp, +start, +end, !!exact, dest, pc => { job.pct = pc; this.changed(job); }, job); }
+      catch (e) { failed = e; }
+      job.proc = null;
+      if (job.state === 'cancelled' || failed) {
+        try { fs.rmSync(dest, { force: true }); } catch (x) {}
+        if (job.state === 'cancelled') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); this.changed(job); return this.public(job); }
+        job.state = 'trim'; job.stage = ''; job.error = String(failed.message || failed); this.changed(job); throw failed;
+      }
       job.file = dest;
     }
     job.name = path.basename(job.file); job.state = 'done'; job.stage = ''; job.pct = 100; job.error = '';
@@ -385,11 +403,12 @@ class MediaEngine {
     return this.public(job);
   }
   /* trim any video already on disk (from the downloads list): a new file next to it */
-  async trimExisting(src, { start, end, exact }, onPct) {
+  async trimExisting(src, { start, end, exact }, onPct, owner) {
     await this.ensureTools();
     const dir = path.dirname(src), name = path.basename(src), ext = exact ? '.mp4' : path.extname(name) || '.mp4';
     const dest = path.join(dir, this.freeName(dir, name.slice(0, name.length - path.extname(name).length) + ' (clip)' + ext));
-    return this.trimFile(src, +start, +end, !!exact, dest, onPct);
+    try { return await this.trimFile(src, +start, +end, !!exact, dest, onPct, owner); }
+    catch (e) { try { fs.rmSync(dest, { force: true }); } catch (x) {} throw e; }
   }
 }
 
