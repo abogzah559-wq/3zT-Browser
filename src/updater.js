@@ -62,40 +62,41 @@ function notesFor(body, lang) {
 
 let busy = false, timer = null, log = () => {};
 
+/* returns { state: 'latest' | 'ready' | 'error', version } (the settings page shows it) */
 async function check() {
-  if (busy) return; busy = true;
+  if (busy) return { state: 'busy' }; busy = true;
   try {
     const r = await net.fetch(API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': '3zT-updater' } });
-    if (!r.ok) return log('update check', r.status);
+    if (!r.ok) { log('update check', r.status); return { state: 'error', error: 'HTTP ' + r.status }; }
     const rel = await r.json();
     const ver = String(rel.tag_name || '').replace(/^v/, '');
-    if (!ver || !newer(ver, app.getVersion())) return;
+    if (!ver || !newer(ver, app.getVersion())) return { state: 'latest', version: app.getVersion() };
     const asset = (rel.assets || []).find(a => a.name === ASSET);
-    if (!asset) return;
+    if (!asset) return { state: 'latest', version: app.getVersion() };
     // already downloaded and verified?
     const pend = readJson(pendingFile());
-    if (pend && pend.version === ver && fs.existsSync(pend.file)) return;
-    if (await checkLight(rel, ver)) return;
+    if (pend && pend.version === ver && fs.existsSync(pend.file)) return { state: 'ready', version: ver };
+    if (await checkLight(rel, ver)) return { state: 'ready', version: ver };
     // the expected checksum: GitHub's own digest of the file, or the .sha256 file next to it
     let want = String(asset.digest || '').replace(/^sha256:/, '').toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(want)) {
       const sh = (rel.assets || []).find(a => a.name === ASSET + '.sha256');
       if (sh) { const t = await (await net.fetch(sh.browser_download_url)).text(); want = (t.match(/[0-9a-f]{64}/i) || [''])[0].toLowerCase(); }
     }
-    if (!/^[0-9a-f]{64}$/.test(want)) return log('update: no checksum, skipped');
+    if (!/^[0-9a-f]{64}$/.test(want)) { log('update: no checksum, skipped'); return { state: 'error', error: 'no checksum' }; }
     // the signature must match this version and checksum before anything is downloaded
     const sigAsset = (rel.assets || []).find(a => a.name === ASSET + '.sig');
-    if (!sigAsset) return log('update: not signed, skipped');
+    if (!sigAsset) { log('update: not signed, skipped'); return { state: 'error', error: 'not signed' }; }
     let sigOk = false;
     try {
       const sig = Buffer.from((await (await net.fetch(sigAsset.browser_download_url)).text()).trim(), 'base64');
       sigOk = sig.length === 64 && crypto.verify(null, Buffer.from(signedText(ver, want)), KEY, sig);
     } catch (e) {}
-    if (!sigOk) return log('update: bad signature, skipped');
+    if (!sigOk) { log('update: bad signature, skipped'); return { state: 'error', error: 'bad signature' }; }
     fs.mkdirSync(dir(), { recursive: true });
     const file = path.join(dir(), `3zT-Setup-${ver}.exe`), part = file + '.part';
     const d = await net.fetch(asset.browser_download_url);
-    if (!d.ok || !d.body) return log('update download', d.status);
+    if (!d.ok || !d.body) { log('update download', d.status); return { state: 'error', error: 'HTTP ' + d.status }; }
     const out = fs.createWriteStream(part);
     const reader = d.body.getReader();
     for (;;) {
@@ -104,13 +105,14 @@ async function check() {
     }
     await new Promise((r2, j) => out.end(e => (e ? j(e) : r2())));
     const got = await sha256File(part);
-    if (got !== want) { try { fs.unlinkSync(part); } catch (e) {} return log('update: checksum mismatch'); }
+    if (got !== want) { try { fs.unlinkSync(part); } catch (e) {} log('update: checksum mismatch'); return { state: 'error', error: 'checksum' }; }
     // keep only this setup
     for (const n of fs.readdirSync(dir())) if (/^3zT-Setup-.*\.exe$/.test(n) && n !== path.basename(file)) { try { fs.unlinkSync(path.join(dir(), n)); } catch (e) {} }
     fs.renameSync(part, file);
     fs.writeFileSync(pendingFile(), JSON.stringify({ version: ver, file, body: String(rel.body || '').slice(0, 20000), at: Date.now() }));
     log('update ready', ver);
-  } catch (e) { log('update failed', e && e.message); }
+    return { state: 'ready', version: ver };
+  } catch (e) { log('update failed', e && e.message); return { state: 'error', error: String(e && e.message) }; }
   finally { busy = false; }
 }
 

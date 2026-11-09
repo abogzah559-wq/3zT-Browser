@@ -120,11 +120,13 @@ function render() {
     row(L('المفضلة والأيقونات', 'Bookmarks and icons'), '', `<button data-act="importBookmarks">${L('استيراد', 'Import')}</button>`) +
     row(L('شكل بلاك كروم (الخلفية والخط والإعدادات)', 'Black Chrome look (background, font, settings)'), '', `<button data-act="importLook">${L('استيراد', 'Import')}</button>`));
   sec.about = card('about', L('حول المتصفح', 'About'),
-    row('3zT ' + esc(S.versions.app), 'Chromium ' + esc(S.versions.chrome), ''));
+    row('3zT ' + esc(S.versions.app), 'Chromium ' + esc(S.versions.chrome), '') +
+    row(L('التحقق من وجود تحديث', 'Check for updates'), upd ? esc(upd.text) : L('المتصفح يتحدث لحاله بصمت، وهنا تدوّر على تحديث الحين بدون انتظار.', 'The browser updates itself quietly; this looks for one right now.'),
+      upd && upd.state === 'ready' ? `<button class="pri" data-act="installUpdate">${L('أعد التشغيل للتحديث', 'Restart to update')}</button>` : `<button data-act="checkUpdate"${upd && upd.state === 'checking' ? ' disabled' : ''}>${upd && upd.state === 'checking' ? L('جاري البحث…', 'Checking…') : L('تحقق الحين', 'Check now')}</button>`));
   $('main').innerHTML = sec[cur] || sec.general;
 }
 
-let toastT = 0;
+let toastT = 0, upd = null;   // update check state
 function toast(t) { const x = $('toast'); x.textContent = t; x.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => x.classList.remove('on'), 2600); }
 async function load() { S = await zeus.settings(); render(); }
 
@@ -146,7 +148,17 @@ document.addEventListener('click', async e => {
   const act = b.dataset.act; if (!act) return;
   if (act === 'extRemove' && !confirm(L('إزالة الإضافة؟', 'Remove this extension?'))) return;
   b.disabled = true;
+  if (act === 'checkUpdate') { upd = { state: 'checking', text: L('أدوّر على تحديث وأنزّله إذا لقيت…', 'Looking for an update and downloading it if there is one…') }; render(); }
   const r = await zeus.act(act, b.dataset.arg);
+  if (act === 'checkUpdate') {
+    const st = r && r.state;
+    upd = st === 'ready' ? { state: 'ready', text: L(`نزل التحديث ${r.version} وجاهز. أعد التشغيل وتثبّت في ثواني، وتبويباتك ترجع.`, `Update ${r.version} is downloaded and checked. Restart to install it; your tabs come back.`) }
+      : st === 'latest' ? { state: 'latest', text: L(`عندك آخر نسخة (${r.version}) ✓`, `You have the latest version (${r.version}) ✓`) }
+      : st === 'portable' ? { state: 'error', text: L('هذي النسخة غير مثبّتة بالسيت اب، فما تتحدث لحالها.', 'This copy was not installed with the setup, so it does not update itself.') }
+      : st === 'busy' ? { state: 'checking', text: L('فيه بحث شغال الحين، جرب بعد شوي.', 'A check is already running, try again in a moment.') }
+      : { state: 'error', text: L('ما قدرت أتحقق (تأكد من الإنترنت): ', 'Could not check (check the connection): ') + ((r && r.error) || '') };
+    render(); return;
+  }
   b.disabled = false;
   if (act === 'makeDefault') toast(L('اختار "3zT" من صفحة ويندوز اللي فتحت', 'Pick "3zT" on the Windows page that opened'));
   if (act === 'importBookmarks') toast(r ? L(`انضافت ${r} من مفضلة كروم`, `Imported ${r} bookmarks`) : L('تم تحديث الأيقونات، وما فيه مفضلة جديدة', 'Icons updated, no new bookmarks'));

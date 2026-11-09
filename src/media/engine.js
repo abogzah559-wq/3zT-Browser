@@ -43,8 +43,25 @@ class MediaEngine {
   changed(job) { try { this.o.onChange && this.o.onChange(job); } catch (e) {} }
 
   /* ---------- tools ---------- */
+  /* the tools that came with the setup (resources/tools); yt-dlp and gallery-dl are copied next to the
+     profile once per version because they update themselves; FFmpeg is used where it is */
+  packed() { const d = this.o.packedDir; return d && fs.existsSync(path.join(d, TOOLS.ytdlp.file)) ? d : null; }
   paths() {
-    return { ytdlp: path.join(this.toolsDir, TOOLS.ytdlp.file), gallerydl: path.join(this.toolsDir, TOOLS.gallerydl.file), ffmpegDir: path.join(this.toolsDir, 'ffmpeg') };
+    const pk = this.packed();
+    const ff = pk && fs.existsSync(path.join(pk, 'ffmpeg', exe('ffmpeg'))) ? path.join(pk, 'ffmpeg') : path.join(this.toolsDir, 'ffmpeg');
+    return { ytdlp: path.join(this.toolsDir, TOOLS.ytdlp.file), gallerydl: path.join(this.toolsDir, TOOLS.gallerydl.file), ffmpegDir: ff };
+  }
+  copyPacked() {
+    const pk = this.packed(); if (!pk) return;
+    const stampF = path.join(this.toolsDir, 'version.txt');
+    let stamp = ''; try { stamp = fs.readFileSync(stampF, 'utf8').trim(); } catch (e) {}
+    const want = String(this.o.version || '');
+    fs.mkdirSync(this.toolsDir, { recursive: true });
+    for (const f of [TOOLS.ytdlp.file, TOOLS.gallerydl.file]) {
+      const src = path.join(pk, f), dst = path.join(this.toolsDir, f);
+      if (fs.existsSync(src) && (!fs.existsSync(dst) || stamp !== want)) { try { fs.copyFileSync(src, dst); } catch (e) { this.log('tool copy failed', f, e.message); } }
+    }
+    try { fs.writeFileSync(stampF, want); } catch (e) {}
   }
   ready() {
     const p = this.paths();
@@ -52,6 +69,7 @@ class MediaEngine {
   }
   toolsInfo() { return { ready: this.ready(), setup: this.setupState }; }
   ensureTools() {
+    if (!this.copied) { this.copied = true; try { this.copyPacked(); } catch (e) {} }   // tools from the setup: instant
     if (this.ready()) return Promise.resolve(true);
     if (!isWin) return Promise.reject(new Error('The download tools are only set up automatically on Windows'));
     if (!this.setup) {
@@ -290,6 +308,37 @@ class MediaEngine {
       this.changed(job);
     });
     return this.public(job);
+  }
+
+  /* ---------- what is at this link (shown before downloading, to confirm) ---------- */
+  async info({ url, cookies }) {
+    await this.ensureTools();
+    const p = this.paths();
+    const dir = path.join(this.tmp, 'info-' + crypto.randomBytes(4).toString('hex'));
+    fs.mkdirSync(dir, { recursive: true });
+    const job = { dir };
+    const args = ['-J', '--no-playlist', '--no-warnings', '--color', 'never', ...this.commonArgs(job, cookies)];
+    if (this.o.jsRuntime) args.push('--js-runtimes', 'node:' + this.o.jsRuntime);
+    args.push('--', url);
+    return new Promise(res => {
+      const pr = this.run(p.ytdlp, args, this.o.jsRuntime ? { ...ENV, ELECTRON_RUN_AS_NODE: '1' } : ENV);
+      let out = '', err = '';
+      const t = setTimeout(() => this.killTree(pr), 45000);
+      pr.stdout.setEncoding('utf8'); pr.stdout.on('data', d => { if (out.length < 30e6) out += d; });
+      pr.stderr.setEncoding('utf8'); pr.stderr.on('data', d => (err = (err + d).slice(-2000)));
+      const done = r => { clearTimeout(t); fs.rm(dir, { recursive: true, force: true }, () => {}); res(r); };
+      pr.on('error', e => done({ error: e.message }));
+      pr.on('close', () => {
+        let j = null; try { j = JSON.parse(out); } catch (e) {}
+        if (!j) return done({ error: this.cleanErr(err) || 'no-info' });
+        const thumbs = (j.thumbnails || []).filter(x => x.url && /^https:/.test(x.url));
+        const best = thumbs.filter(x => (x.width || 0) <= 1280).sort((a, b) => (b.width || 0) - (a.width || 0))[0] || thumbs[thumbs.length - 1];
+        done({ title: j.title || '', thumbnail: (j.thumbnail && /^https:/.test(j.thumbnail) ? j.thumbnail : best && best.url) || '', duration: j.duration || 0,
+          uploader: j.uploader || j.channel || '', site: j.extractor_key || j.extractor || '', url: j.webpage_url || url,
+          heights: [...new Set((j.formats || []).map(f => f.height).filter(Boolean))].sort((a, b) => b - a).slice(0, 8),
+          photos: !(j.formats || []).some(f => f.vcodec && f.vcodec !== 'none') && !j.duration });
+      });
+    });
   }
 
   /* ---------- photos (gallery-dl) ---------- */

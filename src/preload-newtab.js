@@ -8,7 +8,7 @@
  */
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
-const internal = location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads)\.html$/i.test(decodeURIComponent(location.pathname));
+const internal = location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media)\.html$/i.test(decodeURIComponent(location.pathname));
 
 if (internal) {
   contextBridge.exposeInMainWorld('zeus', {
@@ -47,6 +47,8 @@ if (internal) {
     dlDrag: id => ipcRenderer.send('dl:drag', id),
     // built-in media downloader (downloads page)
     mediaTake: () => ipcRenderer.invoke('media:take'),
+    mediaInfo: url => ipcRenderer.invoke('media:info', url),
+    mediaWindow: () => ipcRenderer.send('media:window'),
     mediaList: () => ipcRenderer.invoke('media:list'),
     mediaStart: o => ipcRenderer.invoke('media:start', o),
     mediaCancel: id => ipcRenderer.invoke('media:cancel', id),
