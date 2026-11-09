@@ -129,6 +129,10 @@ def main():
             if t in (RT_ICON, RT_GROUP_ICON, RT_VERSION):
                 print('type', t, 'name', n, 'lang', l, 'size', size)
     src = Image.open(icon).convert('RGBA')
+    # optional simpler drawing for the tiny sizes (taskbar, title bar): --small <png>
+    small = None
+    if '--small' in sys.argv:
+        small = Image.open(sys.argv[sys.argv.index('--small') + 1]).convert('RGBA')
 
     # group icons: (width, height, id) for every icon slot
     ok = 0
@@ -144,7 +148,7 @@ def main():
             if not slot:
                 continue
             _, _, _, sde, soff, ssize = slot
-            img = src.resize((px, px), Image.LANCZOS)
+            img = (small if small is not None and px <= 32 else src).resize((px, px), Image.LANCZOS)
             p = fit_png(img, ssize)
             if p is None:
                 print('icon %dpx: does not fit in %d bytes, kept original' % (px, ssize))
