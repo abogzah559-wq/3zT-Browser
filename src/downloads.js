@@ -20,6 +20,7 @@ class DownloadManager {
     this.seq = Date.now();
     this.session = [];                // ids downloaded since the browser opened (the bar's download list)
     // anything that was running when the browser closed can be resumed
+    this.store.data = this.store.data.filter(Boolean);   // (private downloads are saved as null)
     for (const r of this.store.data) if (r.state === 'progressing' || r.state === 'paused') r.state = 'interrupted';
   }
 
@@ -33,10 +34,12 @@ class DownloadManager {
     const resumed = opts.resumeId && this.get(opts.resumeId);
     const rec = resumed || { id: String(++this.seq), added: Date.now() };
     Object.assign(rec, {
-      url: item.getURL(), urlChain: item.getURLChain(), name: item.getFilename() || rec.name || 'download',
+      url: item.getURL(), urlChain: item.getURLChain(), name: (resumed && rec.name) || pickName(item),
       mime: item.getMimeType(), total: item.getTotalBytes(), received: item.getReceivedBytes(),
       state: 'progressing', paused: false, startTime: item.getStartTime ? item.getStartTime() : Date.now() / 1000
     });
+    // private window: the file is saved, but the list entry is never written to disk and goes with the window
+    if (opts.partition && !resumed) Object.defineProperties(rec, { partition: { value: opts.partition }, toJSON: { value: () => null } });
     if (resumed && resumed.path) item.setSavePath(resumed.path);
     else {
       const dir = this.folder();
@@ -124,9 +127,60 @@ class DownloadManager {
   }
   takeResume() { const id = this.pendingResume; this.pendingResume = null; return id; }
 
+  forgetPartition(part) {
+    const gone = new Set(this.store.data.filter(r => r.partition === part).map(r => r.id));
+    if (!gone.size) return;
+    this.store.data = this.store.data.filter(r => !gone.has(r.id));
+    this.session = this.session.filter(id => !gone.has(id));
+  }
   remove(id) { const i = this.store.data.findIndex(r => r.id === id); if (i >= 0) this.store.data.splice(i, 1); this.store.save(); }
   clear() { this.store.data = this.store.data.filter(r => this.live.has(r.id)); this.store.save(); }
   T(ar, en) { return this.settings.data.lang === 'en' ? en : ar; }
+}
+
+/* the file's name the way Chrome picks it. Electron's item.getFilename() gives up ("download") as soon as the
+   name is not plain English (filename*=UTF-8''... or Arabic letters), so the header is read here. */
+const MIME_EXT = { 'application/pdf': '.pdf', 'application/zip': '.zip', 'application/x-rar-compressed': '.rar', 'application/vnd.rar': '.rar',
+  'application/x-7z-compressed': '.7z', 'video/mp4': '.mp4', 'video/webm': '.webm', 'audio/mpeg': '.mp3', 'audio/mp4': '.m4a',
+  'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp', 'text/plain': '.txt', 'application/json': '.json',
+  'application/vnd.android.package-archive': '.apk', 'application/x-msdownload': '.exe', 'application/x-msi': '.msi' };
+function nameFromDisposition(cd) {
+  if (!cd) return '';
+  // filename*=charset'lang'percent-encoded (RFC 5987) wins over filename=
+  const star = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(cd);
+  if (star) {
+    const raw = star[2].trim().replace(/^"|"$/g, '');
+    try {
+      if (/^utf-?8$/i.test(star[1]) || !star[1]) return decodeURIComponent(raw);
+      return Buffer.from(unescape(raw), 'latin1').toString('latin1');
+    } catch (e) {}
+  }
+  const m = /(?:^|;)\s*filename\s*=\s*("((?:[^"\\]|\\.)*)"|[^;]+)/i.exec(cd);
+  if (!m) return '';
+  let n = (m[2] != null ? m[2].replace(/\\(.)/g, '$1') : m[1]).trim();
+  if (/%[0-9a-f]{2}/i.test(n)) { try { n = decodeURIComponent(n); } catch (e) {} }   // some servers percent-encode it
+  // UTF-8 bytes that arrived as Latin-1 letters
+  if (/[\u00c0-\u00ff][\u0080-\u00bf]/.test(n)) { const u = Buffer.from(n, 'latin1').toString('utf8'); if (!u.includes('\ufffd')) n = u; }
+  return n;
+}
+function nameFromUrl(u) {
+  try { const seg = new URL(u).pathname.split('/').filter(Boolean).pop() || ''; return decodeURIComponent(seg); } catch (e) { return ''; }
+}
+function safeName(n) {
+  n = String(n || '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^[\s.]+|[\s.]+$/g, '').slice(0, 200);
+  if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(n)) n = '_' + n;   // names Windows reserves
+  return n;
+}
+function pickName(item) {
+  let n = '';
+  try { n = nameFromDisposition(item.getContentDisposition()); } catch (e) {}
+  const given = item.getFilename();
+  if (!n && given && given !== 'download') n = given;
+  if (!n) n = nameFromUrl(item.getURL()) || nameFromUrl((item.getURLChain() || []).slice(-1)[0]) || 'download';
+  n = safeName(n) || 'download';
+  const ext = MIME_EXT[String(item.getMimeType() || '').split(';')[0].toLowerCase()];
+  if (ext && !path.extname(n)) n += ext;
+  return n;
 }
 
 function uniquePath(p) {
@@ -136,4 +190,4 @@ function uniquePath(p) {
   return q;
 }
 
-module.exports = { DownloadManager };
+module.exports = { DownloadManager, nameFromDisposition, pickName, safeName };

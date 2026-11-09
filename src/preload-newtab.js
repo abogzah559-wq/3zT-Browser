@@ -104,8 +104,8 @@ if (internal) {
       ipcRenderer.send('net:warm', u.origin);
     };
     const link = e => (e.target && e.target.closest ? e.target.closest('a[href]') : null);
-    addEventListener('pointerover', e => { clearTimeout(t); const a = link(e); if (a) t = setTimeout(() => warm(a), 60); }, { capture: true, passive: true });
-    addEventListener('pointerdown', e => { const a = link(e); if (a) warm(a); }, { capture: true, passive: true });
+    addEventListener('pointerover', e => { if (!e.isTrusted) return; clearTimeout(t); const a = link(e); if (a) t = setTimeout(() => warm(a), 60); }, { capture: true, passive: true });
+    addEventListener('pointerdown', e => { if (!e.isTrusted) return; const a = link(e); if (a) warm(a); }, { capture: true, passive: true });
   })();
   /* ================= Google sign-in: look like Firefox (Google blocks Electron browsers) ================= */
   if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) {
