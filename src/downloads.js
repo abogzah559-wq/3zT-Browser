@@ -34,7 +34,7 @@ class DownloadManager {
     const resumed = opts.resumeId && this.get(opts.resumeId);
     const rec = resumed || { id: String(++this.seq), added: Date.now() };
     Object.assign(rec, {
-      url: item.getURL(), urlChain: item.getURLChain(), name: (resumed && rec.name) || pickName(item),
+      url: item.getURL(), urlChain: item.getURLChain(), name: (resumed && rec.name) || pickName(item, opts.nameHint),
       mime: item.getMimeType(), total: item.getTotalBytes(), received: item.getReceivedBytes(),
       state: 'progressing', paused: false, startTime: item.getStartTime ? item.getStartTime() : Date.now() / 1000
     });
@@ -182,10 +182,11 @@ function safeName(n) {
   if (/^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(n)) n = '_' + n;   // names Windows reserves
   return n;
 }
-function pickName(item) {
+function pickName(item, hint) {
   let n = '';
   try { n = nameFromDisposition(item.getContentDisposition()); } catch (e) {}
   const given = item.getFilename();
+  if (!n && hint) n = hint;                 // the page's <a download="name">
   if (!n && given && given !== 'download') n = given;
   if (!n) n = nameFromUrl(item.getURL()) || nameFromUrl((item.getURLChain() || []).slice(-1)[0]) || 'download';
   n = safeName(n) || 'download';

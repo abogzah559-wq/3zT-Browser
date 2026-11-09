@@ -33,9 +33,9 @@ const results = [];
 function ok(name, pass, info = '') { results.push({ name, pass, info }); console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${info ? '  - ' + info : ''}`); }
 
 let child = null;
-async function start() {
+async function start(env = {}) {
   const args = [...(appDir ? [appDir] : []), `--remote-debugging-port=${PORT}`, ...extraArgs];
-  child = spawn(exe, args, { env: { ...process.env, ZEUS_E2E: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(exe, args, { env: { ...process.env, ZEUS_E2E: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = fs.createWriteStream(path.join(OUT, 'app.log'), { flags: 'a' });
   child.stdout.pipe(log); child.stderr.pipe(log);
   for (let i = 0; i < 120; i++) { await sleep(500); try { const t = await targets(); if (t.some(x => x.url.includes('ui/toolbar.html'))) return true; } catch (e) {} }
@@ -194,12 +194,216 @@ async function permissions() {
   } finally { srv.close(); }
 }
 
+
+/* ================= downloads: the ways real sites start them ================= */
+const AR_NAME = 'ملف عربي.zip';
+const BIG = Buffer.alloc(3 * 1024 * 1024, 7);
+function dlServer() {
+  let cut = true;
+  const att = n => `attachment; filename="file.bin"; filename*=UTF-8''${encodeURIComponent(n)}`;
+  return http.createServer((q, r) => {
+    let body = ''; q.on('data', d => (body += d)); q.on('end', () => {
+      const u = new URL(q.url, 'http://x'), ref = q.headers.referer || '';
+      const file = (name, buf) => { r.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': att(name), 'Content-Length': buf.length }); r.end(buf); };
+      if (u.pathname === '/') {
+        r.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return r.end(`<!doctype html><meta charset=utf-8><title>dl</title>
+<form id=f method=post action="/post-dl" target="_blank"><input name=token value=ok></form>
+<a id=l href="/redir" target="_blank">redirect</a>
+<script>
+window.formDl = () => document.getElementById('f').submit();
+window.openDl = () => { const w = window.open(''); w.location.href = '/need-ref'; };
+window.linkDl = () => document.getElementById('l').click();
+window.blobDl = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['hello from a blob'], { type: 'text/plain' })); a.download = 'نص.txt'; document.body.appendChild(a); a.click(); };
+window.manyDl = () => { for (let i = 1; i <= 3; i++) { const a = document.createElement('a'); a.href = '/many?i=' + i; a.download = ''; document.body.appendChild(a); a.click(); } };
+window.cutDl = () => { location.href = '/cut'; };
+window.slowDl = () => { location.href = '/slow'; };
+</script>`);
+      }
+      // a form POST in a new tab: only the real POST with its data and Referer gets the file
+      if (u.pathname === '/post-dl') return q.method === 'POST' && /token=ok/.test(body) && ref ? file(AR_NAME, Buffer.from('zip-data')) : (r.writeHead(302, { Location: '/' }), r.end());
+      // window.open('') then setting its address: needs the opener's Referer
+      if (u.pathname === '/need-ref') return ref.startsWith('http://127.0.0.1:8791/') ? file('opened.bin', Buffer.from('opened')) : (r.writeHead(302, { Location: '/' }), r.end());
+      // redirect to a signed, short-lived address
+      if (u.pathname === '/redir') { r.writeHead(302, { Location: '/signed?exp=' + (Date.now() + 60000) + '&sig=abc' }); return r.end(); }
+      if (u.pathname === '/signed') return +u.searchParams.get('exp') > Date.now() ? file('signed.bin', Buffer.from('signed')) : (r.writeHead(403), r.end());
+      if (u.pathname === '/many') return file(`part-${u.searchParams.get('i')}.bin`, Buffer.from('m' + u.searchParams.get('i')));
+      // breaks half way the first time, then serves the rest with Range (resume)
+      if (u.pathname === '/cut') {
+        const range = /bytes=(\d+)-/.exec(q.headers.range || '');
+        if (range) { const from = +range[1]; r.writeHead(206, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': att('resume.bin'), 'Content-Range': `bytes ${from}-${BIG.length - 1}/${BIG.length}`, 'Content-Length': BIG.length - from, 'Accept-Ranges': 'bytes', ETag: '"v1"' }); return r.end(BIG.subarray(from)); }
+        r.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': att('resume.bin'), 'Content-Length': BIG.length, 'Accept-Ranges': 'bytes', ETag: '"v1"' });
+        if (cut) { cut = false; r.write(BIG.subarray(0, 1024 * 1024)); return setTimeout(() => r.destroy(), 300); }
+        return r.end(BIG);
+      }
+      if (u.pathname === '/slow') { r.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': att('slow.bin'), 'Content-Length': 50 * 1024 * 1024 }); const t = setInterval(() => r.write(Buffer.alloc(16 * 1024)), 200); r.on('close', () => clearInterval(t)); return; }
+      r.writeHead(404); r.end();
+    });
+  }).listen(8791, '127.0.0.1');
+}
+async function downloads() {
+  const srv = dlServer();
+  try {
+    await go('zeus://downloads', true);
+    const dp = await connect(await find('downloads.html', 30));
+    await dp.ev(`zeus.set('dlAsk', false), 1`); await sleep(500);
+    const list = () => dp.ev(`zeus.dlList().then(d => d.items.map(x => ({ name: x.name, state: x.state, path: x.path, received: x.received, total: x.total, exists: x.exists, canResume: x.canResume, id: x.id })))`);
+    const done = name => poll(async () => (await list()).find(x => x.name === name && x.state === 'completed'), 20000);
+    await go('http://127.0.0.1:8791/', true);
+    const pt = await find(u => u.startsWith('http://127.0.0.1:8791/'), 30);
+    const page = await connect(pt);
+    await poll(() => page.ev('typeof formDl === "function"'), 15000);
+    const tabsNow = async () => { const tb = await toolbar(); const v = await tb.ev('S.tabs.length'); tb.close(); return v; };
+    const before = await tabsNow();
+    await page.ev('formDl(), 1', true);
+    const a = await done(AR_NAME);
+    ok('download from a form in a new tab (POST data + Referer kept), Arabic file name', !!a, a ? a.path : JSON.stringify(await list()).slice(0, 300));
+    await page.ev('openDl(), 1', true);
+    ok('download from window.open + address set by the page (opener kept)', !!(await done('opened.bin')));
+    await page.ev('linkDl(), 1', true);
+    ok('download through a redirect to a signed link', !!(await done('signed.bin')), JSON.stringify((await list()).map(x => x.name + ':' + x.state)));
+    await sleep(1500);
+    const after = await tabsNow();
+    ok('the empty tabs that only started downloads close by themselves', after === before, `${before} -> ${after} tabs`);
+    await page.ev('blobDl(), 1', true);
+    const b = await done('نص.txt');
+    ok('download of a page-made file (blob, a[download])', !!b && fs.existsSync(b.path) && fs.readFileSync(b.path, 'utf8') === 'hello from a blob');
+    await page.ev('manyDl(), 1', true);
+    const many = await poll(async () => { const l = await list(); return ['part-1.bin', 'part-2.bin', 'part-3.bin'].every(n => l.some(x => x.name === n && x.state === 'completed')); }, 20000);
+    ok('several downloads at once', !!many);
+    await page.ev('cutDl(), 1', true);
+    // Chromium may pick the file up again by itself (several connections + Range); otherwise it stops and is resumed by hand
+    const cut = await poll(async () => (await list()).find(x => x.name === 'resume.bin' && (x.state === 'interrupted' || x.state === 'completed')), 20000);
+    if (cut && cut.state === 'interrupted') await dp.ev(`zeus.dlAct(${JSON.stringify(cut.id)}, 'resume')`);
+    const res = cut && await done('resume.bin');
+    const okBytes = res && fs.existsSync(res.path) && fs.statSync(res.path).size === BIG.length && fs.readFileSync(res.path).equals(BIG);
+    ok('a connection that breaks half way: the file is finished intact (Range resume)', !!okBytes, cut ? `${cut.state === 'interrupted' ? 'stopped, resumed by hand' : 'picked up again by itself'}` : 'no download');
+    await page.ev('slowDl(), 1', true);
+    const slow = await poll(async () => (await list()).find(x => x.name === 'slow.bin' && x.state === 'progressing'), 15000);
+    if (slow) await dp.ev(`zeus.dlAct(${JSON.stringify(slow.id)}, 'cancel')`);
+    ok('cancelling a download', !!(slow && await poll(async () => (await list()).find(x => x.id === slow.id && x.state === 'cancelled'), 10000)));
+    await dp.ev(`zeus.set('dlAsk', true), 1`);
+    page.close(); dp.close();
+  } finally { srv.close(); }
+}
+
+/* ================= built-in media downloader (real tools, fetched and checked on first use) ================= */
+async function mediaTest() {
+  const vid = path.join(OUT, 'clip.mp4');
+  const srv = http.createServer((q, r) => {
+    if (q.url.startsWith('/clip.mp4') && fs.existsSync(vid)) { const b = fs.readFileSync(vid); r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length }); return r.end(b); }
+    if (q.url === '/watch') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch</title><video src="/clip.mp4" controls width=640 height=360></video>'); }
+    r.writeHead(404); r.end();
+  }).listen(8792, '127.0.0.1');
+  try {
+    await go('zeus://downloads', true);
+    const dp = await connect(await find('downloads.html', 30));
+    const job = async (o, ms = 600000) => {
+      const j = await dp.ev(`zeus.mediaStart(${JSON.stringify(o)})`);
+      if (!j || j.error) return j;
+      return poll(async () => { const s = await dp.ev(`zeus.mediaList().then(d => d.jobs.find(x => x.id === ${JSON.stringify(j.id)}))`); return s && s.state !== 'running' ? s : null; }, ms, 1500);
+    };
+    const t0 = Date.now();
+    const yt = await job({ url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', mode: 'video', q: '360' });
+    const tools = await dp.ev('zeus.mediaList().then(d => d.tools.ready)');
+    ok('download tools set up on first use (official releases, checksums checked)', tools === true, `${Math.round((Date.now() - t0) / 1000)} s`);
+    // real sites from a GitHub datacenter machine: YouTube often asks such machines to sign in, so this is reported, not required
+    console.log(`::notice title=media youtube::${yt && yt.state} ${yt && (yt.error || yt.file || '')}`.replace(/\n/g, ' '));
+    const mp3 = await job({ url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', mode: 'audio' });
+    console.log(`::notice title=media youtube mp3::${mp3 && mp3.state} ${mp3 && (mp3.error || mp3.file || '')}`.replace(/\n/g, ' '));
+    const tk = await job({ url: 'https://www.tiktok.com/@scout2015/video/6718335390845095173', mode: 'video', q: 'best' });
+    console.log(`::notice title=media tiktok::${tk && tk.state} ${tk && (tk.error || tk.file || '')}`.replace(/\n/g, ' '));
+    const ph = await job({ url: 'https://www.tiktok.com/@yungfunnyvids/photo/7333434838539111712', mode: 'images' });
+    console.log(`::notice title=media photos::${ph && ph.state} ${ph && (ph.error || (ph.items || []).length + ' items')}`.replace(/\n/g, ' '));
+    // a local video made with the downloaded ffmpeg: download, trim exact and fast
+    const ff = path.join(process.env.APPDATA || '', '3zT Browser', 'media', 'tools', 'ffmpeg', 'ffmpeg.exe');
+    if (fs.existsSync(ff)) execSync(`"${ff}" -loglevel error -y -f lavfi -i testsrc=size=640x360:rate=30 -f lavfi -i sine=frequency=440 -t 20 -c:v libx264 -g 60 -c:a aac -shortest "${vid}"`);
+    const probe = f => { try { return +execSync(`"${ff.replace('ffmpeg.exe', 'ffprobe.exe')}" -v error -show_entries format=duration -of csv=p=0 "${f}"`).toString().trim(); } catch (e) { return 0; } };
+    const lv = await job({ url: 'http://127.0.0.1:8792/clip.mp4', mode: 'video', q: 'best' }, 120000);
+    ok('media download of a video link', !!(lv && lv.state === 'done' && lv.file && fs.existsSync(lv.file)), lv && (lv.error || lv.file));
+    const tj = await job({ url: 'http://127.0.0.1:8792/clip.mp4', mode: 'video', q: 'best', trim: true }, 120000);
+    ok('"pick a part before saving" waits with a preview file', !!(tj && tj.state === 'trim' && tj.temp && fs.existsSync(tj.temp)));
+    if (tj && tj.state === 'trim') {
+      const r = await dp.ev(`zeus.mediaTrim(${JSON.stringify(tj.id)}, { start: 5.3, end: 9.1, exact: true })`);
+      const d = r && r.file ? probe(r.file) : 0;
+      ok('frame-exact trim keeps exactly the chosen part', Math.abs(d - 3.8) < 0.15, `${d} s`);
+    }
+    const id = await dp.ev(`zeus.dlList().then(d => (d.items.find(x => x.media && /clip/.test(x.name) && !/\\(clip\\)/.test(x.name)) || {}).id)`);
+    if (id) {
+      const r = await dp.ev(`zeus.mediaTrimFile(${JSON.stringify(id)}, { start: 4, end: 12, exact: false })`);
+      const d = r && r.file ? probe(r.file) : 0;
+      ok('fast trim (no re-encoding) of a finished download', d > 7 && d < 12.5, `${d} s (starts at the key frame before 4 s)`);
+    } else ok('fast trim (no re-encoding) of a finished download', false, 'no list entry');
+    // the address-bar button on a page with a video
+    await go('http://127.0.0.1:8792/watch', true);
+    await find(u => u.includes('8792/watch'), 30);
+    const seen = await poll(async () => { const tb = await toolbar(); const v = await tb.ev('S.url.includes("8792/watch") && S.media && !document.getElementById("mediaBtn").hidden'); tb.close(); return v; }, 15000);
+    ok('the download button shows on a page with a video', !!seen);
+    await go('https://example.com/', true); await sleep(2500);
+    const none = await (async () => { const tb = await toolbar(); const v = await tb.ev('document.getElementById("mediaBtn").hidden'); tb.close(); return v; })();
+    ok('…and not on a page without one', none === true);
+    dp.close();
+  } finally { srv.close(); }
+}
+
+/* ================= the "Windows Security" window on sign-in pages (passkeys) ================= */
+const PK_PAGE = `<!doctype html><title>pk</title><script>
+window.probe = async () => {
+  const cond = await PublicKeyCredential.isConditionalMediationAvailable().catch(e => 'err ' + e.name);
+  const ac = new AbortController(); let res = 'waiting';
+  navigator.credentials.get({ mediation: 'conditional', signal: ac.signal, publicKey: { challenge: new Uint8Array(32), rpId: 'localhost', allowCredentials: [] } }).then(() => (res = 'resolved'), e => (res = 'rejected ' + e.name));
+  await new Promise(r => setTimeout(r, 4000));
+  const r1 = res; ac.abort(); await new Promise(r => setTimeout(r, 300));
+  return JSON.stringify({ conditionalAvailable: cond, conditionalAfter4s: r1, afterAbort: res });
+};
+</script>`;
+const credUi = () => { try { return /CredentialUIBroker|WebAuthnBroker|WWAHost/i.test(execSync('tasklist /NH').toString()); } catch (e) { return false; } };
+async function passkeys() {
+  const srv = http.createServer((q, r) => { r.setHeader('Content-Type', 'text/html'); r.end(PK_PAGE); }).listen(8793, '127.0.0.1');
+  try {
+    const run = async label => {
+      await go('http://localhost:8793/', true);
+      const c = await connect(await find(u => u.startsWith('http://localhost:8793'), 30));
+      await poll(() => c.ev('typeof probe === "function"'), 10000);
+      const v = await c.ev('probe()', true);
+      const win = credUi();
+      try { execSync('taskkill /IM CredentialUIBroker.exe /F', { stdio: 'ignore' }); } catch (e) {}
+      c.close();
+      console.log(`::notice title=passkeys ${label}::${v} | Windows Security window open: ${win}`);
+      return { v: JSON.parse(v || '{}'), win };
+    };
+    // the cause, shown once without the fix (reported only)
+    await stop(); await start({ ZEUS_NO_PASSKEY_FIX: '1' }); await sleep(3000);
+    await run('without fix');
+    await stop(); await start(); await sleep(3000);
+    const w = await run('with fix');
+    ok('a background passkey request does not open the Windows Security window', w.v.conditionalAvailable === false && w.v.conditionalAfter4s === 'waiting' && !w.win && /AbortError/.test(w.v.afterAbort || ''), JSON.stringify(w));
+  } finally { srv.close(); }
+}
+
+/* ================= a real site reported as broken: what happens there ================= */
+async function arablocn() {
+  try {
+    await go('https://arablocn.com/', true);
+    const t = await find(u => /arablocn\.com/.test(u), 40);
+    if (!t) return console.log('::notice title=arablocn::page did not open');
+    const c = await connect(t); await sleep(6000);
+    await shot(c, 'arablocn');
+    const info = await c.ev(`JSON.stringify({ url: location.href, title: document.title, links: [...document.querySelectorAll('a')].filter(a => /download|تحميل|تنزيل|mediafire|mega|drive|zip|rar|apk/i.test(a.href + ' ' + a.textContent)).slice(0, 12).map(a => (a.textContent.trim().slice(0, 30) + ' -> ' + a.href + (a.target ? ' [' + a.target + ']' : ''))) })`);
+    console.log('::notice title=arablocn page::' + String(info).slice(0, 3000));
+    c.close();
+  } catch (e) { console.log('::notice title=arablocn::' + e.message); }
+}
+
 async function main() {
   if (!exe) { console.error('usage: node tests/e2e.mjs <exe> [app-dir] [--store]'); process.exit(2); }
   ok('app starts', await start());
   await sleep(4000);
-  await smoke();
-  await permissions();
+  const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
+  if (!only) { await smoke(); await permissions(); }
+  if (!only || only === 'downloads') await downloads();
+  if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
+  if (process.platform === 'win32') { await mediaTest(); await arablocn(); await passkeys(); }
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);
     // Dark Reader really runs on websites

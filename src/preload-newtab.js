@@ -61,6 +61,24 @@ if (internal) {
     onTrimPct: fn => ipcRenderer.on('media:trimPct', (e, id, pc) => fn(id, pc))
   });
 } else if (/^https?:$/.test(location.protocol)) {
+  /* ================= names pages give their downloads (<a download="…">) =================
+     Electron replaces any name that is not plain English with "download"; the name is passed along here. */
+  (() => {
+    // sent synchronously: the browser must know the name before the download it starts arrives
+    const tell = (href, name) => { if (href && name && /[^\x20-\x7e]/.test(name)) { try { ipcRenderer.sendSync('dl:name', { href: String(href), name: String(name) }); } catch (e) {} } };
+    addEventListener('click', e => { const a = e.target && e.target.closest && e.target.closest('a[download]'); if (a) tell(a.href, a.getAttribute('download')); }, true);
+    // anchors made in script and clicked without being added to the page
+    document.addEventListener('__3zt_dl', e => { try { const d = JSON.parse(e.detail); tell(d.href, d.name); } catch (x) {} });
+    const code = `(() => {
+      const orig = HTMLAnchorElement.prototype.click;
+      Object.defineProperty(HTMLAnchorElement.prototype, 'click', { configurable: true, writable: true, value: function click() {
+        try { if (this.hasAttribute('download')) document.dispatchEvent(new CustomEvent('__3zt_dl', { detail: JSON.stringify({ href: this.href, name: this.getAttribute('download') }) })); } catch (e) {}
+        return orig.apply(this, arguments);
+      } });
+    })();`;
+    try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); } catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
+  })();
+
   /* ================= a real video on this page? (shows the download button in the address bar) ================= */
   (() => {
     let told = false;
@@ -237,6 +255,35 @@ if (internal) {
 
   /* --- Twitch ads (TwitchAdSolutions "vaft", runs before Twitch's own player) --- */
   if (cfg.twitch) { let c = ''; try { c = ipcRenderer.sendSync('site:code', 'twitch'); } catch (e) {} if (c) mainWorld(c); }
+
+  /* --- sign-in pages and the "Windows Security" window ---
+     Many sign-in pages (Google, Microsoft, GitHub...) ask for a passkey in the background as soon as they open
+     (navigator.credentials.get with mediation "conditional"), so Chrome can offer saved passkeys in the
+     username box. Electron has no such list: it hands that background request straight to Windows, which opens
+     its "Windows Security" window (Windows Hello / security key / phone) before you did anything.
+     Here sites are told "no passkey autofill" (like a browser without that list) and background requests just
+     wait, the way Chrome waits when you don't pick a passkey. A passkey you ask for yourself ("Sign in with a
+     passkey", "Use a security key") still opens Windows' window as it should. */
+  if (cfg.passkeyFix !== false) mainWorld(`(() => {
+    const PKC = window.PublicKeyCredential, creds = navigator.credentials;
+    if (!PKC || !creds || !creds.get) return;
+    try { Object.defineProperty(PKC, 'isConditionalMediationAvailable', { value: function isConditionalMediationAvailable() { return Promise.resolve(false); }, configurable: true, writable: true }); } catch (e) {}
+    if (PKC.getClientCapabilities) {
+      const caps = PKC.getClientCapabilities.bind(PKC);
+      try { Object.defineProperty(PKC, 'getClientCapabilities', { value: function getClientCapabilities() { return caps().then(c => Object.assign({}, c, { conditionalGet: false, passkeyPlatformAuthenticator: c && c.passkeyPlatformAuthenticator })); }, configurable: true, writable: true }); } catch (e) {}
+    }
+    const get = creds.get.bind(creds);
+    const wrapped = function get(opts) {
+      if (opts && opts.publicKey && opts.mediation === 'conditional') {
+        return new Promise((res, rej) => {
+          const s = opts.signal;
+          if (s) { if (s.aborted) return rej(s.reason || new DOMException('The operation was aborted.', 'AbortError')); s.addEventListener('abort', () => rej(s.reason || new DOMException('The operation was aborted.', 'AbortError')), { once: true }); }
+        });
+      }
+      return get(opts);
+    };
+    try { Object.defineProperty(Object.getPrototypeOf(creds), 'get', { value: wrapped, configurable: true, writable: true }); } catch (e) {}
+  })();`);
 
   if (cfg.yt) {
     const yt = cfg.yt;
