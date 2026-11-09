@@ -5,8 +5,8 @@
 <h1 align="center">3zT Browser</h1>
 
 <p align="center">
-  A light, fast desktop browser built on Chromium, with an ad blocker, a download manager and the
-  YouTube / Twitch extensions people install most often already built in.<br>
+  A light, fast desktop browser built on Chromium, with an ad blocker, a download manager, a video and
+  photo downloader and the YouTube / Twitch extensions people install most often already built in.<br>
   Arabic and English interface. Windows 10 and 11 (64-bit).
 </p>
 
@@ -31,7 +31,10 @@
 - [Building from source](#building-from-source)
 - [How the project is organised](#how-the-project-is-organised)
 - [Automated tests](#automated-tests)
+- [Questions](#questions)
 - [Known limits](#known-limits)
+- [Changes](#changes)
+- [Contributing](#contributing)
 - [Credits and licenses](#credits-and-licenses)
 
 ---
@@ -150,6 +153,8 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
   visited and Google suggestions.
 - Floating toolbar that takes the colour of the website you are on and keeps it while you browse
   the site.
+- Pin a tab (right-click it → *Pin tab*): it shrinks to its icon, stays at the start and comes back
+  after a restart.
 - Tabs above the toolbar. Drag a tab out to make a new window, drag it onto another window's tabs
   to merge it back. While dragging, move to a screen edge to snap the window: left or right half,
   a corner for a quarter, the top for full screen (a blue preview shows where it goes).
@@ -162,6 +167,12 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
   Settings → General → *Thmanyah font on every site* puts it on websites' text too (icons keep their font).
 - History page with search. Bookmarks (star button or `Ctrl+D`) show as shortcuts on the new tab page.
 - Restore your tabs when the browser opens (can be turned off).
+- Links, forms and scripts that open a new tab get exactly the request the site made (its form data,
+  the page it came from, `window.opener`), the same as in Chrome. Download sites rely on this.
+- Sign-in pages no longer pop up the Windows Security window (Windows Hello / security key) by
+  themselves. Many sign-in pages ask for a passkey in the background as soon as they open; Chrome
+  answers that quietly, Electron used to hand it straight to Windows. A passkey you choose yourself
+  ("Sign in with a passkey", "Use a security key") still opens Windows' window as it should.
 - Opens links for other programs (`mailto:`, `discord://`, `claude://`, ...) through Windows, asking
   first like Chrome does, with an "always allow for this site" option.
 - Can be set as the Windows default browser.
@@ -189,7 +200,41 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
     open it, the folder button to show it in File Explorer, or pause / resume / cancel / retry;
     the list starts empty each time the browser opens;
   - downloads page (`3zt://downloads`, `Ctrl+J`) with the full history, search, "show in folder"
-    and file icons.
+    and file icons;
+  - drag a finished file from the toolbar list or the downloads page straight onto a website's upload
+    box, the desktop or a folder (a real Windows file drag);
+  - file names in Arabic and other languages are kept (from the server's `Content-Disposition`,
+    including `filename*=UTF-8''…`, or from the page's `<a download="…">`);
+  - a tab a site opened only to start a download closes by itself, like in Chrome;
+  - private-window downloads are saved as files but are not kept in the list.
+
+### Video, audio and photo downloader
+The former **3zT Download** app is now part of the browser.
+
+- On a page with a video or a post (YouTube, TikTok, Instagram, X, Facebook, Twitch clips, Reddit,
+  Vimeo, SoundCloud, Pinterest and others, or any page that plays a real video) a small fox button
+  appears in the address bar. It opens the downloads page with the page's link filled in.
+- Save the **video** (best quality or 4K / 1440p / 1080p / 720p / 480p / 360p, as MP4), the **audio**
+  as MP3, or the **photos** of a post (TikTok photo posts, Instagram, X...): every photo is shown and
+  you pick the ones to keep.
+- **Trim before saving:** tick *Pick a part before saving*, then set the start and end on a timeline
+  with a preview, see the length, and save that part. Finished videos in the downloads list have a
+  *Trim* button too (the result is a new "(clip)" file). Two ways to cut:
+  - *Fast, same quality*: the streams are copied, nothing is re-encoded. The cut starts at the
+    nearest key frame before your start time, so it can begin a few seconds early.
+  - *Frame-exact*: the picture is re-encoded at high quality (H.264) so the cut is exact. Slower,
+    and like any re-encode it is not bit-identical to the original. The result is MP4.
+- Content you can only see when signed in works too: the site's own cookies (only that site's) are
+  handed to the downloader in a temporary file that is deleted when the job ends.
+- Nothing runs in the background. The first time you use it, 3zT downloads the tools it uses -
+  [yt-dlp](https://github.com/yt-dlp/yt-dlp), [gallery-dl](https://github.com/mikf/gallery-dl) and
+  [FFmpeg](https://ffmpeg.org) (yt-dlp's Windows build), about 100 MB - from their official
+  releases and checks each one against the SHA-256 checksums those releases publish. After that it
+  starts at once. If a site stops working, *Update download tools* updates yt-dlp and gallery-dl.
+- There is no local server and no open port: the downloads page talks to the downloader through the
+  browser's own internal messaging, and every program it starts is stopped when you cancel or close
+  the browser.
+- Files are saved to `Downloads\3zT` (you can choose another folder).
 
 ### Site permissions
 - When a site wants something sensitive (camera, microphone, location, notifications, reading the
@@ -282,7 +327,8 @@ Passwords are imported separately from a CSV file you export in Chrome
   with SponsorBlock on (only a 4-character hash prefix of the video ID is sent, the same privacy
   method SponsorBlock uses), Google's extension servers when you install or update a Chrome
   Web Store extension, and GitHub (`api.github.com`) every few hours to look for a 3zT update
-  (installed copies only; nothing about you is sent).
+  (installed copies only; nothing about you is sent). The video downloader connects to the site
+  you give it and, the first time only, to `github.com` and `codeberg.org` for its tools.
 - Private windows keep nothing after they close.
 - Passwords are encrypted with Windows DPAPI.
 - Nothing sensitive (camera, microphone, location, notifications, screen...) is given to a site
@@ -296,9 +342,11 @@ Passwords are imported separately from a CSV file you export in Chrome
 | `Ctrl+T` / `Ctrl+W` | New tab / close tab |
 | `Ctrl+Shift+T` | Reopen closed tab |
 | `Ctrl+N` / `Ctrl+Shift+N` | New window / new private window |
-| `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+1…8`, `Ctrl+9` (last) | Switch tabs |
+| `Ctrl+Tab`, `Ctrl+Shift+Tab`, `Ctrl+PgDn`, `Ctrl+PgUp`, `Ctrl+1…8`, `Ctrl+9` (last) | Switch tabs |
+| `Ctrl+Shift+PgDn` / `Ctrl+Shift+PgUp` | Move the tab right / left |
+| `Ctrl+Shift+W` | Close the window |
 | `Ctrl+L`, `F6`, `Alt+D` | Address bar |
-| `Ctrl+F` | Find in page |
+| `Ctrl+F`, `F3` / `Shift+F3` | Find in page, next / previous |
 | `Ctrl+R` / `F5` (`Ctrl+Shift+R` without cache) | Reload |
 | `Alt+←` / `Alt+→` | Back / forward |
 | `Ctrl+H` / `Ctrl+J` | History / downloads page |
@@ -306,7 +354,9 @@ Passwords are imported separately from a CSV file you export in Chrome
 | `Ctrl+P` | Print |
 | `Ctrl` `+` / `-` / `0` | Zoom in / out / reset |
 | `F11` | Full screen |
-| `F12` / `Ctrl+Shift+I` | Developer tools |
+| `F12` / `Ctrl+Shift+I` / `Ctrl+Shift+J` | Developer tools |
+| `Alt+Home` | New tab page in this tab |
+| `Ctrl+Shift+Delete` | Settings (clear browsing data) |
 | `Ctrl+U` | View page source |
 | `Shift+Esc` | Task manager |
 
@@ -323,7 +373,9 @@ Everything stays on your computer in `%APPDATA%\3zT Browser`:
 | `passwords.json` | saved passwords, encrypted |
 | `extensions\` | extensions copied from Chrome or added from a folder |
 | `webstore\` | extensions installed from the Chrome Web Store |
-| `adblock\` | the downloaded filter lists |
+| `adblock\` | the downloaded filter lists (and a parsed copy for a faster start) |
+| `media\tools\` | yt-dlp, gallery-dl and FFmpeg for the video downloader (after its first use) |
+| `logs\3zt.log` | errors the browser ran into (kept under 1 MB), useful for bug reports |
 | the rest | Chromium's own cookies, cache and site storage |
 
 ## Building from source
@@ -350,7 +402,7 @@ python -m pip install pillow
 python scripts\build_win.py electron-v45.1.0-win32-x64.zip
 
 :: 3. dist\3zT-Browser-Setup.exe  (Inno Setup 6.6 or newer, for the dark wizard)
-ISCC installer\3zT.iss /DAppVersion=0.8.0
+ISCC installer\3zT.iss /DAppVersion=<version from package.json>
 ```
 
 `scripts/build_win.py` also works on Linux; only the installer step needs Windows.
@@ -367,7 +419,9 @@ src/
   preload-newtab.js    bridge for the internal pages (new tab, settings, history, downloads, ...)
   features.js          built-in SponsorBlock, Clean YouTube, Ambient light, Twitch ad blocking
   adblock.js           the ad blocker (EasyList / EasyPrivacy matcher)
-  downloads.js         the download manager
+  downloads.js         the download manager (file names, resume, private downloads)
+  media/engine.js      the video / audio / photo downloader and trimming (yt-dlp, gallery-dl, FFmpeg)
+  media/detect.js      which pages get the download button
   updater.js           silent, signed updates from GitHub releases
   permissions.js       site permissions (what is asked, what is remembered)
   domains.js           "same site" from the Public Suffix List (passwords, ad blocker)
@@ -406,13 +460,45 @@ DevTools Protocol. On every push, GitHub Actions on Windows:
 4. installs **Dark Reader** and **uBlock Origin Lite** from the real Chrome Web Store with the
    store's "Add to 3zT" button, checks that Dark Reader really darkens a website, restarts the browser,
    checks both are still there and removes them again,
-5. tests the silent update: a newer build is offered as a fake release, the running browser must
+5. downloads the ways real sites start them: a form in a new tab (POST data and Referer kept), an
+   empty tab whose address the page sets, a redirect to a signed link, a file made in the page
+   (`blob:`), several at once, a connection that breaks half way (Range resume, bytes compared),
+   cancelling, and Arabic file names,
+6. the video downloader: sets up its tools on first use, downloads a video, trims it frame-exact
+   and fast (lengths checked with ffprobe), checks the address-bar button, and tries YouTube and
+   TikTok (reported only: sites often refuse GitHub's datacenter machines),
+7. checks that a background passkey request on a sign-in page no longer opens the Windows Security
+   window,
+8. tests the silent update: a newer build is offered as a fake release, the running browser must
    download and verify it, install it silently after being closed, reopen by itself if started
    during the install, and show the green note with the release notes,
-6. uninstalls and checks everything was removed,
-7. runs the memory comparison with Chrome and Brave,
-8. publishes a release with the setup, its SHA-256 and the notes from `CHANGELOG.md` when the
+9. uninstalls and checks everything was removed,
+10. runs the memory and page-speed comparisons with Chrome and Brave,
+11. publishes a release with the setup, its SHA-256 and the notes from `CHANGELOG.md` when the
    version number changes.
+
+## Questions
+
+**Is it really lighter than Chrome?** In our automated runs it uses about half of Chrome's memory with
+the same tabs and about the same as Brave (see the tables above). Page speed is about the same as
+both: it is the same engine.
+
+**Why does the setup or the video downloader need the internet the first time?** The setup is
+complete. The video downloader fetches its tools on first use so that people who never use it do not
+carry 100 MB of extra programs.
+
+**A site's download button sends me to another page and back, and nothing downloads.** This was
+fixed in 0.13.0: new tabs now carry the site's exact request. If a site still fails, the file you
+expected may be behind a captcha or a timer on the site itself; please open an issue with the
+address.
+
+**The Windows Security window still opens when I sign in.** That happens when the site itself asks
+for a passkey or security key in the foreground (for example after you chose "Sign in with a
+passkey", or when your account only allows passkeys). Choose *Try another way* or *Use your
+password* on the site, or cancel the window.
+
+**Where are my old downloads from 3zT Download?** In `Downloads\3zT Download`; 3zT saves new ones to
+`Downloads\3zT` unless you pick that folder again.
 
 ## Known limits
 
@@ -422,7 +508,27 @@ DevTools Protocol. On every push, GitHub Actions on Windows:
 - No sync between computers, by design.
 - The setup is not code-signed yet, so SmartScreen may warn the first time.
 - DRM video (Netflix, Disney+, Spotify web player) does not play: Electron does not ship Google's
-  Widevine module.
+  Widevine module. The video downloader does not download DRM-protected video either.
+- Passkey autofill (picking a saved passkey from the username box) is not available; passkeys work
+  when you choose them on the site.
+- The ad blocker uses the host rules of EasyList / EasyPrivacy (with their resource types); path and
+  cosmetic rules are not applied.
+- Sites change often; when one stops working in the video downloader, *Update download tools*
+  usually fixes it. Some sites refuse automated downloads entirely.
+- The icon of a taskbar shortcut you pinned yourself may keep the old picture until Windows refreshes
+  its icon cache (unpin and pin again).
+
+## Changes
+
+Every version's changes, in English and Arabic, are in [CHANGELOG.md](CHANGELOG.md) and in the
+[release notes](https://github.com/abogzah559-wq/3zT-Browser/releases).
+
+## Contributing
+
+Bug reports and suggestions are welcome as [issues](https://github.com/abogzah559-wq/3zT-Browser/issues).
+Please include the 3zT version (Settings → About), what you did, and if possible the file
+`%APPDATA%\3zT Browser\logs\3zt.log`. Pull requests should keep the browser light: no new background
+services, and new features loaded only when used.
 
 ## Credits and licenses
 
@@ -438,6 +544,7 @@ Third-party parts keep their licenses; the full list with license texts is in
 - [SponsorBlock](https://sponsor.ajay.app) data - CC BY-NC-SA 4.0 (used through its public API).
 - [EasyList / EasyPrivacy](https://easylist.to) - GPL-3.0 / CC BY-SA 3.0 (downloaded at runtime).
 - Clean YouTube (Chrome Web Store) - element list adapted, credited above.
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp) - Unlicense, [gallery-dl](https://github.com/mikf/gallery-dl) - GPL-2.0, [FFmpeg](https://ffmpeg.org) (yt-dlp's GPL build) - GPL: downloaded on first use of the video downloader from their official releases, not shipped with 3zT.
 - Thmanyah font by [Thmanyah](https://thmanyah.com) - free to use, not redistributed: 3zT only uses the copy you install.
 
 The video on the new tab page is a short anime clip used as a background. It is not covered by the

@@ -113,6 +113,8 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTH
 - **SponsorBlock** (<https://sponsor.ajay.app>) - skip segments are fetched from the public API. The data is made by the SponsorBlock community and licensed CC BY-NC-SA 4.0 (<https://creativecommons.org/licenses/by-nc-sa/4.0/>). 3zT is free and non-commercial.
 - **EasyList / EasyPrivacy** (<https://easylist.to>) - filter lists downloaded at runtime; dual licensed GPL-3.0 / CC BY-SA 3.0.
 - **Clean YouTube: Block Shorts, Hide Comments & Feeds** (Chrome Web Store, v1.9.8) - the list of YouTube page elements hidden by the Clean YouTube switches (`src/features.js`) is adapted from this extension. Credit to its developer; it will be changed or removed on request.
+- **yt-dlp** (<https://github.com/yt-dlp/yt-dlp>, Unlicense), **gallery-dl** (<https://github.com/mikf/gallery-dl>, GPL-2.0) and **FFmpeg** (<https://ffmpeg.org>, the GPL Windows build from <https://github.com/yt-dlp/FFmpeg-Builds>) - downloaded by the video downloader on its first use from their official releases (checked against their published SHA-256 sums) into `%APPDATA%\3zT Browser\media\tools`, and run as separate programs. They are not part of the 3zT setup and are not modified.
+- **3zT Download** (<https://github.com/abogzah559-wq/3zT-Download>, MIT) - the downloader's engine (`src/media/engine.js`) comes from this app by the same author.
 - **Electron** (MIT) and **Chromium** (BSD-style and others) - the Windows build ships their `LICENSE` and `LICENSES.chromium.html` files next to `3zT.exe`.
 
 ## Media
