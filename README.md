@@ -110,6 +110,7 @@ Results so far (GitHub `windows-latest`, private memory, each run = two rounds a
 | 0.8.0, run 2 | **396 MB** (7) | 436 MB (12) | 908 MB (35) |
 | 0.9.0 | 407 MB (7) | **392 MB** (10) | 870 MB (34) |
 | 0.13.0 (before release) | **390 MB** (7) | 454 MB (10) | 906 MB (34) |
+| 0.14.0 | 388 MB (7) | 450 MB (10) | **360 MB** (10) |
 
 So far 3zT uses **about half the memory of Chrome** and **about the same as Brave** (a few
 percent lower or higher depending on the run), with the fewest processes. Each release's own
@@ -491,8 +492,10 @@ DevTools Protocol. On every push, GitHub Actions on Windows:
 
 ## Questions
 
-**Is it really lighter than Chrome?** In our automated runs it uses about half of Chrome's memory with
-the same tabs and about the same as Brave (see the tables above). Page speed is about the same as
+**Is it really lighter than Chrome?** It depends on the run. In most of our automated runs it used
+about half of Chrome's memory with the same tabs; in the 0.14.0 run Chrome came out slightly lower
+(Chrome started fewer processes that time). Against Brave it is usually a little lower (see the tables
+above). Page speed is about the same as
 both: it is the same engine.
 
 **How do I get an update right now instead of waiting?** Settings → About → *Check for updates*.
