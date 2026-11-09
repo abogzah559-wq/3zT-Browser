@@ -100,10 +100,35 @@ class AdBlocker {
     Object.assign(this, { block, block3p, allow, typed, allowTyped });
     this.ruleCount = block.size + block3p.size + typed.size;
   }
+  /* the lists, already parsed (compiled.json): ~10x faster at start than parsing the text lists again */
+  stamp() {
+    return LISTS.map(l => { try { const st = fs.statSync(path.join(this.dir, l.name + '.txt')); return `${l.name}:${st.size}:${Math.round(st.mtimeMs)}`; } catch (e) { return l.name + ':-'; } }).join('|') + '|v2';
+  }
+  saveCompiled() {
+    try {
+      const data = { stamp: this.stamp(), block: [...this.block], block3p: [...this.block3p], allow: [...this.allow],
+        typed: [...this.typed].map(([h, l]) => [h, l.map(r => [[...r.types], r.tp ? 1 : 0])]),
+        allowTyped: [...this.allowTyped].map(([h, l]) => [h, l.map(t => [...t])]) };
+      fs.writeFileSync(path.join(this.dir, 'compiled.json.tmp'), JSON.stringify(data));
+      fs.renameSync(path.join(this.dir, 'compiled.json.tmp'), path.join(this.dir, 'compiled.json'));
+    } catch (e) {}
+  }
+  loadCompiled() {
+    try {
+      const d = JSON.parse(fs.readFileSync(path.join(this.dir, 'compiled.json'), 'utf8'));
+      if (d.stamp !== this.stamp()) return false;
+      this.block = new Set(SEED.concat(d.block)); this.block3p = new Set(d.block3p); this.allow = new Set(d.allow);
+      this.typed = new Map(d.typed.map(([h, l]) => [h, l.map(([t, tp]) => ({ types: new Set(t), tp: !!tp }))]));
+      this.allowTyped = new Map(d.allowTyped.map(([h, l]) => [h, l.map(t => new Set(t))]));
+      this.ruleCount = this.block.size + this.block3p.size + this.typed.size;
+      return true;
+    } catch (e) { return false; }
+  }
   loadCached() {
+    if (this.loadCompiled()) return;
     const texts = [];
     for (const l of LISTS) { try { texts.push(fs.readFileSync(path.join(this.dir, l.name + '.txt'), 'utf8')); } catch (e) {} }
-    if (texts.length) this.apply(texts);
+    if (texts.length) { this.apply(texts); this.saveCompiled(); }
   }
   /* download fresh lists in the background (fetchFn = Electron net.fetch) */
   async refresh(fetchFn, force) {
@@ -123,7 +148,7 @@ class AdBlocker {
         try { texts.push(fs.readFileSync(path.join(this.dir, l.name + '.txt'), 'utf8')); } catch (x) {}
       }
     }
-    if (texts.length) { this.apply(texts); fs.writeFileSync(stamp, JSON.stringify({ t: Date.now() })); }
+    if (texts.length) { this.apply(texts); this.saveCompiled(); fs.writeFileSync(stamp, JSON.stringify({ t: Date.now() })); }
     return true;
   }
 

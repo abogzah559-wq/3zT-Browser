@@ -303,7 +303,7 @@ class Win {
           id: x.id,
           title: x.title || (isNewtab(x.url) ? T('تبويب جديد', 'New tab') : isHistory(x.url) ? T('السجل', 'History') : isTasks(x.url) ? T('مدير المهام', 'Task manager') : isPasswords(x.url) ? T('كلمات السر', 'Passwords') : isSettings(x.url) ? T('الإعدادات', 'Settings') : isDownloads(x.url) ? T('التنزيلات', 'Downloads') : shownUrl(x.url)),
           url: shownUrl(x.url), favicon: isInternal(x.url) ? 'app' : (x.favicon || ''),
-          loading: !!x.loading, discarded: !!x.discarded, muted: !!x.muted,
+          loading: !!x.loading, discarded: !!x.discarded, muted: !!x.muted, pinned: !!x.pinned,
           audible: !!(x.view && !x.view.webContents.isDestroyed() && x.view.webContents.isCurrentlyAudible())
         })),
         activeId: this.activeId,
@@ -350,6 +350,7 @@ class Win {
       id: nextTabId++, view: null, url: url || NEWTAB_URL, title: '', favicon: '', loading: false,
       discarded: false, muted: false, lastActive: Date.now(), win: this
     };
+    if (opts.pinned) tab.pinned = true;
     if (opts.discarded) { tab.discarded = true; tab.title = opts.title || ''; tab.favicon = cachedFavicon(tab.url); }
     else if (opts.fromOpener) { tab.openedByPage = true; makeView(tab, opts.fromOpener); }   // Chromium loads it itself (POST, Referer, opener)
     else { makeView(tab); loadInto(tab, tab.url); }
@@ -362,6 +363,9 @@ class Win {
     let at = this.tabs.length;
     if (typeof opts.index === 'number') at = Math.max(0, Math.min(this.tabs.length, opts.index));
     else if (opts.after) { const i = this.tabs.findIndex(t => t.id === opts.after); if (i >= 0) at = i + 1; }
+    // pinned tabs stay together at the start, like Chrome
+    const pins = this.tabs.filter(t => t.pinned).length;
+    at = tab.pinned ? Math.min(at, pins) : Math.max(at, pins);
     this.tabs.splice(at, 0, tab);
     tab.win = this;
   }
@@ -579,7 +583,7 @@ function saveSession() {
     windows: wins.filter(w => !w.private && !w.win.isDestroyed()).map(w => ({
       bounds: w.win.isMaximized() || w.win.isFullScreen() ? (w.win.getNormalBounds ? w.win.getNormalBounds() : w.win.getBounds()) : w.win.getBounds(),
       maximized: w.win.isMaximized(),
-      tabs: w.tabs.map(t => ({ url: isNewtab(t.url) ? '' : t.url, title: t.title })),
+      tabs: w.tabs.map(t => ({ url: isNewtab(t.url) ? '' : t.url, title: t.title, pinned: !!t.pinned || undefined })),
       active: Math.max(0, w.tabs.findIndex(t => t.id === w.activeId))
     })),
     // closed tabs survive a restart, so Ctrl+Shift+T still brings them back
@@ -835,6 +839,17 @@ function handleKey(w, i) {
   if (c && i.shift && k === 'n') { newWindow({ private: true }); return true; }
   if (c && k === 'w') { if (t) w.closeTab(t.id); return true; }
   if (c && k === 'tab') { cycle(w, i.shift ? -1 : 1); return true; }
+  if (c && !i.shift && (k === 'pagedown' || k === 'pageup')) { cycle(w, k === 'pagedown' ? 1 : -1); return true; }
+  if (c && i.shift && (k === 'pagedown' || k === 'pageup') && t) {   // move the tab left / right
+    const at = w.tabs.indexOf(t), to = at + (k === 'pagedown' ? 1 : -1);
+    if (to >= 0 && to < w.tabs.length && !!w.tabs[to].pinned === !!t.pinned) { w.tabs.splice(at, 1); w.tabs.splice(to, 0, t); w.pushState(); saveSessionSoon(); }
+    return true;
+  }
+  if (c && i.shift && k === 'w') { w.win.close(); return true; }
+  if (k === 'f3' && w.findText) { if (wc) wc.findInPage(w.findText, { forward: !i.shift, findNext: true }); return true; }
+  if (i.alt && k === 'home') { if (t) { t.url = NEWTAB_URL; loadInto(t, NEWTAB_URL); w.layout(); w.focusAddress(); } return true; }
+  if (c && i.shift && k === 'j') { if (wc) wc.openDevTools({ mode: 'right' }); return true; }
+  if (c && i.shift && k === 'delete') { const ex = allTabs().find(x => isSettings(x.url)); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(SETTINGS_URL); return true; }
   if (c && /^[1-8]$/.test(k)) { const x = w.tabs[+k - 1]; if (x) w.activate(x.id); return true; }
   if (c && k === '9') { const x = w.tabs[w.tabs.length - 1]; if (x) w.activate(x.id); return true; }
   if ((c && k === 'l') || k === 'f6' || (i.alt && k === 'd')) { w.focusAddress(); return true; }
@@ -970,6 +985,7 @@ function contextMenu(tab, p) {
     items.push({ label: T('فتح الرابط في تبويب جديد', 'Open link in new tab'), click: () => w.createTab(p.linkURL, { activate: false, after: tab.id }) });
     items.push({ label: T('فتح الرابط في نافذة جديدة', 'Open link in new window'), click: () => newWindow({ url: p.linkURL }) });
     if (!w.private) items.push({ label: T('فتح الرابط في نافذة متخفية', 'Open link in incognito window'), click: () => newWindow({ url: p.linkURL, private: true }) });
+    items.push({ label: T('حفظ الرابط باسم…', 'Save link as…'), click: () => wc.downloadURL(p.linkURL) });
     items.push({ label: T('نسخ الرابط', 'Copy link'), click: () => clipboard.writeText(p.linkURL) });
     items.push({ type: 'separator' });
   }
@@ -977,6 +993,12 @@ function contextMenu(tab, p) {
     items.push({ label: T('فتح الصورة في تبويب جديد', 'Open image in new tab'), click: () => w.createTab(p.srcURL, { activate: false, after: tab.id }) });
     items.push({ label: T('نسخ الصورة', 'Copy image'), click: () => wc.copyImageAt(p.x, p.y) });
     items.push({ label: T('حفظ الصورة', 'Save image'), click: () => wc.downloadURL(p.srcURL) });
+    items.push({ label: T('نسخ عنوان الصورة', 'Copy image address'), click: () => clipboard.writeText(p.srcURL) });
+    items.push({ type: 'separator' });
+  }
+  if ((p.mediaType === 'video' || p.mediaType === 'audio') && p.srcURL && /^https?:/i.test(p.srcURL)) {
+    items.push({ label: p.mediaType === 'video' ? T('حفظ الفيديو باسم…', 'Save video as…') : T('حفظ الصوت باسم…', 'Save audio as…'), click: () => wc.downloadURL(p.srcURL) });
+    items.push({ label: T('نسخ عنوان الملف', 'Copy media address'), click: () => clipboard.writeText(p.srcURL) });
     items.push({ type: 'separator' });
   }
   if (p.isEditable) {
@@ -1003,6 +1025,15 @@ function contextMenu(tab, p) {
   items.push({ label: T('فحص العنصر', 'Inspect'), click: () => wc.inspectElement(p.x, p.y) });
   Menu.buildFromTemplate(items).popup({ window: w.win });
 }
+/* pin / unpin: pinned tabs are small, stay at the start and come back after a restart */
+function togglePin(w, t) {
+  const i = w.tabs.indexOf(t); if (i < 0) return;
+  w.tabs.splice(i, 1);
+  t.pinned = !t.pinned;
+  const pins = w.tabs.filter(x => x.pinned).length;
+  w.tabs.splice(t.pinned ? pins : pins, 0, t);
+  w.pushState(); saveSessionSoon();
+}
 function tabMenu(w, id) {
   const t = w.tab(id); if (!t) return;
   const i = w.tabs.indexOf(t);
@@ -1013,6 +1044,7 @@ function tabMenu(w, id) {
     { type: 'separator' },
     { label: T('تحديث', 'Reload'), enabled: !!wc, click: () => wc && wc.reload() },
     { label: T('تكرار', 'Duplicate'), click: () => w.createTab(t.url, { after: t.id }) },
+    { label: t.pinned ? T('إلغاء تثبيت التبويب', 'Unpin tab') : T('تثبيت التبويب', 'Pin tab'), click: () => togglePin(w, t) },
     { label: t.muted ? T('تشغيل صوت الموقع', 'Unmute site') : T('كتم صوت الموقع', 'Mute site'), click: () => toggleMute(t) },
     { label: T('نقل إلى نافذة جديدة', 'Move to new window'), enabled: w.tabs.length > 1, click: () => detachToNewWindow(t) },
     { type: 'separator' },
@@ -1758,7 +1790,11 @@ function setupIpc() {
       case 'incognito': newWindow({ private: true }); break;
       case 'move': {   // reorder inside this window: arg = {id, to}
         const i = w.tabs.findIndex(x => x.id === arg.id); if (i < 0) break;
-        const [x] = w.tabs.splice(i, 1); w.tabs.splice(Math.max(0, Math.min(w.tabs.length, arg.to)), 0, x);
+        const [x] = w.tabs.splice(i, 1);
+        const pins = w.tabs.filter(t => t.pinned).length;
+        let to = Math.max(0, Math.min(w.tabs.length, arg.to));
+        to = x.pinned ? Math.min(to, pins) : Math.max(to, pins);   // a pinned tab stays with the pinned ones
+        w.tabs.splice(to, 0, x);
         w.pushState(); saveSessionSoon(); break;
       }
     }
@@ -1768,6 +1804,7 @@ function setupIpc() {
   ipcMain.on('find', (e, a) => {
     const w = uiWin(e); const t = w && w.active(); const wc = t && t.view && t.view.webContents; if (!wc) return;
     if (!a || !a.text) { wc.stopFindInPage('clearSelection'); w.ui.webContents.send('found', { active: 0, matches: 0 }); return; }
+    w.findText = a.text;   // F3 / Ctrl+G find the next one
     wc.findInPage(a.text, { forward: a.forward !== false, findNext: !!a.next });
   });
   ipcMain.on('find:stop', e => { const w = uiWin(e); const t = w && w.active(); if (t && t.view) t.view.webContents.stopFindInPage('clearSelection'); });
@@ -2192,7 +2229,7 @@ app.whenReady().then(async () => {
       if (!s.tabs || !s.tabs.length) continue;
       const w = new Win({ bounds: s.bounds, maximized: s.maximized });
       const act = Math.min(s.active || 0, s.tabs.length - 1);
-      s.tabs.forEach((t, i) => w.createTab(t.url || NEWTAB_URL, i === act ? { activate: false } : { activate: false, discarded: true, title: t.title }));
+      s.tabs.forEach((t, i) => w.createTab(t.url || NEWTAB_URL, i === act ? { activate: false, pinned: !!t.pinned } : { activate: false, discarded: true, title: t.title, pinned: !!t.pinned }));
       w.activate(w.tabs[act].id);
     }
   } else {
