@@ -472,6 +472,7 @@ function makeView(tab, fromOpener) {
   const view = fromOpener && fromOpener.webContents ? new WebContentsView({ webContents: fromOpener.webContents }) : new WebContentsView({
     webPreferences: {
       preload: PRELOAD_TAB,            // gives an API only to our own internal pages (checked inside)
+      nodeIntegrationInSubFrames: true,   // only so the preload also reaches iframes (passkey fix); Node stays off, sandbox on
       partition: tab.win.partition,
       contextIsolation: true, sandbox: true, nodeIntegration: false,
       plugins: true,                   // built-in PDF viewer

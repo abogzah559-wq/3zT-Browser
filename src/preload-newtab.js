@@ -8,9 +8,50 @@
  */
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
-const internal = location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media)\.html$/i.test(decodeURIComponent(location.pathname));
+// frames inside a page (iframes) only get the passkey fix below; everything else is for the page itself
+const SUB = typeof process !== 'undefined' && process.isMainFrame === false;
+const inMainWorld = code => {
+  try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
+  catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
+};
+/* sign-in pages and the "Windows Security" window: see where it is used below */
+const PASSKEY_CODE = `(() => {
+    const PKC = window.PublicKeyCredential, creds = navigator.credentials;
+    if (!PKC || !creds || !creds.get) return;
+    try { Object.defineProperty(PKC, 'isConditionalMediationAvailable', { value: function isConditionalMediationAvailable() { return Promise.resolve(false); }, configurable: true, writable: true }); } catch (e) {}
+    if (PKC.getClientCapabilities) {
+      const caps = PKC.getClientCapabilities.bind(PKC);
+      try { Object.defineProperty(PKC, 'getClientCapabilities', { value: function getClientCapabilities() { return caps().then(c => Object.assign({}, c, { conditionalGet: false, passkeyPlatformAuthenticator: c && c.passkeyPlatformAuthenticator })); }, configurable: true, writable: true }); } catch (e) {}
+    }
+    const orig = creds.get.bind(creds);
+    const wrapped = function get(opts) {
+      if (opts && opts.publicKey && opts.mediation === 'conditional') {
+        return new Promise((res, rej) => {
+          const s = opts.signal;
+          if (s) { if (s.aborted) return rej(s.reason || new DOMException('The operation was aborted.', 'AbortError')); s.addEventListener('abort', () => rej(s.reason || new DOMException('The operation was aborted.', 'AbortError')), { once: true }); }
+        });
+      }
+      if (opts && opts.publicKey) {
+        // "immediate": the site only wants a passkey if one is ready without asking; say there is none (it carries on with the password)
+        if (opts.mediation === 'immediate') return Promise.reject(new DOMException('No passkey is available.', 'NotAllowedError'));
+        // a request for "any passkey" (no account named) that you did not ask for (no click or key press just before):
+        // answered as if you pressed Cancel, so no Windows window opens by itself; the site falls back to its normal sign-in.
+        // Requests for a named account, and anything you click, still go to Windows.
+        const named = Array.isArray(opts.publicKey.allowCredentials) && opts.publicKey.allowCredentials.length > 0;
+        const youAsked = !!(navigator.userActivation && navigator.userActivation.isActive);
+        if (!named && !youAsked) return Promise.reject(new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError'));
+      }
+      return orig(opts);
+    };
+    try { Object.defineProperty(Object.getPrototypeOf(creds), 'get', { value: wrapped, configurable: true, writable: true }); } catch (e) {}
+  })();`;
 
-if (internal) {
+const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media)\.html$/i.test(decodeURIComponent(location.pathname));
+
+if (SUB) {
+  // a sign-in box embedded from another site must not open Windows' passkey window by itself either
+  if (/^https?:$/.test(location.protocol)) { let on = true; try { on = (ipcRenderer.sendSync('site:cfg') || {}).passkeyFix !== false; } catch (e) {} if (on) inMainWorld(PASSKEY_CODE); }
+} else if (internal) {
   contextBridge.exposeInMainWorld('zeus', {
     getBookmarks: () => ipcRenderer.invoke('bm:get'),
     favicons: urls => ipcRenderer.invoke('fav:get', urls),
@@ -265,28 +306,11 @@ if (internal) {
      username box. Electron has no such list: it hands that background request straight to Windows, which opens
      its "Windows Security" window (Windows Hello / security key / phone) before you did anything.
      Here sites are told "no passkey autofill" (like a browser without that list) and background requests just
-     wait, the way Chrome waits when you don't pick a passkey. A passkey you ask for yourself ("Sign in with a
-     passkey", "Use a security key") still opens Windows' window as it should. */
-  if (cfg.passkeyFix !== false) mainWorld(`(() => {
-    const PKC = window.PublicKeyCredential, creds = navigator.credentials;
-    if (!PKC || !creds || !creds.get) return;
-    try { Object.defineProperty(PKC, 'isConditionalMediationAvailable', { value: function isConditionalMediationAvailable() { return Promise.resolve(false); }, configurable: true, writable: true }); } catch (e) {}
-    if (PKC.getClientCapabilities) {
-      const caps = PKC.getClientCapabilities.bind(PKC);
-      try { Object.defineProperty(PKC, 'getClientCapabilities', { value: function getClientCapabilities() { return caps().then(c => Object.assign({}, c, { conditionalGet: false, passkeyPlatformAuthenticator: c && c.passkeyPlatformAuthenticator })); }, configurable: true, writable: true }); } catch (e) {}
-    }
-    const get = creds.get.bind(creds);
-    const wrapped = function get(opts) {
-      if (opts && opts.publicKey && opts.mediation === 'conditional') {
-        return new Promise((res, rej) => {
-          const s = opts.signal;
-          if (s) { if (s.aborted) return rej(s.reason || new DOMException('The operation was aborted.', 'AbortError')); s.addEventListener('abort', () => rej(s.reason || new DOMException('The operation was aborted.', 'AbortError')), { once: true }); }
-        });
-      }
-      return get(opts);
-    };
-    try { Object.defineProperty(Object.getPrototypeOf(creds), 'get', { value: wrapped, configurable: true, writable: true }); } catch (e) {}
-  })();`);
+     wait, the way Chrome waits when you don't pick a passkey. Some sites (Google's sign-in) instead ask at once in
+     the normal way, or with the newer "immediate" mode: those are answered "no passkey" unless you clicked
+     something or the site names your account. A passkey you ask for yourself ("Sign in with a passkey",
+     "Use a security key") still opens Windows' window as it should. */
+  if (cfg.passkeyFix !== false) inMainWorld(PASSKEY_CODE);
 
   if (cfg.yt) {
     const yt = cfg.yt;

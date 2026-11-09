@@ -175,10 +175,13 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
 - Restore your tabs when the browser opens (can be turned off).
 - Links, forms and scripts that open a new tab get exactly the request the site made (its form data,
   the page it came from, `window.opener`), the same as in Chrome. Download sites rely on this.
-- Sign-in pages no longer pop up the Windows Security window (Windows Hello / security key) by
-  themselves. Many sign-in pages ask for a passkey in the background as soon as they open; Chrome
-  answers that quietly, Electron used to hand it straight to Windows. A passkey you choose yourself
-  ("Sign in with a passkey", "Use a security key") still opens Windows' window as it should.
+- Sign-in pages no longer pop up the Windows Security window (Windows Hello / "insert your security
+  key") by themselves. Many sign-in pages ask for a passkey in the background as soon as they open
+  (autofill-style, "immediate", or a plain request for any passkey); Chrome answers those quietly,
+  Electron used to hand them straight to Windows. 3zT answers such background requests "no passkey",
+  also inside embedded sign-in boxes, so the site carries on with its normal sign-in. A passkey you
+  choose yourself (a click on "Sign in with a passkey" / "Use a security key") or one the site asks
+  for a named account still opens Windows' window as it should.
 - Opens links for other programs (`mailto:`, `discord://`, `claude://`, ...) through Windows, asking
   first like Chrome does, with an "always allow for this site" option.
 - Can be set as the Windows default browser.
@@ -520,8 +523,7 @@ password* on the site, or cancel the window.
   Widevine module. The video downloader does not download DRM-protected video either.
 - Passkey autofill (picking a saved passkey from the username box) is not available; passkeys work
   when you choose them on the site.
-  The fix for the Windows Security window applies to the page itself; a sign-in box embedded from
-  another site inside a page (an iframe) is not covered yet.
+
 - The ad blocker uses the host rules of EasyList / EasyPrivacy (with their resource types); path and
   cosmetic rules are not applied.
 - Sites change often; when one stops working in the video downloader, *Update download tools*

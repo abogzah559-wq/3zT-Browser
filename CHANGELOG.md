@@ -10,12 +10,22 @@ the browser's "updated" note are made from these sections.
 - Its tools (yt-dlp, gallery-dl, FFmpeg) now come with the setup: no waiting the first time. They only run while something is downloading.
 - Settings → About → Check for updates: looks for an update right away and downloads it; "Restart to update" installs it in seconds and brings your tabs back.
 - A tidier bar: the fox button is smaller, and the ad-blocker shield sits next to the extensions button.
+- The download button: a thin light-blue ring while downloading; when it is done the arrow turns blue until you open the list.
+- Trimming: playing the video in the trim window plays only the part you picked.
+- The new tab and the browser's own pages show the fox without the dark circle.
+- The address bar no longer keeps the previous tab's address when you open or switch to another tab.
+- Sign-in pages (Google...) no longer open the Windows Security "insert your security key" window by themselves: background passkey requests are answered "no passkey", also from embedded sign-in boxes. A passkey you choose yourself still works.
 
 ### العربية
 - محمّل الفيديو صار له نافذة صغيرة خاصة فيه، بعيد عن تنزيلات المتصفح. قبل التحميل يوريك صورة المقطع واسمه والقناة والمدة والرابط عشان تتأكد، وما يعرض إلا الجودات اللي فعلاً موجودة في المقطع.
 - أدوات التحميل صارت داخل السيت اب: ما فيه انتظار أول مرة، وما تشتغل إلا وقت التحميل.
 - الإعدادات ← حول المتصفح ← التحقق من وجود تحديث: يدوّر على تحديث الحين وينزّله، و«أعد التشغيل للتحديث» يثبّته في ثواني وترجع تبويباتك.
 - البار صار أرتب: زر الثعلب أصغر، ودرع مانع الإعلانات صار جنب زر الإضافات.
+- زر التنزيل: خط أزرق فاتح رفيع وهو يحمّل، وإذا خلص السهم يصير أزرق لين تفتح القائمة.
+- القص: تشغيل الفيديو في نافذة القص يعرض بس الجزء اللي حددته.
+- التبويب الجديد وصفحات المتصفح صار فيها الثعلب بدون الدائرة السوداء.
+- شريط العنوان ما عاد يحتفظ برابط التبويب القديم لما تفتح تبويب جديد أو تنتقل لتبويب ثاني.
+- صفحات تسجيل الدخول (قوقل وغيرها) ما عاد تفتح نافذة أمان ويندوز «أدخل مفتاح الأمان» لحالها، حتى من مربعات الدخول المضمّنة. ومفتاح الدخول اللي تختاره بنفسك لسا يشتغل.
 
 ## 0.13.0
 

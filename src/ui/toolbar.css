@@ -179,11 +179,13 @@ body.web.tinted.light #bar,body.web.tinted.light #tabs,body.web.tinted.light #wi
 /* downloads button: shows while files are downloading, with a progress ring */
 #dlBtn{position:relative}#dlBtn[hidden]{display:none}
 #dlBtn .ring{position:absolute;inset:0;width:32px;height:32px;transform:rotate(-90deg);pointer-events:none}
-#dlBtn .ring circle{fill:none;stroke-width:2.4}
-#dlBtn .rb{stroke:rgba(255,255,255,.12)}
-#dlBtn .rf{stroke:#8ab4f8;stroke-dasharray:100.5;stroke-dashoffset:100.5;transition:stroke-dashoffset .3s;stroke-linecap:round}
+#dlBtn .ring circle{fill:none;stroke-width:1.4}
+#dlBtn:not(.busy) .ring{display:none}            /* the ring only while something downloads */
+#dlBtn .rb{stroke:rgba(255,255,255,.08)}
+#dlBtn .rf{stroke:#a8c7fa;stroke-dasharray:100.5;stroke-dashoffset:100.5;transition:stroke-dashoffset .3s;stroke-linecap:round}
 #dlBtn.ind .rf{stroke-dashoffset:75;animation:dlspin 1s linear infinite;transform-origin:18px 18px}
-#dlBtn.done .rf{stroke:#7ee2a8;stroke-dashoffset:0}
+/* finished and not looked at yet: the arrow itself turns blue (no ring) */
+#dlBtn.fresh>svg:first-child{stroke:#8ab4f8;color:#8ab4f8}
 @keyframes dlspin{to{transform:rotate(360deg)}}
 
 /* downloads list under the download button */

@@ -378,29 +378,39 @@ async function mediaTest() {
 }
 
 /* ================= the "Windows Security" window on sign-in pages (passkeys) ================= */
-const PK_PAGE = `<!doctype html><title>pk</title><script>
+const PK_PAGE = `<!doctype html><title>pk</title><button id=b>passkey</button><script>
+const pk = (extra) => Object.assign({ challenge: new Uint8Array(32), rpId: 'localhost' }, extra || {});
+const timed = (p, ms) => Promise.race([p.then(() => 'resolved', e => 'rejected ' + e.name), new Promise(r => setTimeout(() => r('waiting'), ms))]);
+// what Google's sign-in page does when it opens: conditional, immediate, and a plain "any passkey" request, all without a click
 window.probe = async () => {
   const cond = await PublicKeyCredential.isConditionalMediationAvailable().catch(e => 'err ' + e.name);
-  const ac = new AbortController(); let res = 'waiting';
-  navigator.credentials.get({ mediation: 'conditional', signal: ac.signal, publicKey: { challenge: new Uint8Array(32), rpId: 'localhost', allowCredentials: [] } }).then(() => (res = 'resolved'), e => (res = 'rejected ' + e.name));
-  await new Promise(r => setTimeout(r, 4000));
-  const r1 = res; ac.abort(); await new Promise(r => setTimeout(r, 300));
-  return JSON.stringify({ conditionalAvailable: cond, conditionalAfter4s: r1, afterAbort: res });
+  const ac = new AbortController();
+  const c = navigator.credentials.get({ mediation: 'conditional', signal: ac.signal, publicKey: pk({ allowCredentials: [] }) });
+  const r = { conditionalAvailable: cond };
+  r.immediate = await timed(navigator.credentials.get({ mediation: 'immediate', publicKey: pk() }), 1500);
+  r.background = await timed(navigator.credentials.get({ publicKey: pk({ allowCredentials: [] }) }), 1500);
+  r.conditionalAfter2s = await timed(c, 2000);
+  ac.abort(); r.afterAbort = await timed(c, 500);
+  // the same from a sign-in box embedded from another site (iframe)
+  r.frame = await new Promise(res => { addEventListener('message', e => res(e.data), { once: true }); const f = document.createElement('iframe'); f.src = 'http://127.0.0.1:8793/?frame'; document.body.appendChild(f); setTimeout(() => res('no answer'), 5000); });
+  return JSON.stringify(r);
 };
+if (location.search.includes('frame')) timed(navigator.credentials.get({ publicKey: pk({ allowCredentials: [] }) }), 1500).then(v => parent.postMessage('background ' + v, '*'));
+// a passkey you ask for yourself (a click): must still reach Windows
+window.mine = () => { window.ac2 = new AbortController(); window.res2 = 'waiting'; navigator.credentials.get({ signal: ac2.signal, publicKey: pk({ allowCredentials: [] }) }).then(() => (res2 = 'resolved'), e => (res2 = 'rejected ' + e.name)); return 1; };
 </script>`;
 const credUi = () => { try { return /CredentialUIBroker|WebAuthnBroker|WWAHost/i.test(execSync('tasklist /NH').toString()); } catch (e) { return false; } };
 async function passkeys() {
   const srv = http.createServer((q, r) => { r.setHeader('Content-Type', 'text/html'); r.end(PK_PAGE); }).listen(8793, '127.0.0.1');
+  const kill = () => { try { execSync('taskkill /IM CredentialUIBroker.exe /F', { stdio: 'ignore' }); } catch (e) {} };
   try {
+    const open = async () => { await go('http://localhost:8793/', true); const c = await connect(await find(u => u.startsWith('http://localhost:8793'), 30)); await poll(() => c.ev('typeof probe === "function"'), 10000); return c; };
     const run = async label => {
-      await go('http://localhost:8793/', true);
-      const c = await connect(await find(u => u.startsWith('http://localhost:8793'), 30));
-      await poll(() => c.ev('typeof probe === "function"'), 10000);
-      const v = await c.ev('probe()', true);
-      const win = credUi();
-      try { execSync('taskkill /IM CredentialUIBroker.exe /F', { stdio: 'ignore' }); } catch (e) {}
-      c.close();
+      const c = await open();
+      const v = await c.ev('probe()');
+      const win = credUi(); kill();
       console.log(`::notice title=passkeys ${label}::${v} | Windows Security window open: ${win}`);
+      c.close();
       return { v: JSON.parse(v || '{}'), win };
     };
     // the cause, shown once without the fix (reported only)
@@ -408,11 +418,17 @@ async function passkeys() {
     await run('without fix');
     await stop(); await start(); await sleep(3000);
     const w = await run('with fix');
-    ok('a background passkey request does not open the Windows Security window', w.v.conditionalAvailable === false && w.v.conditionalAfter4s === 'waiting' && !w.win && /AbortError/.test(w.v.afterAbort || ''), JSON.stringify(w));
+    ok('sign-in pages: background passkey requests do not open the Windows Security window', w.v.conditionalAvailable === false && /^rejected NotAllowedError/.test(w.v.immediate) && /^rejected NotAllowedError/.test(w.v.background) && w.v.conditionalAfter2s === 'waiting' && /rejected NotAllowedError/.test(w.v.frame || '') && !w.win, JSON.stringify(w));
+    // a passkey request after a click still goes to Windows (its window opens, or the request at least is not refused at once)
+    const c = await open();
+    await c.ev('mine()', true);
+    await sleep(3000);
+    const res = await c.ev('res2'); const win = credUi();
+    await c.ev('ac2.abort(), 1'); kill(); c.close();
+    ok('a passkey you ask for (after a click) still reaches Windows', win || res === 'waiting', `window ${win}, request ${res}`);
   } finally { srv.close(); }
 }
 
-/* ================= a real site reported as broken: what happens there ================= */
 async function arablocn() {
   // reported: "the site goes to another page, comes straight back, nothing downloads". Follow a real game page and its download button.
   const note = (t, m) => console.log(`::notice title=arablocn ${t}::` + String(m).replace(/%/g, '%25').replace(/\r?\n/g, '%0A').slice(0, 3500));

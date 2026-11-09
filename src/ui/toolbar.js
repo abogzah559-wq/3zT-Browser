@@ -45,6 +45,7 @@ const ICO = {
 };
 
 /* ---------- state from the main process ---------- */
+let addrTab = null, addrDirty = false;   // the tab the address bar text belongs to; dirty = you typed in it
 ui.on('state', st => {
   const langChanged = st.lang !== S.lang;
   S = st;
@@ -67,7 +68,15 @@ ui.on('state', st => {
   $('maxIco').innerHTML = S.maximized
     ? '<rect x="2" y="4" width="6" height="6" rx="1"/><path d="M4 4V2.6c0-.3.3-.6.6-.6h4.8c.3 0 .6.3.6.6v4.8c0 .3-.3.6-.6.6H8"/>'
     : '<rect x="2" y="2" width="8" height="8" rx="1.2"/>';
-  if (document.activeElement !== $('addr') || !document.hasFocus()) $('addr').value = S.url;
+  // another tab: the bar always shows that tab's address (nothing from the previous tab stays behind);
+  // the same tab: what you are typing is kept, otherwise it follows the page
+  const focused = document.activeElement === $('addr') && document.hasFocus();
+  if (S.activeId !== addrTab) {
+    addrTab = S.activeId; addrDirty = false;
+    if (openKind === 'sug') closeDrop();
+    if ($('addr').value !== S.url) $('addr').value = S.url;
+    if (focused) $('addr').select();
+  } else if (!focused || !addrDirty) { if ($('addr').value !== S.url) { const all = focused && $('addr').selectionStart === 0 && $('addr').selectionEnd === $('addr').value.length; $('addr').value = S.url; if (all) $('addr').select(); } }
   $('addr').placeholder = L('ابحث في Google أو اكتب رابط', 'Search Google or type a URL');
   $('findq').placeholder = L('ابحث في الصفحة', 'Find in page');
   if (langChanged) applyTips();
@@ -435,9 +444,10 @@ addr.addEventListener('focus', () => { setTimeout(() => addr.select(), 0); });
 // your searches show only when you click the empty bar yourself (not when a new tab puts the cursor there)
 addr.addEventListener('mousedown', () => { if (!addr.value.trim() && openKind !== 'sug') setTimeout(updateSug, 0); });
 addr.addEventListener('input', () => { clearTimeout(sugT); sugT = setTimeout(updateSug, 60); });
-addr.addEventListener('blur', () => { if (openKind === 'sug') closeDrop(); addr.value = S.url; });
+addr.addEventListener('blur', () => { if (openKind === 'sug') closeDrop(); addr.value = S.url; addrDirty = false; });
+addr.addEventListener('input', () => { addrDirty = true; });
 addr.addEventListener('keydown', e => {
-  if (e.key === 'Escape') { e.preventDefault(); closeDrop(); addr.value = S.url; addr.blur(); ui.send('tab', 'focusPage'); return; }
+  if (e.key === 'Escape') { e.preventDefault(); closeDrop(); addr.value = S.url; addrDirty = false; addr.blur(); ui.send('tab', 'focusPage'); return; }
   if (e.key === 'Enter') { e.preventDefault(); go(sugSel >= 0 && sugItems[sugSel] ? sugItems[sugSel].v : addr.value, e.altKey); return; }
   if (openKind === 'sug' && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
     e.preventDefault(); const n = sugItems.length; if (!n) return;
@@ -447,6 +457,7 @@ addr.addEventListener('keydown', e => {
 });
 $('omni').addEventListener('submit', e => e.preventDefault());
 function go(v, newTab) {
+  addrDirty = false;
   v = (v || '').trim(); if (!v) return;
   closeDrop(); addr.blur();
   ui.send('tab', 'go', { text: v, newTab: !!newTab });
@@ -534,18 +545,21 @@ ui.on('updated', u => {
   toast(L(`تم تحديث 3zT إلى ${updateInfo.to}`, `3zT was updated to ${updateInfo.to}`),
     [{ label: L('التفاصيل', 'Details'), alt: true, fn: () => openDrop('notes', $('menuBtn')) }], { ok: true, ms: 3000 });
 });
-let dlDoneUntil = 0;
+let dlDoneUntil = 0, dlFresh = false;   // dlFresh: a download finished and the list was not opened since
 function drawDl() {
   const b = $('dlBtn'), d = S.dl || { active: 0, progress: -1 };
   const show = d.active > 0 || d.session > 0 || Date.now() < dlDoneUntil;
   b.hidden = !show; if (!show) return;
-  b.classList.toggle('done', !d.active);
+  b.classList.toggle('busy', d.active > 0);
+  b.classList.toggle('fresh', !d.active && dlFresh);
   b.classList.toggle('ind', d.active > 0 && d.progress < 0);
   $('dlRing').style.strokeDashoffset = d.active && d.progress >= 0 ? String(100.5 * (1 - d.progress)) : '';
   b.title = d.active ? L(`جاري تنزيل ${d.active}`, `${d.active} downloading`) : L('التنزيلات', 'Downloads');
 }
-$('dlBtn').onclick = () => (openKind === 'dl' ? closeDrop() : openDrop('dl', $('dlBtn')));
+$('dlBtn').onclick = () => { dlFresh = false; drawDl(); openKind === 'dl' ? closeDrop() : openDrop('dl', $('dlBtn')); };
 ui.on('download', d => {
+  if (d.state === 'completed' && openKind !== 'dl') dlFresh = true;
+  if (d.state === 'cancelled' || d.state === 'interrupted') { drawDl(); }
   if (openKind === 'dl') { dlDoneUntil = d.state === 'completed' ? Date.now() + 8000 : dlDoneUntil; return; }   // the list is open: it already shows it
   const page = { label: L('التنزيلات', 'Downloads'), fn: () => ui.send('misc', 'downloads') };
   if (d.state === 'completed') { dlDoneUntil = Date.now() + 8000; setTimeout(drawDl, 8100); drawDl(); toast(L('تم التنزيل: ', 'Downloaded: ') + d.name, [{ label: L('فتح المجلد', 'Show'), fn: () => ui.send('download:show', d.path) }, page]); }
