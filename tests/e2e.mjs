@@ -383,16 +383,37 @@ async function passkeys() {
 
 /* ================= a real site reported as broken: what happens there ================= */
 async function arablocn() {
+  // reported: "the site goes to another page, comes straight back, nothing downloads". Follow a real game page and its download button.
+  const note = (t, m) => console.log(`::notice title=arablocn ${t}::` + String(m).replace(/%/g, '%25').replace(/\r?\n/g, '%0A').slice(0, 3500));
   try {
     await go('https://arablocn.com/', true);
     const t = await find(u => /arablocn\.com/.test(u), 40);
-    if (!t) return console.log('::notice title=arablocn::page did not open');
-    const c = await connect(t); await sleep(6000);
-    await shot(c, 'arablocn');
-    const info = await c.ev(`JSON.stringify({ url: location.href, title: document.title, links: [...document.querySelectorAll('a')].filter(a => /download|تحميل|تنزيل|mediafire|mega|drive|zip|rar|apk/i.test(a.href + ' ' + a.textContent)).slice(0, 12).map(a => (a.textContent.trim().slice(0, 30) + ' -> ' + a.href + (a.target ? ' [' + a.target + ']' : ''))) })`);
-    console.log('::notice title=arablocn page::' + String(info).slice(0, 3000));
+    if (!t) return note('home', 'did not open');
+    let c = await connect(t); await sleep(6000);
+    const posts = await c.ev(`JSON.stringify([...new Set([...document.querySelectorAll('a[href]')].map(a => a.href).filter(h => { try { const u = new URL(h); return /arablocn\.com$/.test(u.hostname) && u.pathname.length > 2 && !/\/(category|tag|page|author|wp-|feed|contact|about|privacy|search)/i.test(u.pathname) && !u.hash; } catch (e) { return false; } }))].slice(0, 5))`);
+    note('home', posts);
     c.close();
-  } catch (e) { console.log('::notice title=arablocn::' + e.message); }
+    const list = JSON.parse(posts || '[]');
+    if (!list.length) return;
+    await go(list[0], true);
+    const pt = await find(u => u === list[0] || u.startsWith(list[0]), 40);
+    if (!pt) return note('post', 'did not open ' + list[0]);
+    c = await connect(pt); await sleep(6000); await shot(c, 'arablocn-post');
+    const links = await c.ev(`JSON.stringify([...document.querySelectorAll('a[href],button,form')].filter(e => /download|تحميل|تنزيل|mediafire|mega\\.nz|drive\\.google|pixeldrain|gofile|\\.zip|\\.rar|\\.7z/i.test((e.href || e.action || '') + ' ' + e.textContent)).slice(0, 12).map(e => e.tagName + ' ' + e.textContent.trim().replace(/\\s+/g, ' ').slice(0, 40) + ' -> ' + (e.href || e.action || '') + (e.target ? ' [' + e.target + ']' : '') + (e.getAttribute('onclick') ? ' onclick=' + e.getAttribute('onclick').slice(0, 80) : '')))`);
+    note('post links', links);
+    const arr = JSON.parse(links || '[]');
+    if (!arr.length) { c.close(); return; }
+    // press the first download control and watch what happens for 25 s
+    const tb = await toolbar();
+    const before = await tb.ev('JSON.stringify(S.tabs.map(t => t.url))');
+    const dlBefore = (await (async () => { const d = await connect(await find('downloads.html', 5) || pt); const v = await d.ev('window.zeus ? zeus.dlList().then(d => d.items.length) : -1'); d.close(); return v; })());
+    await c.ev(`(() => { const e = [...document.querySelectorAll('a[href],button')].find(e => /download|تحميل|تنزيل|mediafire|mega\\.nz|drive\\.google|pixeldrain|gofile|\\.zip|\\.rar|\\.7z/i.test((e.href || '') + ' ' + e.textContent)); if (e) { e.scrollIntoView(); e.click(); } return !!e; })()`, true);
+    const seen = [];
+    for (let i = 0; i < 25; i++) { await sleep(1000); const s = await tb.ev('S.url + " | tabs " + S.tabs.length + " | dl " + JSON.stringify(S.dl)'); if (seen[seen.length - 1] !== s) seen.push(`${i}s ${s}`); }
+    const after = await tb.ev('JSON.stringify(S.tabs.map(t => t.url))');
+    tb.close(); c.close();
+    note('after clicking', `tabs before: ${before}\ntabs after: ${after}\ndownloads before: ${dlBefore}\n` + seen.join('\n'));
+  } catch (e) { note('error', e.stack || e.message); }
 }
 
 async function main() {
