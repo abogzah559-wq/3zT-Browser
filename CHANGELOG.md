@@ -3,6 +3,30 @@
 Each version has an English and an Arabic part. The release notes and the "Details" button in
 the browser's "updated" note are made from these sections.
 
+## 0.13.0
+
+### English
+- New logo: the fox, everywhere (program, taskbar, setup, tabs). This update installs the full setup once so the program's own icon changes too.
+- Video, audio and photo downloader built in (the former 3zT Download app): a fox button in the address bar on pages with a video or a post opens the downloads page with the link. Save the video (up to 4K), MP3 audio, or pick the photos of a post. The tools it needs are fetched and checked the first time you use it; nothing runs in the background.
+- Trim a video before saving it, or trim any finished video in the downloads list: pick the start and end on a timeline with a preview. "Fast" keeps the quality (cuts at the nearest key frame), "Frame-exact" re-encodes to cut exactly.
+- Drag a finished download from the list onto a website, the desktop or a folder.
+- Downloads that failed on many sites now work: tabs opened by a site carry its exact request (form data, the page it came from, the opener), like Chrome. The empty tab that only started a download closes by itself.
+- Arabic file names are kept (they used to be saved as "download").
+- Sign-in pages no longer pop up the Windows Security window by themselves; a passkey you choose still works.
+- Pin tabs (right-click a tab). More Chrome shortcuts: Ctrl+PgUp/PgDn, Ctrl+Shift+PgUp/PgDn, Ctrl+Shift+W, F3, Alt+Home. Save link, copy image address, save video in the right-click menu.
+- Faster start (the ad lists are kept ready), the ad blocker follows each rule's resource types, private-window downloads are not kept in the list, errors are written to a small log file.
+
+### العربية
+- شعار جديد: الثعلب في كل مكان (البرنامج، شريط المهام، السيت اب، التبويبات). هالتحديث يركّب السيت اب كامل مرة وحدة عشان تتغير أيقونة البرنامج نفسها.
+- محمّل الفيديو والصوت والصور صار داخل المتصفح (برنامج 3zT Download): زر الثعلب يطلع جنب الرابط في الصفحات اللي فيها فيديو أو منشور، ويفتح صفحة التنزيلات والرابط جاهز. تحفظ الفيديو (لين 4K) أو الصوت MP3 أو تختار صور المنشور. الأدوات اللي يحتاجها تنزل وتنفحص أول مرة تستخدمه، وما يشتغل شي بالخلفية.
+- قص الفيديو قبل الحفظ، أو قص أي فيديو خلص تحميله من القائمة: تختار البداية والنهاية على شريط مع معاينة. «سريع» بنفس الجودة (يقص عند أقرب إطار مفتاحي)، و«دقيق» يعيد الترميز عشان يقص بالضبط.
+- تسحب أي ملف حملته من القائمة وترميه في موقع أو على سطح المكتب أو في مجلد.
+- التنزيلات اللي كانت تفشل في مواقع كثيرة صارت تشتغل: التبويب اللي يفتحه الموقع ينفتح بنفس طلبه بالضبط زي كروم. والتبويب الفاضي اللي بس بدأ التحميل يتقفل لحاله.
+- أسماء الملفات العربية تنحفظ صح (كانت تنحفظ باسم download).
+- صفحات تسجيل الدخول ما عاد تطلع نافذة أمان ويندوز لحالها، ومفتاح الدخول اللي تختاره بنفسك لسا يشتغل.
+- تثبيت التبويبات (كلك يمين على التبويب). اختصارات كروم زيادة: Ctrl+PgUp/PgDn و Ctrl+Shift+PgUp/PgDn و Ctrl+Shift+W و F3 و Alt+Home. وفي الكلك يمين: حفظ الرابط، نسخ عنوان الصورة، حفظ الفيديو.
+- تشغيل أسرع (قوائم الإعلانات جاهزة)، مانع الإعلانات يحترم نوع كل قاعدة، تنزيلات النافذة المتخفية ما تنحفظ في القائمة، والأخطاء تنكتب في ملف سجل صغير.
+
 ## 0.12.8
 
 ### English

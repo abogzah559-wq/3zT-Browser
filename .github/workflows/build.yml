@@ -133,6 +133,12 @@ jobs:
           $brave = @("$env:ProgramFiles\BraveSoftware\Brave-Browser\Application\brave.exe", "$env:LOCALAPPDATA\BraveSoftware\Brave-Browser\Application\brave.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
           node tests/speed.mjs "$PWD\dist\3zT\3zT.exe" "$chrome" "$brave"
 
+      - name: Resource use in everyday situations (1/5/10 tabs, video, second window, download, leak check)
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        shell: pwsh
+        run: node tests/resources.mjs "$PWD\dist\3zT\3zT.exe"
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -156,6 +162,7 @@ jobs:
           notes="Download **3zT-Browser-Setup.exe** below and run it. Windows 10/11, 64-bit. No administrator rights needed. Installed copies update themselves."
           [ -n "$changes" ] && notes="$notes"$'\n\n'"$changes"
           [ -f tests/out/speed.md ] && notes="$notes"$'\n\n### Page speed on this build\nSame websites, new profiles, GitHub Windows machine:\n\n'"$(cat tests/out/speed.md)"
+          [ -f tests/out/resources.md ] && notes="$notes"$'\n\n### Resource use on this build\nGitHub Windows machine (no graphics card), new profile, all 3zT processes added up, CPU averaged over 20 s:\n\n'"$(cat tests/out/resources.md)"
           [ -f tests/out/bench.md ] && notes="$notes"$'\n\n### Memory on this build\nSame 3 websites in 3 tabs, new profiles, GitHub Windows machine, two rounds averaged:\n\n'"$(cat tests/out/bench.md)"
           (cd dist && sha256sum 3zT-Browser-Setup.exe | cut -d' ' -f1 > 3zT-Browser-Setup.exe.sha256)
           # installed browsers only accept a signed update: no key, no release
