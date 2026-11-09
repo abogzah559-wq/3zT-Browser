@@ -410,7 +410,8 @@ async function arablocn() {
     await go('https://arablocn.com/', true);
     const t = await find(u => /arablocn\.com/.test(u), 40);
     if (!t) return note('home', 'did not open');
-    let c = await connect(t); await sleep(6000);
+    let c = await connect(t); await sleep(8000);
+    note('home page', await c.ev('location.href + " | " + document.title + " | " + (document.body ? document.body.innerText.slice(0, 200) : "")'));
     const posts = await c.ev(`JSON.stringify([...new Set([...document.querySelectorAll('a[href]')].map(a => a.href).filter(h => { try { const u = new URL(h); return /arablocn\.com$/.test(u.hostname) && u.pathname.length > 2 && !/\/(category|tag|page|author|wp-|feed|contact|about|privacy|search)/i.test(u.pathname) && !u.hash; } catch (e) { return false; } }))].slice(0, 5))`);
     note('home', posts);
     c.close();

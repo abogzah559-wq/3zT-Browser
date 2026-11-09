@@ -23,9 +23,9 @@ const VIDEO = 'https://download.blender.org/peach/bigbuckbunny_movies/BigBuckBun
 
 function snapshot() {
   const ps = `$p = Get-Process -Name 3zT -ErrorAction SilentlyContinue; '{0} {1} {2}' -f @($p).Count, ($p | Measure-Object WorkingSet64 -Sum).Sum, ($p | Measure-Object PrivateMemorySize64 -Sum).Sum`;
-  const cpu = `$t = 0; Get-Process -Name 3zT -ErrorAction SilentlyContinue | ForEach-Object { $t += $_.TotalProcessorTime.TotalMilliseconds }; $t`;
+  const cpu = `Get-Process -Name 3zT -ErrorAction SilentlyContinue | ForEach-Object { '{0}:{1}' -f $_.Id, [math]::Round($_.TotalProcessorTime.TotalMilliseconds) }`;
   const [n, ws, priv] = execSync(`powershell -NoProfile -Command "${ps}"`).toString().trim().split(' ').map(Number);
-  const cpuMs = +execSync(`powershell -NoProfile -Command "${cpu}"`).toString().trim();
+  const cpuMs = new Map(execSync(`powershell -NoProfile -Command "${cpu}"`).toString().trim().split(/\s+/).filter(Boolean).map(x => x.split(':').map(Number)));
   return { n, ws: Math.round(ws / 1048576), priv: Math.round(priv / 1048576), cpuMs };
 }
 async function measure(label, settle = 15000) {
@@ -33,7 +33,9 @@ async function measure(label, settle = 15000) {
   const a = snapshot(); const t = Date.now();
   await sleep(20000);
   const b = snapshot();
-  const cpu = Math.round(((b.cpuMs - a.cpuMs) / (Date.now() - t)) * 1000) / 10;
+  // CPU used during the 20 s by processes alive at both ends (new or ended processes are left out)
+  let used = 0; for (const [pid, ms] of b.cpuMs) if (a.cpuMs.has(pid)) used += Math.max(0, ms - a.cpuMs.get(pid));
+  const cpu = Math.round((used / (Date.now() - t)) * 1000) / 10;
   const r = { label, processes: b.n, ws: b.ws, priv: b.priv, cpu };
   console.log(JSON.stringify(r));
   return r;
@@ -46,7 +48,8 @@ async function ev(t, expr) {
   const v = await new Promise(r => { ws.onmessage = m => { const d = JSON.parse(m.data); if (d.id === 1) r(d.result && d.result.result ? d.result.result.value : undefined); }; ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: expr, awaitPromise: true, returnByValue: true } })); setTimeout(() => r(undefined), 20000); });
   ws.close(); return v;
 }
-async function bar() { for (let i = 0; i < 60; i++) { try { const t = (await targets()).find(x => x.url.includes('ui/toolbar.html')); if (t) return t; } catch (e) {} await sleep(500); } return null; }
+let firstBar = null;
+async function bar() { if (firstBar) return firstBar; for (let i = 0; i < 60; i++) { try { const t = (await targets()).find(x => x.url.includes('ui/toolbar.html')); if (t) return (firstBar = t); } catch (e) {} await sleep(500); } return null; }
 const send = async js => ev(await bar(), js);
 
 async function main() {
@@ -84,7 +87,10 @@ async function main() {
   rows.push(Object.assign(await measure('+ a 100 MB download', 1000), { note: 'local server, finishes during the measurement' }));
   srv.close();
   // leak check: close everything but one tab, open and close 40 tabs, compare
-  const before = await measure('Back to 1 tab (before the leak check)');
+  // back to one tab in one window
+  for (const x of (await targets()).filter(x => x.url.includes('ui/toolbar.html') && x.id !== firstBar.id)) await ev(x, `ui.send('win','close'),1`);
+  await send(`(() => { for (const t of S.tabs.slice(1)) ui.send('tab','close',t.id); return 1; })()`);
+  const before = await measure('Back to 1 tab, 1 window (before the leak check)', 20000);
   rows.push(before);
   for (let k = 0; k < 4; k++) {
     for (let i = 0; i < 10; i++) { await send(`ui.send('tab','go',{text:'https://example.com/?n=${k * 10 + i}',newTab:true}),1`); await sleep(700); }
