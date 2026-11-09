@@ -104,6 +104,10 @@ body.translated #act{color:#8ab4f8;background:rgba(138,180,248,.18)}
 #omni.finding #findq{display:block}
 #omni.finding #findCount{display:block;flex:none;font-size:12px;opacity:.7;padding:0 4px;direction:ltr}
 #omni.finding .fbtn{display:grid}
+#mediaBtn img{width:18px;height:18px;border-radius:50%;display:block;opacity:.92}
+#mediaBtn:hover img{opacity:1}
+#omni.finding #mediaBtn{display:none}
+.dli.ok[draggable=true]{cursor:grab}
 #star.on{color:#8ab4f8}
 #star.on svg{fill:#8ab4f8}
 body:not(.isweb) #star{display:none}

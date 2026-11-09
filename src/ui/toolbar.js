@@ -10,7 +10,7 @@ const TIPS = {
   back: ['رجوع (Alt+←)', 'Back (Alt+←)'], forward: ['للأمام (Alt+→)', 'Forward (Alt+→)'], reload: ['تحديث (F5)', 'Reload (F5)'],
   star: ['حفظ في المفضلة (Ctrl+D)', 'Bookmark (Ctrl+D)'], ext: ['الإضافات', 'Extensions'], menu: ['القائمة', 'Menu'], downloads: ['التنزيلات', 'Downloads'],
   newtab: ['تبويب جديد (Ctrl+T)', 'New tab (Ctrl+T)'], translate: ['ترجمة الصفحة', 'Translate page'],
-  shield: ['مانع الإعلانات', 'Ad blocker']
+  shield: ['مانع الإعلانات', 'Ad blocker'], media: ['تحميل الفيديو أو الصور من هذي الصفحة', 'Download the video or photos on this page']
 };
 const ICO = {
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -58,6 +58,7 @@ ui.on('state', st => {
   $('back').disabled = !S.canGoBack;
   $('fwd').disabled = !S.canGoForward;
   $('star').classList.toggle('on', S.bookmarked);
+  $('mediaBtn').hidden = !S.media;
   const shOff = !S.adblock || S.adSiteOff;
   $('shield').classList.toggle('off', shOff);
   $('shCount').textContent = !shOff && S.blocked ? (S.blocked > 99 ? '99+' : S.blocked) : '';
@@ -243,6 +244,7 @@ $('back').onclick = () => ui.send('tab', 'back');
 $('fwd').onclick = () => ui.send('tab', 'forward');
 $('reload').onclick = () => ui.send('tab', S.loading ? 'stop' : 'reload');
 $('star').onclick = () => ui.send('tab', 'bookmark');
+$('mediaBtn').onclick = () => ui.send('media:open');
 $('act').onclick = () => { if (S.isWeb) ui.send('tab', 'translate'); };
 
 /* ---------- menus ---------- */
@@ -318,7 +320,7 @@ async function renderMenu(kind) {
         acts = `<button class="ab" data-dla="${x.state === 'interrupted' && x.canResume && x.received ? 'resume' : 'retry'}" title="${L('إعادة المحاولة', 'Retry')}">${ICO.retry}</button>`;
       }
       const openable = x.state === 'completed' && x.exists;
-      h += `<div class="mi dli${openable ? ' ok' : ''}${x.state === 'completed' && !x.exists ? ' gone' : ''}" data-dlid="${esc(x.id)}"${openable ? ` title="${L('فتح الملف', 'Open file')}"` : ''}>
+      h += `<div class="mi dli${openable ? ' ok' : ''}${x.state === 'completed' && !x.exists ? ' gone' : ''}" data-dlid="${esc(x.id)}"${openable ? ` draggable="true" title="${L('اضغط للفتح، أو اسحبه إلى موقع أو مجلد', 'Click to open, or drag it onto a website or a folder')}"` : ''}>
         ${ico}<span class="dt"><span class="t">${esc(x.name)}</span><span class="ds${x.state === 'cancelled' || x.state === 'interrupted' ? ' bad' : ''}">${esc(st)}</span>${bar}</span>${acts}</div>`;
     }
     h += `<div class="sep"></div><button class="mi" data-a="downloads">${ICO.dl}<span class="t">${L('كل التنزيلات', 'All downloads')}</span><span class="sub">Ctrl+J</span></button>`;
@@ -646,3 +648,12 @@ function permPanel() {
   h += `<button class="mi" data-a="permAll">${ICO.gear}<span class="t">${L('صلاحيات كل المواقع', 'All site permissions')}</span></button>`;
   return h;
 }
+
+/* drag a finished download from the list onto a website (upload box), the desktop or a folder: a real Windows file drag */
+$('drop').addEventListener('dragstart', e => {
+  const it = e.target.closest && e.target.closest('.dli.ok[draggable=true]'); if (!it) return;
+  e.preventDefault();
+  const id = it.dataset.dlid;
+  closeDrop();               // out of the way first, so the page under it can take the file
+  ui.send('dl:drag', id);
+});

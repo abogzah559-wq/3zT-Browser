@@ -127,6 +127,17 @@ class DownloadManager {
   }
   takeResume() { const id = this.pendingResume; this.pendingResume = null; return id; }
 
+  /* a file made by the built-in media downloader: listed like any finished download */
+  addFile({ name, path: p, url, partition }) {
+    let size = 0; try { size = fs.statSync(p).size; } catch (e) {}
+    const rec = { id: String(++this.seq), added: Date.now(), url: url || '', urlChain: [], name, path: p, mime: '', total: size, received: size, state: 'completed', paused: false, media: true, end: Date.now() };
+    if (partition) Object.defineProperties(rec, { partition: { value: partition }, toJSON: { value: () => null } });
+    this.store.data.unshift(rec);
+    this.session = [rec.id, ...this.session];
+    if (this.store.data.length > 300) this.store.data.length = 300;
+    this.store.save();
+    return rec;
+  }
   forgetPartition(part) {
     const gone = new Set(this.store.data.filter(r => r.partition === part).map(r => r.id));
     if (!gone.size) return;
