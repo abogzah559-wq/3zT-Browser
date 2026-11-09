@@ -119,7 +119,7 @@ function favHtml(t) {
 }
 function renderTabs() {
   const html = S.tabs.map(t => `
-    <div class="tab${t.id === S.activeId ? ' on' : ''}${t.discarded ? ' zz' : ''}" data-id="${t.id}" title="${esc(t.title)}${t.url ? '\n' + esc(t.url) : ''}">
+    <div class="tab${t.id === S.activeId ? ' on' : ''}${t.discarded ? ' zz' : ''}${t.pinned ? ' pin' : ''}" data-id="${t.id}" title="${esc(t.title)}${t.url ? '\n' + esc(t.url) : ''}">
       <span class="fi">${favHtml(t)}</span>
       <span class="tt">${esc(t.title)}</span>
       ${t.audible || t.muted ? `<button class="snd" data-mute="${t.id}" title="${t.muted ? L('تشغيل الصوت', 'Unmute') : L('كتم الصوت', 'Mute')}">${t.muted ? ICO.mute : ICO.vol}</button>` : ''}
