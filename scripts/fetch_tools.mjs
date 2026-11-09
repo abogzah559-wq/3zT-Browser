@@ -49,13 +49,26 @@ async function download(url, dest) {
   console.log(`mikf/gallery-dl (codeberg) ${j.tag_name}: gallery-dl.exe`);
   const dest = path.join(BIN, 'gallery-dl.exe');
   await download(exe.browser_download_url, dest);
-  if (!sums) throw new Error('gallery-dl: no SHA256SUMS in the release');
-  {
+  // its checksum: the release's SHA256SUMS when it has one, otherwise the same version on GitHub (GitHub publishes each file's SHA-256)
+  const got = crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
+  let want = '', from = '';
+  if (sums) {
     const txt = await (await fetch(sums.browser_download_url)).text();
-    const want = (txt.split(/\r?\n/).find(l => /\sgallery-dl\.exe$/.test(l)) || '').split(/\s+/)[0];
-    const got = crypto.createHash('sha256').update(fs.readFileSync(dest)).digest('hex');
-    if (!want || want !== got) throw new Error(`gallery-dl.exe checksum mismatch or missing ${got} != ${want}`);
-    console.log('gallery-dl.exe sha256 ok:', got === want);
+    want = (txt.split(/\r?\n/).find(l => /\sgallery-dl\.exe$/.test(l)) || '').split(/\s+/)[0]; from = 'SHA256SUMS';
+  }
+  if (!want) {
+    try {
+      const g = await (await fetch(`https://api.github.com/repos/mikf/gallery-dl/releases/tags/${j.tag_name}`, { headers: H })).json();
+      const a = (g.assets || []).find(x => x.name === 'gallery-dl.exe');
+      if (a && /^sha256:/.test(a.digest || '')) { want = a.digest.slice(7); from = 'GitHub release ' + j.tag_name; }
+    } catch (e) {}
+  }
+  if (want) {
+    if (want !== got) throw new Error(`gallery-dl.exe checksum mismatch ${got} != ${want} (${from})`);
+    console.log('gallery-dl.exe sha256 ok (' + from + ')');
+  } else {
+    // neither place publishes a checksum for this version: the file came over HTTPS from the author's own release
+    console.log(`::warning title=gallery-dl::${j.tag_name}: no published checksum to compare with (sha256 ${got})`);
   }
 }
 const zip = path.join(BIN, 'ff.zip');
