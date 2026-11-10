@@ -1788,7 +1788,8 @@ function siteCfg(host) {
   return {
     fast: FAST, lang: d.lang,
     pk: pkMode(),
-    yt: isYT(host) ? { clean: ytCleanAttrs(), cleanCss: FEAT.YT_CLEAN_CSS, sponsor: d.sponsorBlock !== false ? (d.sbCats || []) : [], ambient: d.ambient !== false } : null,
+    yt: isYT(host) ? { clean: ytCleanAttrs(), cleanCss: FEAT.YT_CLEAN_CSS, sponsor: d.sponsorBlock !== false ? (d.sbCats || []) : [], ambient: d.ambient !== false,
+      maxQuality: d.ytMaxQuality !== false, dislikes: d.ytDislikes !== false } : null,
     twitch: isTwitch(host) && adsOn && d.twitchAds !== false && !d.adAllow.includes('twitch.tv')
   };
 }
@@ -1805,6 +1806,7 @@ function setupSiteIpc() {
     e.returnValue = ok ? FEAT.code(name) : '';
   });
   ipcMain.handle('site:ambientMain', e => (isYT(senderHost(e)) ? FEAT.code('ambientMain') : ''));
+  ipcMain.handle('ryd:get', (e, id) => (isYT(senderHost(e)) && settings.data.ytDislikes !== false ? FEAT.rydVotes(id) : null));
   ipcMain.handle('sb:get', (e, id) => (isYT(senderHost(e)) && settings.data.sponsorBlock !== false ? FEAT.sbSegments(id, settings.data.sbCats) : []));
   // chrome.storage.local for ambient light
   const amb = () => ambientStore || (ambientStore = makeStore('ambient-light.json', {}));
@@ -1997,6 +1999,8 @@ function setupIpc() {
     if (key === 'sponsorBlock') settings.data.sponsorBlock = !!val;
     if (key === 'sbCats' && Array.isArray(val)) settings.data.sbCats = val.filter(c => FEAT.SB_CATS.includes(c));
     if (key === 'ambient') settings.data.ambient = !!val;
+    if (key === 'ytMaxQuality') settings.data.ytMaxQuality = !!val;
+    if (key === 'ytDislikes') settings.data.ytDislikes = !!val;
     if (key === 'twitchAds') settings.data.twitchAds = !!val;
     if (key === 'ytClean' && val && typeof val === 'object') { const o = {}; for (const k of Object.keys(FEAT.YT_CLEAN)) if (val[k]) o[k] = true; settings.data.ytClean = o; pushSiteCfg(); }
     if (key === 'lang' && (val === 'ar' || val === 'en')) settings.data.lang = val;
@@ -2181,7 +2185,7 @@ function setupSettingsIpc() {
       memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, darkPages: d.darkPages !== false, darkPagesActive: DARK_PAGES, siteFont: !!d.siteFont, restoreTabs: !!d.restoreTabs,
       adblock: d.adblock !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
-      sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytClean: d.ytClean || {},
+      sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytMaxQuality: d.ytMaxQuality !== false, ytDislikes: d.ytDislikes !== false, ytClean: d.ytClean || {},
       passkeys: !!d.passkeys, dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,
       perms: perms ? perms.all() : [],
       extensions: listExtensions(), versions: { app: app.getVersion(), chrome: process.versions.chrome }

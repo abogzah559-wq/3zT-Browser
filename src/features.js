@@ -64,6 +64,22 @@ async function sbSegments(id, cats) {
   return v;
 }
 
+/* ---------- Return YouTube Dislike: the dislike count (public API of returnyoutubedislike.com) ---------- */
+const rydCache = new Map();
+async function rydVotes(id) {
+  if (!/^[\w-]{11}$/.test(id || '')) return null;
+  if (process.env.ZEUS_RYD_TEST) { try { return JSON.parse(process.env.ZEUS_RYD_TEST); } catch (e) { return null; } }   // offline testing
+  const hit = rydCache.get(id); if (hit && Date.now() - hit.t < 10 * 60000) return hit.v;
+  let v = null;
+  try {
+    const r = await net.fetch(`https://returnyoutubedislikeapi.com/votes?videoId=${id}`, { headers: { accept: 'application/json' } });
+    if (r.ok) { const j = await r.json(); if (j && Number.isFinite(+j.dislikes)) v = { dislikes: +j.dislikes, likes: +j.likes || 0 }; }
+  } catch (e) { return null; }
+  rydCache.set(id, { t: Date.now(), v });
+  if (rydCache.size > 300) rydCache.delete(rydCache.keys().next().value);
+  return v;
+}
+
 /* ---------- Clean YouTube: switches -> attributes on <html>, CSS does the hiding ---------- */
 // id: [html attributes it turns on]
 const YT_CLEAN = {
@@ -93,4 +109,4 @@ function cleanFromExtension(store) {
   return out;
 }
 
-module.exports = { code, serve, sbSegments, SB_CATS, YT_CLEAN, YT_CLEAN_CSS, cleanFromExtension, AMBIENT };
+module.exports = { code, serve, sbSegments, rydVotes, SB_CATS, YT_CLEAN, YT_CLEAN_CSS, cleanFromExtension, AMBIENT };
