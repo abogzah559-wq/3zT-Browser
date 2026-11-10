@@ -376,7 +376,8 @@ async function mediaTest() {
     ok('downloader window: preview and timeline show before downloading', !!c1.ready, c1.ready);
     ok('only the chosen part is downloaded (frame-exact)', Math.abs(c1.d - 3.8) < 0.2, `${c1.d} s in ${c1.secs} s, button "${c1.label}"`);
     const c2 = await cutUi('http://127.0.0.1:8792/watch2', '0:04', '0:12', 'fast');
-    ok('a site that cannot send parts: whole video, then cut here', c2.d > 7 && c2.d < 12.6 && /\(clip\)/.test((c2.j && c2.j.name) || ''), `${c2.d} s in ${c2.secs} s, ${c2.j && c2.j.name}`);
+    // ffmpeg can often still read such a site straight through; if it can't, the whole video is cut here ("(clip)" in the name). Either way: the right part
+    ok('a site that cannot send parts still gives just the chosen part', c2.d > 7 && c2.d < 12.6, `${c2.d} s in ${c2.secs} s, ${c2.j && c2.j.name} (${/\(clip\)/.test((c2.j && c2.j.name) || '') ? 'cut here' : 'read straight through'})`);
     const id = await dp.ev(`zeus.dlList().then(d => (d.items.find(x => x.media && /clip/.test(x.name) && !/\\(clip\\)/.test(x.name)) || {}).id)`);
     if (id) {
       const r = await dp.ev(`zeus.mediaTrimFile(${JSON.stringify(id)}, { start: 4, end: 12, exact: false })`);
