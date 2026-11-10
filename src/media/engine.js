@@ -278,6 +278,7 @@ class MediaEngine {
     const job = this.newJob('video', url, { mode: mode === 'audio' ? 'audio' : 'video', trim: !!trim && mode !== 'audio', stage: 'tools', partition: partition || null, winId });
     const cut = isFinite(+start) && isFinite(+end) && +end - +start > 0.2 ? { s: Math.max(0, +start), e: +end } : null;
     const cached = this.infoFile(infoId, url);
+    const known = infoId && this.infos.get(String(infoId));
     this.changed(job);
     try { await this.ensureTools(); } catch (e) { job.state = 'error'; job.error = 'tools: ' + e.message; this.changed(job); return this.public(job); }
     if (job.state === 'cancelled') return this.public(job);
@@ -292,7 +293,7 @@ class MediaEngine {
     if (this.o.jsRuntime) args.push('--js-runtimes', 'node:' + this.o.jsRuntime);
     if (job.mode === 'audio') args.push('-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0');
     else args.push('-S', (q === 'best' || !QUALITIES.includes(q) ? 'res' : 'res:' + q) + ',vcodec:h264,acodec:m4a', '--merge-output-format', 'mp4');
-    if (cut) job.cut = { s: cut.s, e: cut.e, exact: !!exact };
+    if (cut) job.cut = { s: cut.s, e: cut.e, exact: !!exact, full: (known && known.url === url && known.dur) || 0 };
     /* the ways to get it, best first. A way that fails (or gives a file without the picture, or not cut) hands over
        to the next one, so a cut is never saved uncut and a video never saved as sound only:
          1. the preview's details (starts at once) + only the part
@@ -374,7 +375,11 @@ class MediaEngine {
     }
     const want = job.cut ? job.cut.e - job.cut.s : 0;
     // a "fast" cut may start at the key frame before your start: a few seconds longer is fine, the whole video is not
-    const needCut = !!job.cut && (!t.part || (m.ok && m.dur > want + Math.max(8, want * 0.25)));
+    const tooLong = !!job.cut && t.part && m.ok && m.dur > want + Math.max(8, want * 0.25);
+    // longer than asked: the whole video (cut it here) or a part with its own timeline (local times would be wrong: next way)
+    const whole = tooLong && (job.cut.full > 0 ? m.dur > job.cut.full - Math.max(2, job.cut.full * 0.03) : m.dur >= job.cut.e - 1);
+    if (tooLong && !whole && job.tries.length) return this.nextTry(job, p);
+    const needCut = !!job.cut && (!t.part || whole);
     const needConvert = job.mode === 'video' && m.ok && /^(hevc|h265)$/i.test(m.video || '');
     if (job.cut && !needCut && t.part) this.log('part ok', m.dur);
     let file = src;
@@ -388,7 +393,12 @@ class MediaEngine {
       const tmp = path.join(job.dir, 'out-3zt' + ext);
       job.stage = needCut ? 'trimming' : 'converting'; job.pct = 0; this.changed(job);
       const s0 = needCut ? job.cut.s : 0, e0 = needCut ? job.cut.e : (m.dur || 1e7);
-      await this.trimFile(src, s0, e0, needConvert || (needCut && job.cut.exact), tmp, pc => { job.pct = pc; this.changed(job); }, job);
+      try { await this.trimFile(src, s0, e0, needConvert || (needCut && job.cut.exact), tmp, pc => { job.pct = pc; this.changed(job); }, job); }
+      catch (e) {
+        job.proc = null;
+        if (job.state === 'running' && job.tries.length) { job.lastErr = 'trim: ' + (e.message || e); return this.nextTry(job, p); }
+        throw e;
+      }
       job.proc = null;
       if (job.state !== 'running') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
       file = tmp;
@@ -467,12 +477,19 @@ class MediaEngine {
       pr.on('error', e => done({ error: e.message }));
       pr.on('close', () => {
         let j = null; try { j = JSON.parse(out); } catch (e) {}
+        // the window was closed (or another link asked) meanwhile: nothing is kept
+        if (key != null && this.infoProcs.get(key) !== pr) { fs.rm(dir, { recursive: true, force: true }, () => {}); return done({ error: 'cancelled' }); }
         if (!j) { fs.rm(dir, { recursive: true, force: true }, () => {}); return done({ error: this.cleanErr(err) || 'no-info' }); }
         // kept for the download (--load-info-json) for a few minutes
         const infoId = crypto.randomBytes(6).toString('hex');
         // kept as the tool wrote it: some sites (TikTok) only send the video with the cookies of the moment the page
         // was read. Readable by this user only, deleted after 10 minutes, when the window closes, or at the next start after a crash
-        try { fs.writeFileSync(path.join(dir, 'info.json'), out, { mode: 0o600 }); this.infos.set(infoId, { file: path.join(dir, 'info.json'), dir, url, t: Date.now(), key }); } catch (e) {}
+        try {
+          fs.writeFileSync(path.join(dir, 'info.json'), out, { mode: 0o600 });
+          this.infos.set(infoId, { file: path.join(dir, 'info.json'), dir, url, t: Date.now(), key, dur: +j.duration || 0 });
+          const gone = setTimeout(() => { const x = this.infos.get(infoId); if (x) { this.infos.delete(infoId); fs.rm(x.dir, { recursive: true, force: true }, () => {}); } }, 10 * 60000);
+          if (gone.unref) gone.unref();
+        } catch (e) {}
         this.pruneInfos();
         // a light stream for the preview player: one file with picture and sound, plain http(s), 480p or less
         const fm = (j.formats || []).filter(f => f.url && /^https?$/.test(f.protocol || '') && f.vcodec !== 'none' && f.acodec !== 'none' && (f.vcodec || f.acodec || /^(mp4|webm|m4v|mov)$/.test(f.ext || '')) && !/dash|m3u8/.test(f.protocol || ''));

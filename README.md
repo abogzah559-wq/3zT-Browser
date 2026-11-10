@@ -113,7 +113,8 @@ delete it.
 - YouTube and Twitch video ads are blocked.
 - **Cookie popups:** consent dialogs are answered with "reject" / "necessary only" by DuckDuckGo's
   Autoconsent rules, the same way a person would click them, so pages are not left locked behind a
-  hidden overlay. Sites excluded from the ad blocker are left untouched.
+  hidden overlay. The rules are loaded only on pages that show signs of a consent manager. Sites excluded
+  from the ad blocker are left untouched.
 - **Passkeys are off by default** (*Settings → Ads & privacy*). Sites cannot open the Windows Security
   ("insert your security key") dialog on their own, including through embedded frames or blank frames
   created by the page. A security key used as a second sign-in step still works after a click. When

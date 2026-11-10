@@ -88,7 +88,10 @@ function drawCut() {
   if (!show) { $('cutModes').hidden = true; return; }
   const e = end();
   $('tsT').textContent = fmt(cut.s); $('teT').textContent = fmt(e);
-  $('ts').value = Math.round(cut.s / d * 1000); $('te').value = Math.round(e / d * 1000);
+  // the handles move in tenths of a second, whatever the length (arrow keys: 0.1 s, with Shift: 1 s)
+  const max = String(Math.max(1, Math.round(d * 10)));
+  if ($('ts').max !== max) { $('ts').max = max; $('te').max = max; }
+  $('ts').value = Math.round(cut.s * 10); $('te').value = Math.round(e * 10);
   $('tr').style.insetInlineStart = (cut.s / d * 100) + '%';
   $('tr').style.width = Math.max(0, (e - cut.s) / d * 100) + '%';
   const whole = isWhole();
@@ -252,8 +255,14 @@ pv.addEventListener('timeupdate', () => {
 
 /* ---------- the timeline ---------- */
 const MIN = 0.3;
-$('ts').addEventListener('input', () => { const d = dur(); if (!d) return; cut.s = Math.min(+$('ts').value / 1000 * d, end() - MIN); if (cut.s < 0) cut.s = 0; seekTo(cut.s); draw(); });
-$('te').addEventListener('input', () => { const d = dur(); if (!d) return; cut.e = Math.min(d, Math.max(+$('te').value / 1000 * d, cut.s + MIN)); seekTo(cut.e); draw(); });
+$('ts').addEventListener('input', () => { const d = dur(); if (!d) return; cut.s = Math.min(+$('ts').value / 10, end() - MIN); if (cut.s < 0) cut.s = 0; seekTo(cut.s); draw(); });
+$('te').addEventListener('input', () => { const d = dur(); if (!d) return; cut.e = Math.min(d, Math.max(+$('te').value / 10, cut.s + MIN)); seekTo(cut.e); draw(); });
+for (const id of ['ts', 'te']) $(id).addEventListener('keydown', e => {
+  if (!e.shiftKey || !/^Arrow(Left|Right|Up|Down)$/.test(e.key)) return;
+  e.preventDefault();
+  const el = $(id); el.value = String(Math.max(0, Math.min(+el.max, +el.value + (/Right|Up/.test(e.key) ? 10 : -10))));
+  el.dispatchEvent(new Event('input'));
+});
 function seekTo(t) { if (!pv.hidden && pv.getAttribute('src') && pv.readyState > 0) { pv.pause(); pv.currentTime = t; } }
 $('cutFull').onclick = () => { cut = { s: 0, e: 0 }; draw(); };
 $('mq').onchange = draw;
