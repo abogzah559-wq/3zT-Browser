@@ -18,6 +18,17 @@ const isWin = process.platform === 'win32';
 const exe = n => n + (isWin ? '.exe' : '');
 const QUALITIES = ['best', '2160', '1440', '1080', '720', '480', '360'];
 const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+const clock = t => { t = Math.round(t); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60; return (h ? h + 'h' : '') + (h || m ? m + 'm' : '') + s + 's'; };
+/* what the site wants with its video file (TikTok: its own page as Referer and the cookies of the moment the page was read) */
+const COOKIE_ATTR = /^(domain|path|expires|max-age|secure|httponly|samesite|priority|partitioned)$/i;
+function previewHeaders(f) {
+  const h = {}, src = f.http_headers || {};
+  if (src.Referer) h.Referer = src.Referer;
+  if (src['User-Agent']) h['User-Agent'] = src['User-Agent'];
+  const c = String(f.cookies || '').split(/;\s*/).map(x => x.split('=')).filter(([k, v]) => k && v != null && !COOKIE_ATTR.test(k.trim())).map(([k, ...v]) => k.trim() + '=' + v.join('='));
+  if (c.length) h.Cookie = c.join('; ');
+  return h.Referer || h.Cookie ? h : null;
+}
 const IMG = /\.(jpe?g|png|webp|gif|avif|bmp)$/i, VID = /\.(mp4|webm|mov|m4v|mkv)$/i, AUD = /\.(mp3|m4a|aac|ogg|opus|wav)$/i;
 const MAX_JOBS = 3, MAX_IMAGES = 300;
 // UTF-8 everywhere so Arabic titles and file names come through intact
@@ -282,29 +293,38 @@ class MediaEngine {
     if (job.mode === 'audio') args.push('-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0');
     else args.push('-S', (q === 'best' || !QUALITIES.includes(q) ? 'res' : 'res:' + q) + ',vcodec:h264,acodec:m4a', '--merge-output-format', 'mp4');
     if (cut) job.cut = { s: cut.s, e: cut.e, exact: !!exact };
-    if (cached) args.push('--load-info-json', cached);    // the page was already read for the preview: start right away
-    else args.push('--', url);
-    this.launchVideo(job, p, args, !!cut);
+    /* the ways to get it, best first. A way that fails (or gives a file without the picture, or not cut) hands over
+       to the next one, so a cut is never saved uncut and a video never saved as sound only:
+         1. the preview's details (starts at once) + only the part
+         2. the page read again (fresh links and cookies) + only the part
+         3. the whole video, cut here afterwards */
+    job.tries = [];
+    if (cut) { if (cached) job.tries.push({ info: cached, part: true }); job.tries.push({ part: true }); job.tries.push({ part: false }); }
+    else { if (cached) job.tries.push({ info: cached }); job.tries.push({}); }
+    job.base = args;
+    this.nextTry(job, p);
     return this.public(job);
   }
-  /* sections: download only job.cut. If the site doesn't allow that (no seeking), it runs once more for the whole video
-     and the part is cut here afterwards, so the result is the same, only slower. */
-  launchVideo(job, p, base, sections) {
-    const args = base.slice();
-    if (sections) {
-      const ex = ['--download-sections', `*${job.cut.s.toFixed(2)}-${job.cut.e.toFixed(2)}`];
-      if (job.cut.exact) ex.push('--force-keyframes-at-cuts');   // the edges are encoded again so the cut is on the exact frame
-      const at = args.indexOf('--load-info-json') >= 0 ? args.indexOf('--load-info-json') : args.indexOf('--');
-      args.splice(at, 0, ...ex);
+  nextTry(job, p) {
+    const t = job.tries.shift();
+    if (!t) { job.state = 'error'; job.error = job.lastErr || 'failed'; fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
+    // what an earlier try left behind goes (the cookies file stays for the next try)
+    try { for (const f of fs.readdirSync(job.dir)) if (f !== 'cookies.txt') fs.rmSync(path.join(job.dir, f), { recursive: true, force: true }); } catch (e) {}
+    job.pct = 0; job.raw = null; job.stage = 'preparing'; this.changed(job);
+    const args = job.base.slice();
+    if (t.part) {
+      args.push('--download-sections', `*${job.cut.s.toFixed(2)}-${job.cut.e.toFixed(2)}`);
+      if (job.cut.exact) args.push('--force-keyframes-at-cuts');   // the edges are encoded again so the cut is on the exact frame
     }
-    this.log('yt-dlp', job.url, job.mode, sections ? 'part' : '');
+    if (t.info && fs.existsSync(t.info)) args.push('--load-info-json', t.info); else args.push('--', job.url);
+    this.log('yt-dlp', job.url, job.mode, t.part ? 'part' : '', t.info ? 'cached' : '');
     const pr = job.proc = this.run(p.ytdlp, args, this.o.jsRuntime ? { ...ENV, ELECTRON_RUN_AS_NODE: '1' } : ENV);
     let err = '', final = '', part = 0, last = 0;
     const onLine = l => {
       if (l.startsWith('3ZTP ')) {
-        const [, a, b] = l.split(' '); const d = +a, t = +b;
-        if (t > 0) {
-          const pc = Math.min(100, (d / t) * 100);
+        const [, a, b] = l.split(' '); const d = +a, tt = +b;
+        if (tt > 0) {
+          const pc = Math.min(100, (d / tt) * 100);
           if (job.raw != null && pc + 20 < job.raw) part++;   // the next file (the audio after the video) started
           job.raw = pc;
           // one bar for the whole job: the picture is most of it, the sound the last bit
@@ -319,64 +339,89 @@ class MediaEngine {
     };
     this.lines(pr.stdout, onLine);
     this.lines(pr.stderr, l => { onLine(l); if (!l.startsWith('3ZT')) err = (err + '\n' + l).slice(-1500); });
-    pr.on('error', e => { job.state = 'error'; job.error = 'yt-dlp: ' + e.message; this.changed(job); });
-    pr.on('close', code => {
+    let ended = false;
+    const end = (code, why) => {
+      if (ended) return; ended = true;
+      if (why) job.lastErr = why;
       job.proc = null;
-      if (job.state === 'error' || job.state === 'cancelled') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
+      if (job.state !== 'running') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
       let src = final && fs.existsSync(final) ? final : null;
       if (!src) {
-        const files = fs.readdirSync(job.dir).filter(f => !/\.(part|ytdl|temp|tmp|txt)$/i.test(f) && !/\.f\d+\./.test(f));
+        const files = fs.readdirSync(job.dir).filter(f => !/\.(part|ytdl|temp|tmp|txt|json)$/i.test(f) && !/\.f\d+\./.test(f));
         files.sort((a, b) => fs.statSync(path.join(job.dir, b)).size - fs.statSync(path.join(job.dir, a)).size);
         if (files[0]) src = path.join(job.dir, files[0]);
       }
-      if (code === 0 && src && sections && !job.checked) {
-        // some sites can't be cut while downloading and ffmpeg still ends "fine" with an empty file: check it
-        job.checked = true;
-        return this.mediaLength(src).then(d => {
-          if (job.state !== 'running') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
-          if (d > 0.2) finish(code, src); else retryWhole();
-        });
-      }
-      finish(code, src);
-    });
-    const retryWhole = () => {
-      // the part alone didn't work here: the whole video, then the cut
-      try { for (const f of fs.readdirSync(job.dir)) if (f !== 'cookies.txt') fs.rmSync(path.join(job.dir, f), { recursive: true, force: true }); } catch (e) {}
-      job.trim = true; job.autoCut = true; job.pct = 0; job.raw = null; job.stage = 'preparing'; this.changed(job);
-      this.launchVideo(job, p, base, false);
+      if (code !== 0 || !src) { job.lastErr = this.cleanErr(err) || job.lastErr || 'failed'; return this.nextTry(job, p); }
+      this.afterDownload(job, p, src, t).catch(e => {
+        fs.rm(job.dir, { recursive: true, force: true }, () => {});
+        if (job.state === 'running') { job.state = 'error'; job.error = String(e.message || e); }
+        this.changed(job);
+      });
     };
-    const finish = (code, src) => {
-      const retry = sections && code !== 0 && job.state === 'running';
-      if (!retry) try { fs.rmSync(path.join(job.dir, 'cookies.txt'), { force: true }); } catch (e) {}   // kept only for the second try
-      if (code === 0 && src) {
-        job.pct = 100; job.name = path.basename(src);
-        if ((job.trim && VID.test(src)) || (job.autoCut && AUD.test(src))) { job.state = 'trim'; job.temp = src; }   // waits in the temp folder until you pick the part to keep
-        else {
-          try { job.file = this.moveFile(src, this.outDir(), job.name); job.name = path.basename(job.file); job.state = 'done'; }
-          catch (e) { job.state = 'error'; job.error = 'save: ' + e.message; }
-          fs.rm(job.dir, { recursive: true, force: true }, () => {});
-        }
-      } else if (retry) return retryWhole();
-      else { job.state = 'error'; job.error = this.cleanErr(err) || 'failed'; fs.rm(job.dir, { recursive: true, force: true }, () => {}); }
-      this.changed(job);
-      if (job.state === 'trim' && job.autoCut) this.finishTrim(job.id, { start: job.cut.s, end: job.cut.e, exact: job.cut.exact }).catch(e => { job.state = 'error'; job.error = 'trim: ' + (e.message || e); fs.rm(job.dir, { recursive: true, force: true }, () => {}); this.changed(job); });
-    };
+    pr.on('error', e => end(1, 'yt-dlp: ' + e.message));
+    pr.on('close', code => end(code));
   }
-  /* how long a media file plays (0 if it has no picture or sound): read from ffmpeg's own report */
-  mediaLength(f) {
+  /* the file is checked before it is called done: it has a picture (video), it is the part you chose (cut),
+     and it plays everywhere (HEVC, which Windows can't play without a paid add-on, becomes H.264) */
+  async afterDownload(job, p, src, t) {
+    const m = await this.probeMedia(src);
+    if (job.state !== 'running') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
+    const empty = m.ok && (m.dur <= 0.2 || (job.mode === 'video' ? !m.video : !(m.audio || m.video)));
+    if (empty) {
+      job.lastErr = job.mode === 'video' && m.ok && !m.video ? 'no-picture' : 'empty';
+      if (job.tries.length) return this.nextTry(job, p);
+      throw new Error(job.lastErr);
+    }
+    const want = job.cut ? job.cut.e - job.cut.s : 0;
+    // a "fast" cut may start at the key frame before your start: a few seconds longer is fine, the whole video is not
+    const needCut = !!job.cut && (!t.part || (m.ok && m.dur > want + Math.max(8, want * 0.25)));
+    const needConvert = job.mode === 'video' && m.ok && /^(hevc|h265)$/i.test(m.video || '');
+    if (job.cut && !needCut && t.part) this.log('part ok', m.dur);
+    let file = src;
+    if (job.trim && !job.cut && VID.test(src)) {   // the old "trim after download" flow: waits for the part to keep
+      job.pct = 100; job.name = path.basename(src); job.state = 'trim'; job.temp = src;
+      try { fs.rmSync(path.join(job.dir, 'cookies.txt'), { force: true }); } catch (e) {}
+      return this.changed(job);
+    }
+    if (needCut || needConvert) {
+      const ext = job.mode === 'video' ? '.mp4' : path.extname(src);
+      const tmp = path.join(job.dir, 'out-3zt' + ext);
+      job.stage = needCut ? 'trimming' : 'converting'; job.pct = 0; this.changed(job);
+      const s0 = needCut ? job.cut.s : 0, e0 = needCut ? job.cut.e : (m.dur || 1e7);
+      await this.trimFile(src, s0, e0, needConvert || (needCut && job.cut.exact), tmp, pc => { job.pct = pc; this.changed(job); }, job);
+      job.proc = null;
+      if (job.state !== 'running') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
+      file = tmp;
+    }
+    // the name says it is a part: "Title [id] (1m57s-2m33s).mp4"
+    let name = path.basename(src, path.extname(src));
+    if (job.cut) name += ` (${clock(job.cut.s)}-${clock(job.cut.e)})`;
+    name += path.extname(file);
+    try { fs.rmSync(path.join(job.dir, 'cookies.txt'), { force: true }); } catch (e) {}
+    job.file = this.moveFile(file, this.outDir(), name); job.name = path.basename(job.file);
+    job.state = 'done'; job.stage = ''; job.pct = 100; job.error = '';
+    fs.rm(job.dir, { recursive: true, force: true }, () => {});
+    this.changed(job);
+  }
+  /* what a media file holds, from ffmpeg's own report: { ok, dur, video: codec or null, audio } */
+  probeMedia(f) {
     return new Promise(res => {
       let out = '';
-      let pr; try { pr = this.run(path.join(this.paths().ffmpegDir, exe('ffmpeg')), ['-hide_banner', '-i', f], ENV); } catch (e) { return res(1); }
+      let pr; try { pr = this.run(path.join(this.paths().ffmpegDir, exe('ffmpeg')), ['-hide_banner', '-i', f], ENV); } catch (e) { return res({ ok: false }); }
       const t = setTimeout(() => this.killTree(pr), 15000);
-      pr.stderr.setEncoding('utf8'); pr.stderr.on('data', d => { if (out.length < 20000) out += d; });
-      pr.on('error', () => { clearTimeout(t); res(1); });   // can't check: trust the download
+      pr.stderr.setEncoding('utf8'); pr.stderr.on('data', d => { if (out.length < 40000) out += d; });
+      pr.on('error', () => { clearTimeout(t); res({ ok: false }); });   // can't check: trust the download
       pr.on('close', () => {
         clearTimeout(t);
-        const m = /Duration: (\d+):(\d+):([\d.]+)/.exec(out);
-        res(m && /Stream #.*(Video|Audio)/.test(out) ? +m[1] * 3600 + +m[2] * 60 + +m[3] : 0);
+        const d = /Duration: (\d+):(\d+):([\d.]+)/.exec(out);
+        // a cover picture inside a sound file is not a video
+        const vl = out.split(/\r?\n/).find(l => /Stream #.*: Video: /.test(l) && !/attached pic/.test(l));
+        const v = vl && /: Video: (\w+)/.exec(vl);
+        res({ ok: true, dur: d ? +d[1] * 3600 + +d[2] * 60 + +d[3] : 0, video: v ? v[1] : null, audio: /Stream #.*: Audio:/.test(out) });
       });
     });
   }
+
 
   /* ---------- the preview's details, reused by the download ---------- */
   infoFile(id, url) {
@@ -425,10 +470,9 @@ class MediaEngine {
         if (!j) { fs.rm(dir, { recursive: true, force: true }, () => {}); return done({ error: this.cleanErr(err) || 'no-info' }); }
         // kept for the download (--load-info-json) for a few minutes
         const infoId = crypto.randomBytes(6).toString('hex');
-        // the site's cookies stay out of the saved copy (the download gets them again, in its own short-lived file)
-        const strip = o => { if (!o || typeof o !== 'object') return; delete o.cookies; if (o.http_headers) for (const h of Object.keys(o.http_headers)) if (/^cookie$/i.test(h)) delete o.http_headers[h]; };
-        strip(j); for (const f of [...(j.formats || []), ...(j.requested_formats || []), ...(j.requested_downloads || [])]) strip(f);
-        try { fs.writeFileSync(path.join(dir, 'info.json'), JSON.stringify(j), { mode: 0o600 }); this.infos.set(infoId, { file: path.join(dir, 'info.json'), dir, url, t: Date.now(), key }); } catch (e) {}
+        // kept as the tool wrote it: some sites (TikTok) only send the video with the cookies of the moment the page
+        // was read. Readable by this user only, deleted after 10 minutes, when the window closes, or at the next start after a crash
+        try { fs.writeFileSync(path.join(dir, 'info.json'), out, { mode: 0o600 }); this.infos.set(infoId, { file: path.join(dir, 'info.json'), dir, url, t: Date.now(), key }); } catch (e) {}
         this.pruneInfos();
         // a light stream for the preview player: one file with picture and sound, plain http(s), 480p or less
         const fm = (j.formats || []).filter(f => f.url && /^https?$/.test(f.protocol || '') && f.vcodec !== 'none' && f.acodec !== 'none' && (f.vcodec || f.acodec || /^(mp4|webm|m4v|mov)$/.test(f.ext || '')) && !/dash|m3u8/.test(f.protocol || ''));
@@ -439,7 +483,7 @@ class MediaEngine {
           uploader: j.uploader || j.channel || '', site: j.extractor_key || j.extractor || '', url: j.webpage_url || url,
           heights: [...new Set((j.formats || []).map(f => f.height).filter(Boolean))].sort((a, b) => b - a).slice(0, 8),
           photos: !(j.formats || []).some(f => f.vcodec && f.vcodec !== 'none') && !j.duration,
-          infoId, preview: pv ? pv.url : '' });
+          infoId, preview: pv ? pv.url : '', previewHeaders: pv ? previewHeaders(pv) : null });
       });
     });
   }
