@@ -312,8 +312,14 @@ async function downloads() {
 async function mediaTest() {
   const vid = path.join(OUT, 'clip.mp4');
   const srv = http.createServer((q, r) => {
-    if (q.url.startsWith('/clip.mp4') && fs.existsSync(vid)) { const b = fs.readFileSync(vid); r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length }); return r.end(b); }
+    if (q.url.startsWith('/clip.mp4') && fs.existsSync(vid)) {
+      const b = fs.readFileSync(vid), m = /bytes=(\d+)-(\d*)/.exec(q.headers.range || '');
+      // like real sites: parts of the file on request (so only the chosen part is downloaded); ?norange = a site that can't
+      if (m && !q.url.includes('norange')) { const a = +m[1], e = m[2] ? Math.min(+m[2], b.length - 1) : b.length - 1; r.writeHead(206, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${a}-${e}/${b.length}`, 'Content-Length': e - a + 1 }); return r.end(b.subarray(a, e + 1)); }
+      r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length }); return r.end(b);
+    }
     if (q.url === '/watch') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch</title><video src="/clip.mp4" controls width=640 height=360></video>'); }
+    if (q.url === '/watch2') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch2</title><video src="/clip.mp4?norange" controls></video>'); }
     r.writeHead(404); r.end();
   }).listen(8792, '127.0.0.1');
   try {
@@ -322,7 +328,7 @@ async function mediaTest() {
     // the downloader has its own window (opened here from the downloads page; the address-bar button is tested below)
     await dp.ev('zeus.mediaWindow(), 1');
     const mp = await connect(await find('newtab/media.html', 30));
-    await poll(() => mp.ev('typeof mstart === "function"'), 15000);
+    await poll(() => mp.ev('typeof preview === "function"'), 15000);
     const job = async (o, ms = 300000) => {
       const j = await mp.ev(`zeus.mediaStart(${JSON.stringify(o)})`);
       if (!j || j.error) return j;
@@ -355,6 +361,22 @@ async function mediaTest() {
       const d = r && r.file ? probe(r.file) : 0;
       ok('frame-exact trim keeps exactly the chosen part', Math.abs(d - 3.8) < 0.15, `${d} s`);
     }
+    // the window itself: the link's preview and timeline come first, then only the chosen part is downloaded
+    const cutUi = async (page, s0, e0, how) => {
+      await mp.ev(`(murl.value = ${JSON.stringify(page)}, murl.dispatchEvent(new Event('change')), 1)`);
+      const ready = await poll(() => mp.ev('info && info.url === murl.value && !info.loading && info.duration > 0 && !document.getElementById("cut").hidden ? JSON.stringify({ d: info.duration, pv: !pvv.hidden }) : null'), 60000);
+      if (!ready) return { ready };
+      const t0 = Date.now();
+      await mp.ev(`(tsi.value = ${JSON.stringify(s0)}, tsi.dispatchEvent(new Event('change')), tei.value = ${JSON.stringify(e0)}, tei.dispatchEvent(new Event('change')), document.querySelector('input[name=cm][value=${how}]').checked = true, mgo.click(), 1)`);
+      await sleep(800);
+      const j = await poll(async () => { const x = await mp.ev(`zeus.mediaList().then(d => d.jobs.find(j => j.url === ${JSON.stringify(page)} && j.state !== 'running' && j.state !== 'trim'))`); return x || null; }, 120000, 700);
+      return { ready, j, d: j && j.file ? probe(j.file) : 0, secs: ((Date.now() - t0) / 1000).toFixed(1), label: await mp.ev('mgoT.textContent') };
+    };
+    const c1 = await cutUi('http://127.0.0.1:8792/watch', '0:05.3', '0:09.1', 'exact');
+    ok('downloader window: preview and timeline show before downloading', !!c1.ready, c1.ready);
+    ok('only the chosen part is downloaded (frame-exact)', Math.abs(c1.d - 3.8) < 0.2, `${c1.d} s in ${c1.secs} s, button "${c1.label}"`);
+    const c2 = await cutUi('http://127.0.0.1:8792/watch2', '0:04', '0:12', 'fast');
+    ok('a site that cannot send parts: whole video, then cut here', c2.d > 7 && c2.d < 12.6, `${c2.d} s in ${c2.secs} s`);
     const id = await dp.ev(`zeus.dlList().then(d => (d.items.find(x => x.media && /clip/.test(x.name) && !/\\(clip\\)/.test(x.name)) || {}).id)`);
     if (id) {
       const r = await dp.ev(`zeus.mediaTrimFile(${JSON.stringify(id)}, { start: 4, end: 12, exact: false })`);
@@ -374,7 +396,17 @@ async function mediaTest() {
     await go('https://example.com/', true); await sleep(2500);
     const none = await (async () => { const tb = await toolbar(); const v = await tb.ev('document.getElementById("mediaBtn").hidden'); tb.close(); return v; })();
     ok('…and not on a page without one', none === true);
-    mp.close(); dp.close();
+    // closing the window stops everything it started and forgets the list; it opens clean
+    const before = await mp.ev('zeus.mediaList().then(d => d.jobs.length)');
+    mp.ev('window.close(), 1').catch(() => {}); mp.close();
+    await sleep(2500);
+    const left = (() => { try { return (execSync('tasklist /NH').toString().match(/yt-dlp|gallery-dl|ffmpeg/gi) || []).length; } catch (e) { return -1; } })();
+    await dp.ev('zeus.mediaWindow(), 1');
+    const mp2 = await connect(await find('newtab/media.html', 30));
+    await poll(() => mp2.ev('typeof preview === "function"'), 15000);
+    const after = await mp2.ev('zeus.mediaList().then(d => d.jobs.length)');
+    ok('closing the downloader stops its tools and opens clean next time', before > 0 && after === 0 && left === 0, `jobs before ${before}, after ${after}, tool processes left ${left}`);
+    mp2.close(); dp.close();
   } finally { srv.close(); }
 }
 
@@ -398,6 +430,17 @@ window.probe = async () => {
 };
 // only 3zT's fix makes a frame say "no passkey autofill"; then its background request must be refused at once
 if (location.search.includes('frame')) PublicKeyCredential.isConditionalMediationAvailable().then(async a => parent.postMessage('autofill ' + a + ' background ' + await timed(navigator.credentials.get({ publicKey: pk({ allowCredentials: [] }) }), 1500), '*'));
+// Google's trick: a blank same-origin frame (and window.open / frames[n]) to get an untouched navigator.credentials.get
+window.blank = async () => {
+  const f = document.createElement('iframe'); f.style.display = 'none'; document.body.appendChild(f);
+  const w = f.contentWindow, r = {};
+  r.autofill = await w.PublicKeyCredential.isConditionalMediationAvailable().catch(e => 'err ' + e.name);
+  r.bg = await timed(w.navigator.credentials.get({ publicKey: pk({ allowCredentials: [] }) }), 1500);
+  r.src = w.Function.prototype.toString.call(w.navigator.credentials.get) + ' | ' + Function.prototype.toString.call(navigator.credentials.get);
+  document.body.appendChild(document.createElement('iframe'));
+  r.frames = await timed(window.frames[window.length - 1].navigator.credentials.get({ publicKey: pk({ allowCredentials: [] }) }), 1500);
+  return JSON.stringify(r);
+};
 // a passkey you ask for yourself (a click): must still reach Windows
 window.mine = () => { window.ac2 = new AbortController(); window.res2 = 'waiting'; navigator.credentials.get({ signal: ac2.signal, publicKey: pk({ allowCredentials: [] }) }).then(() => (res2 = 'resolved'), e => (res2 = 'rejected ' + e.name)); return 1; };
 </script>`;
@@ -421,13 +464,25 @@ async function passkeys() {
     await stop(); await start(); await sleep(3000);
     const w = await run('with fix');
     ok('sign-in pages: background passkey requests do not open the Windows Security window', w.v.conditionalAvailable === false && /^rejected NotAllowedError/.test(w.v.immediate) && /^rejected NotAllowedError/.test(w.v.background) && w.v.conditionalAfter2s === 'waiting' && /^autofill false background rejected NotAllowedError/.test(w.v.frame || '') && !w.win, JSON.stringify(w));
-    // a passkey request after a click still goes to Windows (its window opens, or the request at least is not refused at once)
-    const c = await open();
-    await c.ev('mine()', true);
-    await sleep(3000);
-    const res = await c.ev('res2'); const win = credUi();
-    await c.ev('ac2.abort(), 1'); kill(); c.close();
-    ok('a passkey you ask for (after a click) still reaches Windows', win || res === 'waiting', `window ${win}, request ${res}`);
+    // blank frames made by the page get the same (Google takes an untouched copy from one)
+    { const c = await open(); const b = JSON.parse((await c.ev('blank()')) || '{}'); const win = credUi(); kill(); c.close();
+      ok('…also from blank frames of the page (about:blank, frames[n]), and the change is not visible to toString', b.autofill === false && /^rejected NotAllowedError/.test(b.bg || '') && /^rejected NotAllowedError/.test(b.frames || '') && /^function get\(\) \{ \[native code\] \} \| function get\(\) \{ \[native code\] \}$/.test(b.src || '') && !win, JSON.stringify(b) + ' window ' + win); }
+    // passkeys are off by default: even a click gets "no passkey" (no Windows window)
+    const clicked = async () => {
+      const c = await open();
+      await c.ev('mine()', true);
+      await sleep(3000);
+      const res = await c.ev('res2'); const win = credUi();
+      await c.ev('ac2.abort(), 1'); kill(); c.close();
+      return { res, win };
+    };
+    const off = await clicked();
+    ok('passkeys off (the default): no Windows Security window even after a click', /^rejected NotAllowedError/.test(off.res || '') && !off.win, JSON.stringify(off));
+    // turned on in Settings: a passkey request after a click goes to Windows (its window opens, or the request at least is not refused at once)
+    { const tb = await toolbar(); await tb.ev(`ui.send('set', 'passkeys', true), 1`); tb.close(); await sleep(500); }
+    const on = await clicked();
+    ok('passkeys on: a passkey you ask for (after a click) still reaches Windows', on.win || on.res === 'waiting', `window ${on.win}, request ${on.res}`);
+    { const tb = await toolbar(); await tb.ev(`ui.send('set', 'passkeys', false), 1`); tb.close(); }
   } finally { srv.close(); }
 }
 

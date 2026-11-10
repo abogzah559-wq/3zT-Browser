@@ -10,49 +10,109 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 // frames inside a page (iframes) only get the passkey fix below; everything else is for the page itself
 const SUB = typeof process !== 'undefined' && process.isMainFrame === false;
-// tests only: run once without the passkey fix (set from the main process, no message needed per frame)
-const NO_PASSKEY_FIX = typeof process !== 'undefined' && Array.isArray(process.argv) && process.argv.includes('--3zt-no-passkey-fix');
 const inMainWorld = code => {
   try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
   catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
 };
-/* sign-in pages and the "Windows Security" window: see where it is used below */
-const PASSKEY_CODE = `(() => {
-    const PKC = window.PublicKeyCredential, creds = navigator.credentials;
-    if (!PKC || !creds || !creds.get) return;
-    try { Object.defineProperty(PKC, 'isConditionalMediationAvailable', { value: function isConditionalMediationAvailable() { return Promise.resolve(false); }, configurable: true, writable: true }); } catch (e) {}
-    if (PKC.getClientCapabilities) {
-      const caps = PKC.getClientCapabilities.bind(PKC);
-      try { Object.defineProperty(PKC, 'getClientCapabilities', { value: function getClientCapabilities() { return caps().then(c => Object.assign({}, c, { conditionalGet: false, passkeyPlatformAuthenticator: c && c.passkeyPlatformAuthenticator })); }, configurable: true, writable: true }); } catch (e) {}
-    }
-    const orig = creds.get.bind(creds);
-    const wrapped = function get(opts) {
-      if (opts && opts.publicKey && opts.mediation === 'conditional') {
-        return new Promise((res, rej) => {
-          const s = opts.signal;
-          if (s) { if (s.aborted) return rej(s.reason || new DOMException('The operation was aborted.', 'AbortError')); s.addEventListener('abort', () => rej(s.reason || new DOMException('The operation was aborted.', 'AbortError')), { once: true }); }
+/* sign-in pages and the "Windows Security" window: see where it is used below.
+   mode: 'off'   = passkeys are off (the default): every passkey request from a site is answered "no passkey" at once,
+                   so Windows' window never opens and the site carries on with the password
+         'on'    = passkeys allowed: only background requests are refused, anything you click still goes to Windows
+         'nofix' = tests only: nothing changed
+   ua:   Google's sign-in only: look like Firefox (Google refuses Electron browsers)
+   Everything is applied again inside blank frames and windows of the same page (about:blank, window.open), because
+   sign-in pages take an untouched copy of navigator.credentials.get from such a frame. The changed functions show
+   their original source to toString, like built-in ones. */
+const pkCode = (mode, ua) => `(() => {
+  const MODE = ${JSON.stringify(mode)}, UA = ${JSON.stringify(ua || '')};
+  const fts0 = Function.prototype.toString;
+  const src = f => { try { return fts0.call(f); } catch (e) { return 'function () { [native code] }'; } };
+  const native = new WeakMap();      // our function -> the source text of the one it replaced
+  const done = new WeakSet();
+  const same = (f, orig) => { native.set(f, src(orig)); try { Object.defineProperty(f, 'name', { value: orig.name, configurable: true }); } catch (e) {} try { Object.defineProperty(f, 'length', { value: orig.length, configurable: true }); } catch (e) {} return f; };
+  const setFn = (o, k, f) => { const d = o && Object.getOwnPropertyDescriptor(o, k); if (!d || typeof d.value !== 'function') return; try { Object.defineProperty(o, k, { value: same(f(d.value), d.value), configurable: true, writable: true, enumerable: d.enumerable }); } catch (e) {} };
+  const setGet = (o, k, f) => { const d = o && Object.getOwnPropertyDescriptor(o, k); if (!d || !d.get) return; try { Object.defineProperty(o, k, Object.assign({}, d, { get: same(f(d.get), d.get) })); } catch (e) {} };
+  const install = w => {
+    let realm;   // one per document's global (a frame that loads a new page gets a new one)
+    try { realm = w && w.document && w.Function.prototype; } catch (e) { return; }   // another site's frame: its own copy of this runs there
+    if (!realm || done.has(realm)) return;
+    done.add(realm);
+    try {
+      // toString of a changed function shows the built-in source (checked by sign-in pages)
+      const FP = w.Function.prototype, fts = FP.toString;
+      if (!native.has(fts)) {
+        const ts = function toString() { return native.has(this) ? native.get(this) : fts.call(this); };
+        native.set(ts, src(fts)); try { Object.defineProperty(ts, 'name', { value: 'toString' }); } catch (e) {}
+        try { Object.defineProperty(FP, 'toString', { value: ts, configurable: true, writable: true, enumerable: false }); } catch (e) {}
+      }
+      const DE = w.DOMException, P = w.Promise;
+      const no = () => P.reject(new DE('The operation either timed out or was not allowed.', 'NotAllowedError'));
+      if (UA) {
+        const N = w.Navigator.prototype;
+        const val = { userAgent: UA, appVersion: UA.slice(8), vendor: '', userAgentData: undefined, platform: UA.includes('Windows') ? 'Win32' : 'Linux x86_64', oscpu: UA.includes('Windows') ? 'Windows NT 10.0; Win64; x64' : 'Linux x86_64' };
+        for (const k of Object.keys(val)) {
+          const d = Object.getOwnPropertyDescriptor(N, k);
+          if (d && d.get) setGet(N, k, () => function () { return val[k]; });
+          else { const g = function () { return val[k]; }; native.set(g, 'function get ' + k + '() { [native code] }'); try { Object.defineProperty(N, k, { get: g, configurable: true, enumerable: true }); } catch (e) {} }
+        }
+        try { delete w.chrome; } catch (e) {}
+        // Chrome's passkeys live inside Chrome and aren't reachable here: straight to the password
+        try { Object.defineProperty(w, 'PublicKeyCredential', { value: undefined, configurable: true, writable: true }); } catch (e) {}
+      }
+      if (MODE !== 'nofix') {
+        const CC = w.CredentialsContainer && w.CredentialsContainer.prototype;
+        setFn(CC, 'get', orig => function get(opts) {
+          if (opts && opts.publicKey) {
+            const ac = w.navigator.userActivation, youAsked = !!(ac && ac.isActive);
+            if (opts.mediation === 'conditional') {
+              // the background "passkey autofill" request: waits forever (no list to show), like Chrome when you pick nothing
+              return new P((res, rej) => { const s = opts.signal; if (s) { if (s.aborted) return rej(s.reason || new DE('The operation was aborted.', 'AbortError')); s.addEventListener('abort', () => rej(s.reason || new DE('The operation was aborted.', 'AbortError')), { once: true }); } });
+            }
+            if (MODE === 'off' || UA || opts.mediation === 'immediate') return no();
+            // passkeys on: a request for "any passkey" (no account named) that you didn't ask for (no click or key just before)
+            // is answered as if you pressed Cancel; a named account, or anything you click, still goes to Windows
+            const named = Array.isArray(opts.publicKey.allowCredentials) && opts.publicKey.allowCredentials.length > 0;
+            if (!named && !youAsked) return no();
+          }
+          return orig.apply(this, arguments);
         });
+        const PKC = w.PublicKeyCredential;
+        if (PKC) {
+          setFn(PKC, 'isConditionalMediationAvailable', () => function isConditionalMediationAvailable() { return P.resolve(false); });
+          if (MODE === 'off') setFn(PKC, 'isUserVerifyingPlatformAuthenticatorAvailable', () => function isUserVerifyingPlatformAuthenticatorAvailable() { return P.resolve(false); });
+          setFn(PKC, 'getClientCapabilities', orig => function getClientCapabilities() {
+            return orig.apply(this, arguments).then(c => { const o = Object.assign({}, c, { conditionalGet: false }); if (MODE === 'off') { o.passkeyPlatformAuthenticator = false; o.userVerifyingPlatformAuthenticator = false; o.hybridTransport = false; } return o; });
+          });
+        }
       }
-      if (opts && opts.publicKey) {
-        // "immediate": the site only wants a passkey if one is ready without asking; say there is none (it carries on with the password)
-        if (opts.mediation === 'immediate') return Promise.reject(new DOMException('No passkey is available.', 'NotAllowedError'));
-        // a request for "any passkey" (no account named) that you did not ask for (no click or key press just before):
-        // answered as if you pressed Cancel, so no Windows window opens by itself; the site falls back to its normal sign-in.
-        // Requests for a named account, and anything you click, still go to Windows.
-        const named = Array.isArray(opts.publicKey.allowCredentials) && opts.publicKey.allowCredentials.length > 0;
-        const youAsked = !!(navigator.userActivation && navigator.userActivation.isActive);
-        if (!named && !youAsked) return Promise.reject(new DOMException('The operation either timed out or was not allowed.', 'NotAllowedError'));
-      }
-      return orig(opts);
-    };
-    try { Object.defineProperty(Object.getPrototypeOf(creds), 'get', { value: wrapped, configurable: true, writable: true }); } catch (e) {}
-  })();`;
+      // frames and windows made by this page get the same, the moment the page can reach them
+      const kids = () => { try { for (let i = 0; i < w.length; i++) install(w[i]); } catch (e) {} };
+      const viaWin = g => function () { const r = g.apply(this, arguments); try { install(r); } catch (e) {} return r; };
+      const viaDoc = g => function () { const r = g.apply(this, arguments); try { if (r) install(r.defaultView); } catch (e) {} return r; };
+      for (const C of [w.HTMLIFrameElement, w.HTMLFrameElement, w.HTMLObjectElement, w.HTMLEmbedElement]) if (C) { setGet(C.prototype, 'contentWindow', viaWin); setGet(C.prototype, 'contentDocument', viaDoc); if (C.prototype.getSVGDocument) setFn(C.prototype, 'getSVGDocument', viaDoc); }
+      setFn(w, 'open', viaWin);
+      // window[0] / frames[0]: there is no hook for those, so after anything is added to the page the new frames are covered
+      let n = 0;
+      const after = f => function () { const r = f.apply(this, arguments); if (w.length !== n) { n = w.length; kids(); } return r; };
+      const NP = w.Node.prototype, EP = w.Element.prototype, DP = w.Document.prototype;
+      for (const k of ['appendChild', 'insertBefore', 'replaceChild']) setFn(NP, k, after);
+      for (const k of ['append', 'prepend', 'after', 'before', 'replaceWith', 'replaceChildren', 'insertAdjacentElement', 'insertAdjacentHTML']) setFn(EP, k, after);
+      for (const k of ['write', 'writeln']) setFn(DP, k, after);
+      for (const k of ['innerHTML', 'outerHTML']) { const d = Object.getOwnPropertyDescriptor(EP, k); if (d && d.set) { const set0 = d.set; const ns = function (v) { set0.call(this, v); if (w.length !== n) { n = w.length; kids(); } }; native.set(ns, src(set0)); try { Object.defineProperty(EP, k, Object.assign({}, d, { set: ns })); } catch (e) {} } }
+      kids();
+    } catch (e) {}
+  };
+  install(window);
+})();`;
 
 const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media)\.html$/i.test(decodeURIComponent(location.pathname));
 
 if (SUB) {
   // a sign-in box embedded from another site must not open Windows' passkey window by itself either
-  if (/^https?:$/.test(location.protocol) && !NO_PASSKEY_FIX) inMainWorld(PASSKEY_CODE);
+  if (/^https?:$/.test(location.protocol)) {
+    let m = null; try { m = ipcRenderer.sendSync('pk:mode', /^accounts\.(google|youtube)\.com$/i.test(location.hostname)); } catch (e) {}
+    if (m && (m.mode !== 'nofix' || m.ua)) inMainWorld(pkCode(m.mode, m.ua));
+  }
 } else if (internal) {
   contextBridge.exposeInMainWorld('zeus', {
     getBookmarks: () => ipcRenderer.invoke('bm:get'),
@@ -199,29 +259,6 @@ if (SUB) {
     addEventListener('pointerover', e => { if (!e.isTrusted) return; clearTimeout(t); const a = link(e); if (a) t = setTimeout(() => warm(a), 60); }, { capture: true, passive: true });
     addEventListener('pointerdown', e => { if (!e.isTrusted) return; const a = link(e); if (a) warm(a); }, { capture: true, passive: true });
   })();
-  /* ================= Google sign-in: look like Firefox (Google blocks Electron browsers) ================= */
-  if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) {
-    let ua = '';
-    try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
-    if (ua) {
-      const code = `(() => {
-        const UA = ${JSON.stringify(ua)};
-        const N = Navigator.prototype;
-        const def = (o, k, v) => { try { Object.defineProperty(o, k, { get: () => v, configurable: true }); } catch (e) {} };
-        def(N, 'userAgent', UA); def(N, 'appVersion', UA.slice(8)); def(N, 'vendor', ''); def(N, 'userAgentData', undefined);
-        def(N, 'platform', UA.includes('Windows') ? 'Win32' : 'Linux x86_64'); def(N, 'oscpu', UA.includes('Windows') ? 'Windows NT 10.0; Win64; x64' : 'Linux x86_64');
-        try { delete window.chrome; } catch (e) {}
-        // Chrome's passkeys live inside Chrome and aren't reachable here: go straight to the password
-        try { Object.defineProperty(window, 'PublicKeyCredential', { value: undefined, configurable: true }); } catch (e) {}
-        try { const c = navigator.credentials; if (c && c.get) { const g = c.get.bind(c); c.get = o => (o && o.publicKey ? Promise.reject(new DOMException('Not allowed', 'NotAllowedError')) : g(o)); } } catch (e) {}
-      })();`;
-      try {
-        if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) });
-        else webFrame.executeJavaScript(code);
-      } catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
-    }
-  }
-
   /* ================= YouTube ad blocking ================= */
   if (/(^|\.)youtube\.com$/i.test(location.hostname)) {
     let on = false;
@@ -311,8 +348,14 @@ if (SUB) {
      wait, the way Chrome waits when you don't pick a passkey. Some sites (Google's sign-in) instead ask at once in
      the normal way, or with the newer "immediate" mode: those are answered "no passkey" unless you clicked
      something or the site names your account. A passkey you ask for yourself ("Sign in with a passkey",
-     "Use a security key") still opens Windows' window as it should. */
-  if (cfg.passkeyFix !== false && !NO_PASSKEY_FIX) inMainWorld(PASSKEY_CODE);
+     "Use a security key") still opens Windows' window as it should.
+     Passkeys are off unless you turn them on in Settings; Google's sign-in also gets the Firefox look here.
+     All of it reaches blank frames and windows the page makes (see pkCode). */
+  {
+    let ua = '';
+    if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
+    if (cfg.pk !== 'nofix' || ua) inMainWorld(pkCode(cfg.pk || 'off', ua));
+  }
 
   if (cfg.yt) {
     const yt = cfg.yt;

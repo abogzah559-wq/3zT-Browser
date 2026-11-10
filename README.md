@@ -177,12 +177,13 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
 - Links, forms and scripts that open a new tab get exactly the request the site made (its form data,
   the page it came from, `window.opener`), the same as in Chrome. Download sites rely on this.
 - Sign-in pages no longer pop up the Windows Security window (Windows Hello / "insert your security
-  key") by themselves. Many sign-in pages ask for a passkey in the background as soon as they open
-  (autofill-style, "immediate", or a plain request for any passkey); Chrome answers those quietly,
-  Electron used to hand them straight to Windows. 3zT answers such background requests "no passkey",
-  also inside embedded sign-in boxes, so the site carries on with its normal sign-in. A passkey you
-  choose yourself (a click on "Sign in with a passkey" / "Use a security key") or one the site asks
-  for a named account still opens Windows' window as it should.
+  key") by themselves. **Passkeys are off by default** (*Settings → Ads & privacy → Sign in with passkeys*):
+  every passkey request from a site is answered "no passkey", so the site carries on with your
+  password. This also covers embedded sign-in boxes and the blank frames and windows a sign-in page
+  makes to get an untouched copy of the passkey function (Google's sign-in does that), and the changed
+  functions look built in to the page. Turn the option on if you use a passkey or a security key: then
+  only background requests are refused, and a passkey you choose yourself (a click on "Sign in with a
+  passkey" / "Use a security key") or one the site asks for a named account opens Windows' window.
 - Opens links for other programs (`mailto:`, `discord://`, `claude://`, ...) through Windows, asking
   first like Chrome does, with an "always allow for this site" option.
 - Can be set as the Windows default browser.
@@ -229,13 +230,19 @@ The former **3zT Download** app is now part of the browser.
 - Save the **video** (best quality or 4K / 1440p / 1080p / 720p / 480p / 360p, as MP4), the **audio**
   as MP3, or the **photos** of a post (TikTok photo posts, Instagram, X...): every photo is shown and
   you pick the ones to keep.
-- **Trim before saving:** tick *Pick a part before saving*, then set the start and end on a timeline
-  with a preview, see the length, and save that part. Finished videos in the downloads list have a
-  *Trim* button too (the result is a new "(clip)" file). Two ways to cut:
-  - *Fast, same quality*: the streams are copied, nothing is re-encoded. The cut starts at the
-    nearest key frame before your start time, so it can begin a few seconds early.
-  - *Frame-exact*: the picture is re-encoded at high quality (H.264) so the cut is exact. Slower,
-    and like any re-encode it is not bit-identical to the original. The result is MP4.
+- **Download only a part:** as soon as the link's preview shows up, a timeline under it lets you set
+  the start and end (drag the handles or type the times, "Current time" takes it from the preview
+  player, which only plays your part). Only that part is downloaded, not the whole video. Two ways to cut:
+  - *Fast, same quality*: nothing is re-encoded. The cut starts at the nearest key frame before your
+    start time, so it can begin a few seconds early.
+  - *Frame-exact*: the edges are re-encoded (H.264) so the cut is exact. A little slower.
+  A site that can't send a part of a video gets the whole video downloaded and cut on your computer;
+  the result is the same, only slower. Finished videos in the downloads list have a *Trim* button too
+  (the result is a new "(clip)" file).
+- Downloads start right away: the details read for the preview are reused (for 10 minutes), so the
+  site is not read a second time; one bar covers the whole job (picture, sound and joining them).
+- TikTok's *For You* feed keeps the same address while you scroll: the fox button takes the video
+  that is playing on screen and builds its own link (`tiktok.com/@user/video/…`).
 - Content you can only see when signed in works too: the site's own cookies (only that site's) are
   handed to the downloader in a temporary file that is deleted when the job ends.
 - The tools it uses - [yt-dlp](https://github.com/yt-dlp/yt-dlp),
@@ -244,9 +251,9 @@ The former **3zT Download** app is now part of the browser.
   is built), so there is nothing to wait for. Nothing runs in the background: they only run while
   something is downloading or being trimmed. If a site stops working, *Update download tools*
   updates yt-dlp and gallery-dl.
-- There is no local server and no open port: the downloads page talks to the downloader through the
-  browser's own internal messaging, and every program it starts is stopped when you cancel or close
-  the browser.
+- There is no local server and no open port: the downloader window talks to the browser through its
+  own internal messaging. Closing the window (asks first if something is still downloading) stops
+  every program it started, deletes its temporary files and clears its list; it opens empty next time.
 - Files are saved to `Downloads\3zT` (you can choose another folder).
 
 ### Site permissions
@@ -477,11 +484,14 @@ DevTools Protocol. On every push, GitHub Actions on Windows:
    empty tab whose address the page sets, a redirect to a signed link, a file made in the page
    (`blob:`), several at once, a connection that breaks half way (Range resume, bytes compared),
    cancelling, and Arabic file names,
-6. the video downloader: sets up its tools on first use, downloads a video, trims it frame-exact
-   and fast (lengths checked with ffprobe), checks the address-bar button, and tries YouTube and
+6. the video downloader: tools ready at once, downloads a video, downloads only a chosen part from
+   the window's timeline (frame-exact 3.8 s checked with ffprobe; and a site that can't send parts),
+   trims finished files, checks the address-bar button, that closing the window stops its tools and
+   clears its list, and tries YouTube and
    TikTok (reported only: sites often refuse GitHub's datacenter machines),
 7. checks that a background passkey request on a sign-in page no longer opens the Windows Security
-   window,
+   window, also from a blank frame the page makes (Google's trick), that passkeys are off by default
+   and that, turned on, a passkey you click still reaches Windows,
 8. tests the silent update: a newer build is offered as a fake release, the running browser must
    download and verify it, install it silently after being closed, reopen by itself if started
    during the install, and show the green note with the release notes,
@@ -507,10 +517,16 @@ fixed in 0.13.0: new tabs now carry the site's exact request. If a site still fa
 expected may be behind a captcha or a timer on the site itself; please open an issue with the
 address.
 
-**The Windows Security window still opens when I sign in.** That happens when the site itself asks
-for a passkey or security key in the foreground (for example after you chose "Sign in with a
-passkey", or when your account only allows passkeys). Choose *Try another way* or *Use your
-password* on the site, or cancel the window.
+**The Windows Security window still opens when I sign in.** With passkeys off (the default) a site
+cannot open it. If you turned *Sign in with passkeys* on, it opens when the site asks in the
+foreground (after you chose "Sign in with a passkey", or when your account only allows passkeys):
+choose *Try another way* or *Use your password* on the site, or cancel the window.
+
+**Google sometimes says "Couldn't sign you in - this browser or app may not be secure".** Google
+refuses browsers built on Electron. 3zT looks like Firefox on Google's sign-in pages only (also inside
+their hidden frames), which Google accepts; but Google checks more than it says, and once in a while
+it still refuses. *Try again* usually works on the second or third try. The only complete fix would
+be a browser built on Chromium's own code instead of Electron, which is a different project.
 
 **Where are my old downloads from 3zT Download?** In `Downloads\3zT Download`; 3zT saves new ones to
 `Downloads\3zT` unless you pick that folder again.

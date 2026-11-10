@@ -35,6 +35,7 @@ class MediaEngine {
     this.toolsDir = path.join(opts.dir, 'tools');
     this.tmp = path.join(os.tmpdir(), '3zt-media-' + process.pid);
     this.jobs = new Map();
+    this.infos = new Map();       // preview details kept for the download: id -> { file, dir, url, t, key }
     this.procs = new Set();
     this.setup = null;            // running first-time setup (a promise)
     this.setupState = null;       // { stage, pct } while it runs
@@ -255,14 +256,18 @@ class MediaEngine {
   get(id) { const j = this.jobs.get(id); return j ? this.public(j) : null; }
 
   /* ---------- video / audio (yt-dlp) ---------- */
-  async startVideo({ url, mode, q, trim, cookies, partition, winId }) {
+  /* start/end (seconds): only that part is downloaded (yt-dlp --download-sections); exact: cut on the exact frame.
+     infoId: the link's details from the preview, so yt-dlp starts downloading at once instead of reading the page again */
+  async startVideo({ url, mode, q, trim, cookies, partition, winId, start, end, exact, infoId }) {
     if ([...this.jobs.values()].filter(j => j.kind === 'video' && j.state === 'running').length >= MAX_JOBS) throw new Error('busy');
     const job = this.newJob('video', url, { mode: mode === 'audio' ? 'audio' : 'video', trim: !!trim && mode !== 'audio', stage: 'tools', partition: partition || null, winId });
+    const cut = isFinite(+start) && isFinite(+end) && +end - +start > 0.2 ? { s: Math.max(0, +start), e: +end } : null;
+    const cached = this.infoFile(infoId, url);
     this.changed(job);
     try { await this.ensureTools(); } catch (e) { job.state = 'error'; job.error = 'tools: ' + e.message; this.changed(job); return this.public(job); }
     if (job.state === 'cancelled') return this.public(job);
     const p = this.paths();
-    job.stage = '';
+    job.stage = 'preparing';
     const args = ['--no-playlist', '--newline', '--no-warnings', '--no-mtime', '--color', 'never',
       '-P', job.dir, '-o', '%(title).80B [%(id)s].%(ext)s',
       '--progress', '--progress-template', 'download:3ZTP %(progress.downloaded_bytes)s %(progress.total_bytes,progress.total_bytes_estimate)s',
@@ -272,14 +277,36 @@ class MediaEngine {
     if (this.o.jsRuntime) args.push('--js-runtimes', 'node:' + this.o.jsRuntime);
     if (job.mode === 'audio') args.push('-f', 'ba/b', '-x', '--audio-format', 'mp3', '--audio-quality', '0');
     else args.push('-S', (q === 'best' || !QUALITIES.includes(q) ? 'res' : 'res:' + q) + ',vcodec:h264,acodec:m4a', '--merge-output-format', 'mp4');
-    args.push('--', url);
-    this.log('yt-dlp', url, job.mode, q || '');
+    if (cut) job.cut = { s: cut.s, e: cut.e, exact: !!exact };
+    if (cached) args.push('--load-info-json', cached);    // the page was already read for the preview: start right away
+    else args.push('--', url);
+    this.launchVideo(job, p, args, !!cut);
+    return this.public(job);
+  }
+  /* sections: download only job.cut. If the site doesn't allow that (no seeking), it runs once more for the whole video
+     and the part is cut here afterwards, so the result is the same, only slower. */
+  launchVideo(job, p, base, sections) {
+    const args = base.slice();
+    if (sections) {
+      const ex = ['--download-sections', `*${job.cut.s.toFixed(2)}-${job.cut.e.toFixed(2)}`];
+      if (job.cut.exact) ex.push('--force-keyframes-at-cuts');   // the edges are encoded again so the cut is on the exact frame
+      const at = args.indexOf('--load-info-json') >= 0 ? args.indexOf('--load-info-json') : args.indexOf('--');
+      args.splice(at, 0, ...ex);
+    }
+    this.log('yt-dlp', job.url, job.mode, sections ? 'part' : '');
     const pr = job.proc = this.run(p.ytdlp, args, this.o.jsRuntime ? { ...ENV, ELECTRON_RUN_AS_NODE: '1' } : ENV);
     let err = '', final = '', part = 0, last = 0;
     const onLine = l => {
       if (l.startsWith('3ZTP ')) {
         const [, a, b] = l.split(' '); const d = +a, t = +b;
-        if (t > 0) { const pc = Math.min(99, (d / t) * 100); if (pc + 20 < job.pct) part++; job.pct = pc; job.stage = part ? 'part' + (part + 1) : ''; }
+        if (t > 0) {
+          const pc = Math.min(100, (d / t) * 100);
+          if (job.raw != null && pc + 20 < job.raw) part++;   // the next file (the audio after the video) started
+          job.raw = pc;
+          // one bar for the whole job: the picture is most of it, the sound the last bit
+          job.pct = Math.min(99, part ? Math.max(job.pct, 90 + pc * 0.09) : pc * 0.9);
+          job.stage = '';
+        }
         if (Date.now() - last > 400) { last = Date.now(); this.changed(job); }
       } else if (l.startsWith('3ZTT ')) { job.title = l.slice(5).trim(); this.changed(job); }
       else if (l.startsWith('3ZTF ')) final = l.slice(5).trim();
@@ -291,7 +318,6 @@ class MediaEngine {
     pr.on('error', e => { job.state = 'error'; job.error = 'yt-dlp: ' + e.message; this.changed(job); });
     pr.on('close', code => {
       job.proc = null;
-      try { fs.rmSync(path.join(job.dir, 'cookies.txt'), { force: true }); } catch (e) {}
       if (job.state === 'error' || job.state === 'cancelled') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
       let src = final && fs.existsSync(final) ? final : null;
       if (!src) {
@@ -299,6 +325,25 @@ class MediaEngine {
         files.sort((a, b) => fs.statSync(path.join(job.dir, b)).size - fs.statSync(path.join(job.dir, a)).size);
         if (files[0]) src = path.join(job.dir, files[0]);
       }
+      if (code === 0 && src && sections && !job.checked) {
+        // some sites can't be cut while downloading and ffmpeg still ends "fine" with an empty file: check it
+        job.checked = true;
+        return this.mediaLength(src).then(d => {
+          if (job.state !== 'running') { fs.rm(job.dir, { recursive: true, force: true }, () => {}); return this.changed(job); }
+          if (d > 0.2) finish(code, src); else retryWhole();
+        });
+      }
+      finish(code, src);
+    });
+    const retryWhole = () => {
+      // the part alone didn't work here: the whole video, then the cut
+      try { for (const f of fs.readdirSync(job.dir)) if (f !== 'cookies.txt') fs.rmSync(path.join(job.dir, f), { recursive: true, force: true }); } catch (e) {}
+      job.trim = true; job.autoCut = true; job.pct = 0; job.raw = null; job.stage = 'preparing'; this.changed(job);
+      this.launchVideo(job, p, base, false);
+    };
+    const finish = (code, src) => {
+      const retry = sections && code !== 0 && job.state === 'running';
+      if (!retry) try { fs.rmSync(path.join(job.dir, 'cookies.txt'), { force: true }); } catch (e) {}   // kept only for the second try
       if (code === 0 && src) {
         job.pct = 100; job.name = path.basename(src);
         if (job.trim && VID.test(src)) { job.state = 'trim'; job.temp = src; }   // waits in the temp folder until you pick the part to keep
@@ -307,11 +352,48 @@ class MediaEngine {
           catch (e) { job.state = 'error'; job.error = 'save: ' + e.message; }
           fs.rm(job.dir, { recursive: true, force: true }, () => {});
         }
-      } else { job.state = 'error'; job.error = this.cleanErr(err) || 'failed'; fs.rm(job.dir, { recursive: true, force: true }, () => {}); }
+      } else if (retry) return retryWhole();
+      else { job.state = 'error'; job.error = this.cleanErr(err) || 'failed'; fs.rm(job.dir, { recursive: true, force: true }, () => {}); }
       this.changed(job);
-    });
-    return this.public(job);
+      if (job.state === 'trim' && job.autoCut) this.finishTrim(job.id, { start: job.cut.s, end: job.cut.e, exact: job.cut.exact }).catch(e => { job.state = 'error'; job.error = 'trim: ' + (e.message || e); this.changed(job); });
+    };
   }
+  /* how long a media file plays (0 if it has no picture or sound): read from ffmpeg's own report */
+  mediaLength(f) {
+    return new Promise(res => {
+      let out = '';
+      let pr; try { pr = this.run(path.join(this.paths().ffmpegDir, exe('ffmpeg')), ['-hide_banner', '-i', f], ENV); } catch (e) { return res(1); }
+      const t = setTimeout(() => this.killTree(pr), 15000);
+      pr.stderr.setEncoding('utf8'); pr.stderr.on('data', d => { if (out.length < 20000) out += d; });
+      pr.on('error', () => { clearTimeout(t); res(1); });   // can't check: trust the download
+      pr.on('close', () => {
+        clearTimeout(t);
+        const m = /Duration: (\d+):(\d+):([\d.]+)/.exec(out);
+        res(m && /Stream #.*(Video|Audio)/.test(out) ? +m[1] * 3600 + +m[2] * 60 + +m[3] : 0);
+      });
+    });
+  }
+
+  /* ---------- the preview's details, reused by the download ---------- */
+  infoFile(id, url) {
+    const x = id && this.infos && this.infos.get(String(id));
+    if (!x || Date.now() - x.t > 10 * 60 * 1000 || !fs.existsSync(x.file)) return null;   // stream addresses expire
+    return x.url === url ? x.file : null;
+  }
+  pruneInfos() {
+    for (const [id, x] of this.infos) if (Date.now() - x.t > 15 * 60 * 1000 || this.infos.size > 30) { this.infos.delete(id); fs.rm(x.dir, { recursive: true, force: true }, () => {}); }
+  }
+  /* the downloader window closed: everything of it stops and is forgotten (programs, temporary files, the list) */
+  reset(part, key) {
+    for (const j of [...this.jobs.values()]) if ((j.partition || null) === (part || null)) {
+      if (j.proc) this.killTree(j.proc, true);
+      j.state = 'cancelled';
+      this.jobs.delete(j.id); fs.rm(j.dir, { recursive: true, force: true }, () => {});
+    }
+    if (this.infoProcs && key != null && this.infoProcs.has(key)) { this.killTree(this.infoProcs.get(key), true); this.infoProcs.delete(key); }
+    for (const [id, x] of this.infos) if (key == null || x.key === key) { this.infos.delete(id); fs.rm(x.dir, { recursive: true, force: true }, () => {}); }
+  }
+  running(part) { return [...this.jobs.values()].some(j => (j.partition || null) === (part || null) && j.state === 'running'); }
 
   /* ---------- what is at this link (shown before downloading, to confirm) ---------- */
   async info({ url, cookies, key }) {
@@ -332,17 +414,25 @@ class MediaEngine {
       const t = setTimeout(() => this.killTree(pr), 45000);
       pr.stdout.setEncoding('utf8'); pr.stdout.on('data', d => { if (out.length < 30e6) out += d; });
       pr.stderr.setEncoding('utf8'); pr.stderr.on('data', d => (err = (err + d).slice(-2000)));
-      const done = r => { clearTimeout(t); if (key != null && this.infoProcs.get(key) === pr) this.infoProcs.delete(key); fs.rm(dir, { recursive: true, force: true }, () => {}); res(r); };
+      const done = r => { clearTimeout(t); if (key != null && this.infoProcs.get(key) === pr) this.infoProcs.delete(key); fs.rm(path.join(dir, 'cookies.txt'), { force: true }, () => {}); res(r); };
       pr.on('error', e => done({ error: e.message }));
       pr.on('close', () => {
         let j = null; try { j = JSON.parse(out); } catch (e) {}
-        if (!j) return done({ error: this.cleanErr(err) || 'no-info' });
+        if (!j) { fs.rm(dir, { recursive: true, force: true }, () => {}); return done({ error: this.cleanErr(err) || 'no-info' }); }
+        // kept for the download (--load-info-json) for a few minutes
+        const infoId = crypto.randomBytes(6).toString('hex');
+        try { fs.writeFileSync(path.join(dir, 'info.json'), out); this.infos.set(infoId, { file: path.join(dir, 'info.json'), dir, url, t: Date.now(), key }); } catch (e) {}
+        this.pruneInfos();
+        // a light stream for the preview player: one file with picture and sound, plain http(s), 480p or less
+        const fm = (j.formats || []).filter(f => f.url && /^https?$/.test(f.protocol || '') && f.vcodec !== 'none' && f.acodec !== 'none' && (f.vcodec || f.acodec || /^(mp4|webm|m4v|mov)$/.test(f.ext || '')) && !/dash|m3u8/.test(f.protocol || ''));
+        const pv = fm.filter(f => (f.height || 0) <= 480).sort((a, b) => (b.height || 0) - (a.height || 0))[0] || fm.sort((a, b) => (a.height || 0) - (b.height || 0))[0];
         const thumbs = (j.thumbnails || []).filter(x => x.url && /^https:/.test(x.url));
         const best = thumbs.filter(x => (x.width || 0) <= 1280).sort((a, b) => (b.width || 0) - (a.width || 0))[0] || thumbs[thumbs.length - 1];
         done({ title: j.title || '', thumbnail: (j.thumbnail && /^https:/.test(j.thumbnail) ? j.thumbnail : best && best.url) || '', duration: j.duration || 0,
           uploader: j.uploader || j.channel || '', site: j.extractor_key || j.extractor || '', url: j.webpage_url || url,
           heights: [...new Set((j.formats || []).map(f => f.height).filter(Boolean))].sort((a, b) => b - a).slice(0, 8),
-          photos: !(j.formats || []).some(f => f.vcodec && f.vcodec !== 'none') && !j.duration });
+          photos: !(j.formats || []).some(f => f.vcodec && f.vcodec !== 'none') && !j.duration,
+          infoId, preview: pv ? pv.url : '' });
       });
     });
   }
