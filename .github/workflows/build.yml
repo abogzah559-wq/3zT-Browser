@@ -45,6 +45,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/fetch_tools.mjs tools-cache
 
+      - name: Cookie-popup rules (DuckDuckGo Autoconsent, pinned, sha512 checked)
+        run: node scripts/fetch_autoconsent.mjs
+
       - name: Build the app folder (dist/3zT)
         run: python scripts/build_win.py electron-v${{ env.ELECTRON_VERSION }}-win32-x64.zip
 

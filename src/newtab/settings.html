@@ -68,6 +68,9 @@ html[dir=rtl] .arr{transform:scaleX(-1)}
 .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:#202027;border:1px solid var(--line);padding:10px 16px;border-radius:14px;opacity:0;transition:opacity .2s;pointer-events:none}
 .toast.on{opacity:1}
 @media (max-width:760px){nav{display:none}.modes{grid-template-columns:1fr}}
+
+/* appears softly (none if Windows asks for less motion) */
+@media (prefers-reduced-motion: no-preference){body{animation:ztIn .16s ease-out}@keyframes ztIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}}
 </style>
 </head>
 <body>

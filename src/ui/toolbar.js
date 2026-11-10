@@ -10,7 +10,7 @@ const TIPS = {
   back: ['رجوع (Alt+←)', 'Back (Alt+←)'], forward: ['للأمام (Alt+→)', 'Forward (Alt+→)'], reload: ['تحديث (F5)', 'Reload (F5)'],
   star: ['حفظ في المفضلة (Ctrl+D)', 'Bookmark (Ctrl+D)'], ext: ['الإضافات', 'Extensions'], menu: ['القائمة', 'Menu'], downloads: ['التنزيلات', 'Downloads'],
   newtab: ['تبويب جديد (Ctrl+T)', 'New tab (Ctrl+T)'], translate: ['ترجمة الصفحة', 'Translate page'],
-  shield: ['مانع الإعلانات', 'Ad blocker'], media: ['تحميل الفيديو أو الصور من هذي الصفحة', 'Download the video or photos on this page']
+  shield: ['مانع الإعلانات', 'Ad blocker'], reader: ['وضع القراءة', 'Reader view'], tabsearch: ['البحث في التبويبات (Ctrl+Shift+A)', 'Search tabs (Ctrl+Shift+A)'], media: ['تحميل الفيديو أو الصور من هذي الصفحة', 'Download the video or photos on this page']
 };
 const ICO = {
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -60,6 +60,8 @@ ui.on('state', st => {
   $('fwd').disabled = !S.canGoForward;
   $('star').classList.toggle('on', S.bookmarked);
   $('mediaBtn').hidden = !S.media;
+  $('readerBtn').hidden = !(S.reader || S.readerOn);
+  $('readerBtn').classList.toggle('on', !!S.readerOn);
   const shOff = !S.adblock || S.adSiteOff;
   $('shield').classList.toggle('off', shOff);
   $('shCount').textContent = !shOff && S.blocked ? (S.blocked > 99 ? '99+' : S.blocked) : '';
@@ -90,6 +92,7 @@ function applyTips() {
   document.querySelectorAll('[data-tip]').forEach(el => {
     const k = el.dataset.tip;
     if (k === 'max') el.title = S.maximized ? L('استعادة', 'Restore') : TIPS.max[en() ? 1 : 0];
+    else if (k === 'reader' && S.readerOn) el.title = L('رجوع للصفحة الأصلية', 'Back to the page');
     else if (TIPS[k]) el.title = TIPS[k][en() ? 1 : 0];
   });
 }
@@ -134,7 +137,11 @@ function renderTabs() {
       ${t.audible || t.muted ? `<button class="snd" data-mute="${t.id}" title="${t.muted ? L('تشغيل الصوت', 'Unmute') : L('كتم الصوت', 'Mute')}">${t.muted ? ICO.mute : ICO.vol}</button>` : ''}
       <button class="x" data-close="${t.id}" title="${L('إغلاق (Ctrl+W)', 'Close (Ctrl+W)')}">${ICO.x}</button>
     </div>`).join('');
-  if (list._html !== html) { list.innerHTML = html; list._html = html; }
+  if (list._html !== html) {
+    const before = new Set([...list.querySelectorAll('.tab')].map(el => el.dataset.id));
+    list.innerHTML = html; list._html = html;
+    if (before.size) list.querySelectorAll('.tab').forEach(el => { if (!before.has(el.dataset.id)) { el.classList.add('new'); setTimeout(() => el.classList.remove('new'), 200); } });   // only a tab that just opened
+  }
   list.querySelectorAll('img[data-fb]').forEach(im => { im.onerror = () => { const s = document.createElement('span'); s.className = 'glyph'; s.textContent = im.dataset.fb; im.replaceWith(s); }; });
   sizeTabs();
   const a = list.querySelector('.tab.on'); if (a) a.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -222,7 +229,8 @@ window.addEventListener('mousemove', e => { if (beingMoved && e.buttons === 0) m
 window.addEventListener('keydown', e => { if (beingMoved && e.key === 'Escape') moverUp(); }, true);
 window.addEventListener('pointercancel', endDrag);
 list.addEventListener('click', e => {
-  const c = e.target.closest('[data-close]'); if (c) { ui.send('tab', 'close', +c.dataset.close); return; }
+  const c = e.target.closest('[data-close]');
+  if (c) { const el = c.closest('.tab'); if (el && !el.classList.contains('closing')) { el.classList.add('closing'); setTimeout(() => ui.send('tab', 'close', +c.dataset.close), matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 110); } return; }
   const m = e.target.closest('[data-mute]'); if (m) { ui.send('tab', 'mute', +m.dataset.mute); }
 });
 list.addEventListener('auxclick', e => { const t = e.target.closest('.tab'); if (t && e.button === 1) e.preventDefault(); });
@@ -254,7 +262,82 @@ $('fwd').onclick = () => ui.send('tab', 'forward');
 $('reload').onclick = () => ui.send('tab', S.loading ? 'stop' : 'reload');
 $('star').onclick = () => ui.send('tab', 'bookmark');
 $('mediaBtn').onclick = () => ui.send('media:open');
+$('readerBtn').onclick = () => ui.send('reader:toggle');
+$('tabSearch').onclick = () => (openKind === 'tabs' ? closeDrop() : openDrop('tabs', $('tabSearch')));
+ui.on('tab-search', () => { if (openKind !== 'tabs') openDrop('tabs', $('tabSearch')); });
+
+/* ---------- hover cards: title, site and a small picture of the tab ---------- */
+let pvT = 0, pvId = null, pvShown = false, stripT = 0;
+const tprev = $('tprev');
+$('tabs').addEventListener('mouseenter', () => { if (Date.now() - stripT > 1500) { stripT = Date.now(); ui.send('tabs:strip'); } });   // the tab you are on, before you leave it
+function hidePrev() {
+  clearTimeout(pvT); pvId = null;
+  if (!pvShown) return;
+  pvShown = false; tprev.classList.remove('on');
+  setTimeout(() => { if (!pvShown) { tprev.hidden = true; if (!openKind) expand(false); } }, 140);
+}
+async function showPrev(el) {
+  const id = +el.dataset.id, t = S.tabs.find(x => x.id === id); if (!t || dragging || openKind) return;
+  pvId = id;
+  tprev.querySelector('.t').textContent = t.title || t.url || L('تبويب جديد', 'New tab');
+  let host = ''; try { host = /^https?:/i.test(t.url) ? new URL(t.url).hostname.replace(/^www\./, '') : t.url; } catch (e) {}
+  tprev.querySelector('.h').textContent = host || '';
+  tprev.classList.remove('pic'); tprev.querySelector('.img').style.backgroundImage = '';
+  const r = el.getBoundingClientRect();
+  tprev.hidden = false;
+  const left = Math.max(8, Math.min(innerWidth - 256, en() ? r.left : r.right - 248));
+  tprev.style.left = left + 'px';
+  if (!permOn && !toastOn) ui.send('ui:expand', stripH + 200);
+  requestAnimationFrame(() => { if (pvId === id) { tprev.classList.add('on'); pvShown = true; } });
+  if (id !== S.activeId) {
+    const p = await ui.invoke('tabs:preview', id);
+    if (pvId === id && p && p.img) { tprev.querySelector('.img').style.backgroundImage = `url("${p.img}")`; tprev.classList.add('pic'); }
+  }
+}
+list.addEventListener('mouseover', e => {
+  const el = e.target.closest('.tab'); if (!el || +el.dataset.id === pvId) return;
+  clearTimeout(pvT);
+  pvT = setTimeout(() => showPrev(el), pvShown ? 0 : 500);
+});
+list.addEventListener('mouseleave', hidePrev);
+list.addEventListener('mousedown', hidePrev, true);
+window.addEventListener('blur', hidePrev);
 $('act').onclick = () => { if (S.isWeb) ui.send('tab', 'translate'); };
+
+/* ---------- tab search: every window's tabs, then the recently closed ones ---------- */
+async function renderTabSearch(d) {
+  const all = await ui.invoke('tabs:all'); if (openKind !== 'tabs' || !all) return;
+  d.innerHTML = `<div class="tsq">${ICO.search}<input id="tsIn" spellcheck="false" placeholder="${esc(L('ابحث في التبويبات', 'Search tabs'))}"></div><div class="tsl" id="tsList"></div>`;
+  const inp = d.querySelector('#tsIn'), box = d.querySelector('#tsList');
+  let sel = 0, rows = [];
+  const fav = x => x.favicon === 'app' ? '<img src="app.png" alt="">' : x.favicon ? `<img src="${esc(x.favicon)}" alt="">` : `<span class="ph"></span>`;
+  const winName = x => x.here ? L('هذي النافذة', 'This window') : x.private ? L('متخفية', 'Incognito') : L('نافذة ', 'Window ') + x.winN;
+  const draw = () => {
+    const q = inp.value.trim().toLowerCase();
+    const hit = x => !q || (x.title || '').toLowerCase().includes(q) || (x.url || '').toLowerCase().includes(q);
+    const open = all.tabs.filter(hit), closed = all.closed.filter(hit);
+    rows = [...open.map(x => ({ x, kind: 'open' })), ...closed.map(x => ({ x, kind: 'closed' }))];
+    if (sel >= rows.length) sel = Math.max(0, rows.length - 1);
+    let h = '', n = 0;
+    if (open.length) h += `<div class="tsh">${L('التبويبات المفتوحة', 'Open tabs')} · ${open.length}</div>`;
+    for (const x of open) h += `<button class="mi${n === sel ? ' sel' : ''}" data-n="${n++}">${fav(x)}<span class="tc"><span class="t">${esc(x.title)}</span><span class="u">${esc(x.url || '')}</span></span>${x.here ? (x.active ? `<span class="tsw here">${esc(L('الحالي', 'Current'))}</span>` : '') : `<span class="tsw">${esc(winName(x))}</span>`}</button>`;
+    if (closed.length) h += `<div class="tsh">${L('مقفولة مؤخراً', 'Recently closed')}</div>`;
+    for (const x of closed) h += `<button class="mi${n === sel ? ' sel' : ''}" data-n="${n++}">${fav(x)}<span class="tc"><span class="t">${esc(x.title)}</span><span class="u">${esc(x.url || '')}</span></span></button>`;
+    if (!rows.length) h = `<div class="note">${L('ما لقيت تبويب بهذا الاسم.', 'No tab matches.')}</div>`;
+    box.innerHTML = h;
+    const s = box.querySelector('.mi.sel'); if (s) s.scrollIntoView({ block: 'nearest' });
+  };
+  const go = n => { const r = rows[n]; if (!r) return; closeDrop(); ui.send('tabs:go', r.kind === 'closed' ? { closed: r.x.closed } : { win: r.x.win, id: r.x.id }); };
+  inp.addEventListener('input', () => { sel = 0; draw(); });
+  inp.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(rows.length - 1, sel + 1); draw(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); sel = Math.max(0, sel - 1); draw(); }
+    else if (e.key === 'Enter') { e.preventDefault(); go(sel); }
+  });
+  box.addEventListener('click', e => { const b = e.target.closest('[data-n]'); if (b) go(+b.dataset.n); });
+  box.addEventListener('mousemove', e => { const b = e.target.closest('[data-n]'); if (b && +b.dataset.n !== sel) { sel = +b.dataset.n; box.querySelectorAll('.mi.sel').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); } });
+  draw(); inp.focus();
+}
 
 /* ---------- menus ---------- */
 let openKind = null;
@@ -264,7 +347,10 @@ function openDrop(kind, anchor) {
   if (kind === 'shield') permChanged = false;
   if (kind === 'dl' && toastOn) { clearTimeout(toastT); hideToast(); }
   $('drop').classList.toggle('wide', kind === 'dl');
+  $('drop').classList.toggle('tabs', kind === 'tabs');
+  hidePrev();
   $('drop').hidden = false; $('backdrop').hidden = false;
+  $('drop').classList.add('enter'); requestAnimationFrame(() => requestAnimationFrame(() => $('drop').classList.remove('enter')));
   expand(true);
   renderMenu(kind);
   place(anchor);
@@ -292,6 +378,7 @@ $('menuBtn').onclick = () => (openKind === 'menu' ? closeDrop() : openDrop('menu
 
 async function renderMenu(kind) {
   const d = $('drop');
+  if (kind === 'tabs') return renderTabSearch(d);
   if (kind === 'shield') {
     const host = (() => { try { return new URL(S.url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } })();
     d.innerHTML = `

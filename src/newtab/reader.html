@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<meta name="referrer" content="no-referrer">
+<!-- the article is someone else's page: nothing of it may run, load scripts, send forms or reach the network except its pictures -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src file:; style-src file: 'unsafe-inline'; font-src file:; img-src http: https: data:; base-uri 'none'; form-action 'none'; frame-src 'none'; object-src 'none'">
+<title></title>
+<link rel="stylesheet" href="../fonts/thmanyah.css">
+<style>
+*{box-sizing:border-box}
+:root{--bg:#0b0b0f;--ink:#e8e8ec;--soft:rgba(232,232,236,.62);--faint:rgba(232,232,236,.38);--line:rgba(255,255,255,.09);--acc:#8ab4f8;--card:#131318;
+  --size:20px;--lh:2;--w:700px;--font:"Thmanyah","Thmanyah Sans","Segoe UI",Tahoma,system-ui,sans-serif;--title:"Thmanyah Serif Display","Thmanyah","Segoe UI",Tahoma,serif}
+html{background:var(--bg);color:var(--ink);scroll-behavior:smooth}
+html[data-ltr]{--size:19px;--lh:1.75}
+html[data-size="1"]{--size:17px}html[data-size="2"]{--size:18.5px}html[data-size="4"]{--size:22px}html[data-size="5"]{--size:24px}
+html[data-ltr][data-size="1"]{--size:16px}html[data-ltr][data-size="2"]{--size:17.5px}html[data-ltr][data-size="4"]{--size:21px}html[data-ltr][data-size="5"]{--size:23px}
+html[data-width="n"]{--w:600px}html[data-width="w"]{--w:880px}
+body{margin:0;font-family:var(--font);font-size:var(--size);line-height:var(--lh);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+::selection{background:rgba(138,180,248,.32)}
+/* how far you are */
+#prog{position:fixed;top:0;inset-inline:0;height:2px;z-index:5;pointer-events:none}
+#prog i{display:block;height:100%;width:0;background:var(--acc);transition:width .1s linear}
+[dir=rtl] #prog i{margin-inline-start:0}
+/* the little bar: shows when the mouse moves, goes while you read */
+#bar{position:fixed;top:14px;left:50%;transform:translate(-50%,0);z-index:6;display:flex;align-items:center;gap:2px;padding:4px;border-radius:14px;background:rgba(22,22,28,.86);border:1px solid var(--line);
+  backdrop-filter:blur(14px);box-shadow:0 8px 28px rgba(0,0,0,.45);font-size:13px;transition:opacity .18s ease,transform .18s ease}
+#bar.hide{opacity:0;transform:translate(-50%,-10px);pointer-events:none}
+#bar button{all:unset;cursor:pointer;height:32px;min-width:32px;padding:0 10px;border-radius:10px;display:inline-flex;align-items:center;justify-content:center;gap:6px;color:var(--soft);font:inherit;font-family:var(--font);white-space:nowrap}
+#bar button:hover{background:rgba(255,255,255,.07);color:var(--ink)}
+#bar button.on{color:var(--acc);background:rgba(138,180,248,.13)}
+#bar button:focus-visible{outline:2px solid var(--acc)}
+#bar .lt{display:inline-flex;direction:ltr;gap:2px}
+#bar .sep{width:1px;height:18px;background:var(--line);margin:0 4px}
+#bar svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+[dir=rtl] #bBack svg{transform:scaleX(-1)}
+#bar .a1{font-size:12px;font-weight:600}#bar .a2{font-size:16px;font-weight:600}
+/* the article */
+main{max-width:var(--w);margin:0 auto;padding:96px 28px 140px;transition:max-width .2s ease}
+header{margin-bottom:38px;padding-bottom:26px;border-bottom:1px solid var(--line)}
+.site{display:inline-flex;align-items:center;gap:8px;color:var(--acc);font-size:13.5px;font-weight:600;letter-spacing:.2px;text-decoration:none;margin-bottom:14px}
+.site:hover{text-decoration:underline}
+h1.tt{font-family:var(--title);font-size:calc(var(--size) * 1.9);line-height:1.35;margin:0 0 16px;font-weight:700;letter-spacing:-.2px}
+html[data-ltr] h1.tt{line-height:1.2;letter-spacing:-.5px}
+.meta{display:flex;flex-wrap:wrap;gap:6px 14px;color:var(--soft);font-size:14px;line-height:1.6}
+.meta span+span::before{content:"·";margin-inline-end:14px;color:var(--faint)}
+article{overflow-wrap:break-word}
+article p{margin:0 0 1.15em}
+article h2,article h3,article h4,article h5,article h6{font-family:var(--title);line-height:1.45;margin:1.9em 0 .6em;font-weight:700}
+article h2{font-size:1.42em}article h3{font-size:1.22em}article h4,article h5,article h6{font-size:1.06em}
+article a{color:var(--acc);text-decoration:none;border-bottom:1px solid rgba(138,180,248,.35)}
+article a:hover{border-bottom-color:var(--acc)}
+article img{display:block;max-width:100%;height:auto;margin:1.6em auto;border-radius:12px;background:#15151b}
+article figure{margin:2em 0}
+article figure img{margin:0 auto}
+article figcaption{margin-top:.75em;text-align:center;color:var(--soft);font-size:.78em;line-height:1.7}
+article blockquote{margin:1.6em 0;padding:.2em 1.2em;border-inline-start:3px solid var(--acc);color:#d6d6dc;background:linear-gradient(to left,rgba(138,180,248,.05),transparent)}
+html[data-ltr] article blockquote{background:linear-gradient(to right,rgba(138,180,248,.05),transparent)}
+article ul,article ol{padding-inline-start:1.4em;margin:0 0 1.15em}
+article li{margin:.35em 0}
+article pre{direction:ltr;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow:auto;font:14px/1.6 "Cascadia Code",Consolas,monospace}
+article code{font:.86em "Cascadia Code",Consolas,monospace;background:rgba(255,255,255,.06);padding:.1em .35em;border-radius:6px}
+article pre code{background:none;padding:0;font-size:inherit}
+article hr{border:0;height:1px;background:var(--line);margin:2.4em 0}
+article .tw{overflow-x:auto;margin:1.6em 0;border:1px solid var(--line);border-radius:12px}
+article table{border-collapse:collapse;width:100%;font-size:.84em;line-height:1.6}
+article th,article td{padding:9px 12px;border-bottom:1px solid var(--line);text-align:start;vertical-align:top}
+article th{color:var(--soft);font-weight:600;background:rgba(255,255,255,.03)}
+article mark{background:rgba(138,180,248,.25);color:inherit}
+.end{margin-top:56px;padding-top:22px;border-top:1px solid var(--line);display:flex;justify-content:space-between;gap:12px;color:var(--faint);font-size:13px;line-height:1.6}
+.end a{color:var(--soft);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:ltr}
+.end a:hover{color:var(--acc)}
+@media (max-width:640px){main{padding:80px 20px 110px}#bar .lbl{display:none}}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
+
+/* appears softly (none if Windows asks for less motion) */
+@media (prefers-reduced-motion: no-preference){body{animation:ztIn .16s ease-out}@keyframes ztIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}}
+</style>
+</head>
+<body>
+<div id="prog"><i></i></div>
+<div id="bar" class="hide" role="toolbar">
+  <button id="bBack"><svg viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg><span class="lbl" id="bBackT"></span></button>
+  <span class="sep"></span>
+  <span class="lt"><button id="bSm" class="a1">A−</button><button id="bLg" class="a2">A+</button></span>
+  <span class="sep"></span>
+  <span class="lt"><button id="wN"><svg viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></svg></button>
+  <button id="wM"><svg viewBox="0 0 24 24"><path d="M7 5v14M17 5v14"/></svg></button>
+  <button id="wW"><svg viewBox="0 0 24 24"><path d="M4 5v14M20 5v14"/></svg></button></span>
+</div>
+<main>
+  <header><a class="site" id="site" target="_blank" rel="noopener noreferrer"></a><h1 class="tt" id="tt"></h1><div class="meta" id="meta"></div></header>
+  <article id="art"></article>
+  <div class="end"><span id="endT"></span><a id="endA" target="_blank" rel="noopener noreferrer"></a></div>
+</main>
+<script src="reader.js"></script>
+</body>
+</html>

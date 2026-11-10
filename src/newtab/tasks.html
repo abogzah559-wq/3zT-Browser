@@ -34,6 +34,9 @@ button:hover{background:rgba(255,255,255,.08)}
 h2{font-size:14px;font-weight:600;opacity:.7;margin:26px 0 8px}
 .zz{opacity:.6;font-size:13px;padding:4px 10px}
 .tip{opacity:.5;font-size:12px;line-height:1.7;margin-top:22px}
+
+/* appears softly (none if Windows asks for less motion) */
+@media (prefers-reduced-motion: no-preference){body{animation:ztIn .16s ease-out}@keyframes ztIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}}
 </style>
 </head>
 <body>

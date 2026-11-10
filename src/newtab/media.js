@@ -216,7 +216,12 @@ async function preview(u) {
 function resetPlayer() { pv.pause(); pv.removeAttribute('src'); pv.load(); pv.hidden = true; $('pplay').hidden = true; $('pvol').hidden = true; $('pm').classList.remove('playing'); $('tph').hidden = true; }
 // some sites don't say how long the video is: the preview stream does
 pv.addEventListener('loadedmetadata', () => { if (info && !info.loading && !(info.duration > 0) && isFinite(pv.duration) && pv.duration > 0) { info.duration = pv.duration; $('pdur').hidden = false; $('pdur').textContent = fmtShort(pv.duration); draw(); } });
-pv.addEventListener('error', () => { if (pv.getAttribute('src')) { pv.hidden = true; $('pplay').hidden = true; } });
+pv.addEventListener('error', () => {
+  const src = pv.getAttribute('src'); if (!src) return;
+  // through 3zT with the site's headers didn't play: the plain address, once (some servers can't be read in parts)
+  if (/^ztpv:/.test(src) && info && info.previewDirect && /^https?:/i.test(info.previewDirect)) { const d = info.previewDirect; info.previewDirect = ''; pv.src = d; return; }
+  pv.hidden = true; $('pplay').hidden = true; $('pvol').hidden = true;
+});
 // the preview only plays the chosen part
 $('pm').onclick = () => {
   if (pv.hidden || !pv.getAttribute('src')) return;

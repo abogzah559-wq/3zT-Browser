@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="toolbar.css">
 </head>
 <body>
+<div id="tprev" hidden><div class="img"></div><div class="tx"><div class="t"></div><div class="h"></div></div></div>
 <div id="strip">
   <div id="winctl">
     <button class="wb" id="wMin" data-tip="min"><svg viewBox="0 0 12 12"><path d="M2 6h8"/></svg></button>
@@ -20,6 +21,7 @@
     <div id="tabs">
       <div id="tabList"></div>
       <button class="ib sm" id="newTab" data-tip="newtab"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button class="ib sm" id="tabSearch" data-tip="tabsearch"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
       <div id="dropMark" hidden></div>
     </div>
 
@@ -44,6 +46,7 @@
         <button type="button" class="ib sm fbtn" id="findNext"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
         <button type="button" class="ib sm fbtn" id="findClose"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
         <button type="button" class="ib sm" id="permChip" hidden><svg viewBox="0 0 24 24" id="permChipIco"></svg></button>
+        <button type="button" class="ib sm" id="readerBtn" data-tip="reader" hidden><svg viewBox="0 0 24 24"><path d="M4 5.5c2.6-.9 5.3-.6 8 1.2 2.7-1.8 5.4-2.1 8-1.2v13c-2.6-.9-5.3-.6-8 1.2-2.7-1.8-5.4-2.1-8-1.2z"/><path d="M12 6.7v13"/></svg></button>
         <button type="button" class="ib sm" id="mediaBtn" data-tip="media" hidden><img src="dl-fox.png" alt=""></button>
         <button type="button" class="ib sm" id="star" data-tip="star"><svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8-4.3-4.1 5.9-.9z"/></svg></button>
         <div id="load"></div>
