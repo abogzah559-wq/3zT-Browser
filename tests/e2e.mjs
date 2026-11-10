@@ -596,6 +596,8 @@ async function features() {
     await shot(tb, 'tab-search');
     await tb.ev(`(() => { const i = document.getElementById('tsIn'); i.value = 'w2'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return 1; })()`); await sleep(1200);
     ok('tab search: goes to the tab in the other window without loading it again', !hits['/plain'], JSON.stringify(hits));
+    // close the second window again (the next tests, and the update test that starts with this profile, expect one)
+    { const nb2 = (await bars()).find(t => !had.includes(t.id)); if (nb2) { const c = await connect(nb2); await c.ev(`ui.send('win', 'close'), 1`).catch(() => {}); c.close(); await sleep(1500); } }
     tb.close();
     // ---- cookie popups (DuckDuckGo Autoconsent, bundled in the setup) ----
     const bundled = fs.existsSync(path.join(path.dirname(exe), 'resources', 'app', 'src', 'vendor', 'autoconsent', 'autoconsent.cjs.js')) || fs.existsSync(path.join(appDir || '', 'src', 'vendor', 'autoconsent', 'autoconsent.cjs.js'));
