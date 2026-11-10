@@ -320,6 +320,8 @@ async function mediaTest() {
     }
     if (q.url === '/watch') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch</title><video src="/clip.mp4" controls width=640 height=360></video>'); }
     if (q.url === '/watch2') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch2</title><video src="/clip.mp4?norange" controls></video>'); }
+    if (q.url.startsWith('/hevc.mp4') && fs.existsSync(vid.replace('clip.mp4', 'hevc.mp4'))) { const b = fs.readFileSync(vid.replace('clip.mp4', 'hevc.mp4')); r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length, 'Accept-Ranges': 'none' }); return r.end(b); }
+    if (q.url === '/watch3') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch3</title><video src="/hevc.mp4" controls></video>'); }
     r.writeHead(404); r.end();
   }).listen(8792, '127.0.0.1');
   try {
@@ -334,6 +336,7 @@ async function mediaTest() {
       if (!j || j.error) return j;
       return poll(async () => { const s = await mp.ev(`zeus.mediaList().then(d => d.jobs.find(x => x.id === ${JSON.stringify(j.id)}))`); return s && s.state !== 'running' ? s : null; }, ms, 1500);
     };
+    const ff = [path.join(path.dirname(exe), 'resources', 'tools', 'ffmpeg', 'ffmpeg.exe'), path.join(process.env.APPDATA || '', '3zT Browser', 'media', 'tools', 'ffmpeg', 'ffmpeg.exe')].find(f => fs.existsSync(f)) || '';
     const tools = await mp.ev('zeus.mediaList().then(d => d.tools.ready)');
     ok('download tools come with the setup (ready at once)', tools === true);
     const yt = await job({ url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', mode: 'video', q: '360' });
@@ -342,12 +345,13 @@ async function mediaTest() {
     const mp3 = await job({ url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', mode: 'audio' });
     console.log(`::notice title=media youtube mp3::${mp3 && mp3.state} ${mp3 && (mp3.error || mp3.file || '')}`.replace(/\n/g, ' '));
     const tk = await job({ url: 'https://www.tiktok.com/@scout2015/video/6718335390845095173', mode: 'video', q: 'best' });
-    console.log(`::notice title=media tiktok::${tk && tk.state} ${tk && (tk.error || tk.file || '')}`.replace(/\n/g, ' '));
+    const vcodec = f => { try { return execSync(`"${ff.replace('ffmpeg.exe', 'ffprobe.exe')}" -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "${f}"`).toString().trim(); } catch (e) { return ''; } };
+    console.log(`::notice title=media tiktok::${tk && tk.state} ${tk && (tk.error || tk.file || '')} ${tk && tk.file ? 'video ' + (vcodec(tk.file) || 'none') : ''}`.replace(/\n/g, ' '));
     const ph = await job({ url: 'https://www.tiktok.com/@yungfunnyvids/photo/7333434838539111712', mode: 'images' });
     console.log(`::notice title=media photos::${ph && ph.state} ${ph && (ph.error || (ph.items || []).length + ' items')}`.replace(/\n/g, ' '));
     // a local video made with the downloaded ffmpeg: download, trim exact and fast
-    const ff = [path.join(path.dirname(exe), 'resources', 'tools', 'ffmpeg', 'ffmpeg.exe'), path.join(process.env.APPDATA || '', '3zT Browser', 'media', 'tools', 'ffmpeg', 'ffmpeg.exe')].find(f => fs.existsSync(f)) || '';
     if (fs.existsSync(ff)) execSync(`"${ff}" -loglevel error -y -f lavfi -i testsrc=size=640x360:rate=30 -f lavfi -i sine=frequency=440 -t 20 -c:v libx264 -g 60 -c:a aac -shortest "${vid}"`);
+    if (fs.existsSync(vid)) try { execSync(`"${ff}" -loglevel error -y -i "${vid}" -c:v libx265 -tag:v hvc1 -c:a copy "${vid.replace('clip.mp4', 'hevc.mp4')}"`); } catch (e) {}
     const probe = f => { try { return +execSync(`"${ff.replace('ffmpeg.exe', 'ffprobe.exe')}" -v error -show_entries format=duration -of csv=p=0 "${f}"`).toString().trim(); } catch (e) { return 0; } };
     const inf = await mp.ev(`zeus.mediaInfo('http://127.0.0.1:8792/clip.mp4')`);
     // a bare video file has no metadata (sites give title, picture, length, channel)
@@ -364,20 +368,30 @@ async function mediaTest() {
     // the window itself: the link's preview and timeline come first, then only the chosen part is downloaded
     const cutUi = async (page, s0, e0, how) => {
       await mp.ev(`(murl.value = ${JSON.stringify(page)}, murl.dispatchEvent(new Event('change')), 1)`);
-      const ready = await poll(() => mp.ev('info && info.url === murl.value && !info.loading && info.duration > 0 && !document.getElementById("cut").hidden ? JSON.stringify({ d: info.duration, pv: !pvv.hidden }) : null'), 60000);
+      const ready = await poll(() => mp.ev('info && info.url === murl.value && !info.loading && info.duration > 0 && (s0 => s0 == null || !document.getElementById("cut").hidden)(' + JSON.stringify(s0) + ') ? JSON.stringify({ d: info.duration, pv: !pvv.hidden, vol: pvv.volume }) : null'), 60000);
       if (!ready) return { ready };
       const t0 = Date.now();
-      await mp.ev(`(tsi.value = ${JSON.stringify(s0)}, tsi.dispatchEvent(new Event('change')), tei.value = ${JSON.stringify(e0)}, tei.dispatchEvent(new Event('change')), document.querySelector('input[name=cm][value=${how}]').checked = true, mgo.click(), 1)`);
+      // the handles, the way a mouse moves them (the slider runs 0..1000 over the video's length)
+      if (s0 != null) await mp.ev(`(() => { const d = dur(); ts.value = Math.round(${+s0} / d * 1000); ts.dispatchEvent(new Event('input')); te.value = Math.round(${+e0} / d * 1000); te.dispatchEvent(new Event('input')); document.querySelector('input[name=cm][value=${how}]').checked = true; return 1; })()`);
+      const had = await mp.ev('zeus.mediaList().then(d => d.jobs.map(j => j.id))') || [];
+      await mp.ev('mgo.click(), 1');
       await sleep(800);
-      const j = await poll(async () => { const x = await mp.ev(`zeus.mediaList().then(d => d.jobs.find(j => j.url === ${JSON.stringify(page)} && j.state !== 'running' && j.state !== 'trim'))`); return x || null; }, 120000, 700);
+      const j = await poll(async () => { const x = await mp.ev(`zeus.mediaList().then(d => d.jobs.find(j => !${JSON.stringify(had)}.includes(j.id) && j.url === ${JSON.stringify(page)} && j.state !== 'running' && j.state !== 'trim'))`); return x || null; }, 120000, 700);
       return { ready, j, d: j && j.file ? probe(j.file) : 0, secs: ((Date.now() - t0) / 1000).toFixed(1), label: await mp.ev('mgoT.textContent') };
     };
-    const c1 = await cutUi('http://127.0.0.1:8792/watch', '0:05.3', '0:09.1', 'exact');
-    ok('downloader window: preview and timeline show before downloading', !!c1.ready, c1.ready);
+    const c1 = await cutUi('http://127.0.0.1:8792/watch', 5.3, 9.1, 'exact');
+    ok('downloader window: preview and timeline show before downloading, sound at a quarter', !!c1.ready && JSON.parse(c1.ready).vol === 0.25, c1.ready);
+    const noScroll = await mp.ev(`(() => { const m = document.querySelector('main'); return JSON.stringify({ sh: m.scrollHeight, ch: m.clientHeight, doc: document.documentElement.scrollHeight, win: innerHeight, boxes: !!document.getElementById('tsi') }); })()`);
+    ok('downloader window: everything fits, no scrolling, no time boxes', (j => j.sh <= j.ch + 1 && j.doc <= j.win + 1 && !j.boxes)(JSON.parse(noScroll)), noScroll);
     ok('only the chosen part is downloaded (frame-exact)', Math.abs(c1.d - 3.8) < 0.2, `${c1.d} s in ${c1.secs} s, button "${c1.label}"`);
-    const c2 = await cutUi('http://127.0.0.1:8792/watch2', '0:04', '0:12', 'fast');
+    const c2 = await cutUi('http://127.0.0.1:8792/watch2', 4, 12, 'fast');
     // ffmpeg can often still read such a site straight through; if it can't, the whole video is cut here ("(clip)" in the name). Either way: the right part
     ok('a site that cannot send parts still gives just the chosen part', c2.d > 7 && c2.d < 12.6, `${c2.d} s in ${c2.secs} s, ${c2.j && c2.j.name} (${/\(clip\)/.test((c2.j && c2.j.name) || '') ? 'cut here' : 'read straight through'})`);
+    // a video only in HEVC (Windows can't play it without a paid add-on): saved as H.264, whole and as a part
+    const c3 = await cutUi('http://127.0.0.1:8792/watch3', null, null, 'fast');
+    ok('an HEVC video is saved as H.264 (plays everywhere)', c3.j && c3.j.file && vcodec(c3.j.file) === 'h264' && Math.abs(c3.d - 20) < 0.5, `${c3.j && c3.j.file} ${c3.j && c3.j.file && vcodec(c3.j.file)} ${c3.d} s ${c3.j && c3.j.error || ''}`);
+    const c4 = await cutUi('http://127.0.0.1:8792/watch3', 2, 7, 'fast');
+    ok('…and a part of it too', c4.j && c4.j.file && vcodec(c4.j.file) === 'h264' && c4.d > 4.5 && c4.d < 9, `${c4.j && c4.j.name} ${c4.d} s`);
     const id = await dp.ev(`zeus.dlList().then(d => (d.items.find(x => x.media && /clip/.test(x.name) && !/\\(clip\\)/.test(x.name)) || {}).id)`);
     if (id) {
       const r = await dp.ev(`zeus.mediaTrimFile(${JSON.stringify(id)}, { start: 4, end: 12, exact: false })`);
@@ -488,6 +502,109 @@ async function passkeys() {
   } finally { srv.close(); }
 }
 
+/* ---------- 0.15.1 features: reader view, picture in picture, tab cards, tab search, cookie popups ---------- */
+const FEAT_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+const featPara = n => Array.from({ length: n }, (_, i) => `<p>هذه فقرة رقم ${i + 1} من المقال، وفيها كلام كثير عن الموضوع حتى يكون النص طويلاً بما يكفي ليعتبره المتصفح مقالاً حقيقياً يستحق القراءة بهدوء وتركيز.</p>`).join('');
+const FEAT_ARTICLE = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>مقال تجريبي</title></head><body><nav><a href="/">الرئيسية</a></nav><div class="ad">إعلان مزعج</div>
+<article><h1>مقال تجريبي</h1>${featPara(6)}<figure><img src="/pic.png" alt="أ"><figcaption>تعليق الصورة الأولى</figcaption></figure>${featPara(3)}
+<p>رابط <a href="javascript:alert(1)">خبيث</a> و<a href="https://example.com/">سليم</a></p><script>window.__bad=1</script><iframe src="/x"></iframe><p onclick="window.__bad=2">فقرة</p>
+<figure><img data-src="/pic.png" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="ب"><figcaption>تعليق الصورة الثانية</figcaption></figure>${featPara(4)}</article></body></html>`;
+// a page with a consent popup built like OneTrust's (the most common one): "Reject all" must be pressed for us
+const FEAT_COOKIES = `<!doctype html><meta charset="utf-8"><title>cookies</title><body><p>content</p>
+<div id="onetrust-consent-sdk"><div id="onetrust-banner-sdk" style="position:fixed;bottom:0;left:0;right:0;background:#fff;padding:20px">We use cookies
+<button id="onetrust-accept-btn-handler">Accept all</button><button id="onetrust-reject-all-handler">Reject all</button></div></div>
+<script>window.OnetrustActiveGroups=',C0001,C0002,C0003,';window.__choice='';
+document.getElementById('onetrust-reject-all-handler').onclick=()=>{window.__choice='reject';window.OnetrustActiveGroups=',C0001,';document.getElementById('onetrust-banner-sdk').style.display='none';};
+document.getElementById('onetrust-accept-btn-handler').onclick=()=>{window.__choice='accept';document.getElementById('onetrust-banner-sdk').style.display='none';};</script></body>`;
+async function features() {
+  let hits = {};
+  const srv = http.createServer((q, r) => {
+    const u = q.url.split('?')[0]; hits[u] = (hits[u] || 0) + 1;
+    const html = h => { r.setHeader('Content-Type', 'text/html; charset=utf-8'); r.end(h); };
+    if (u === '/article') return html(FEAT_ARTICLE);
+    if (u === '/plain') return html('<!doctype html><title>plain</title><body><button>زر</button></body>');
+    if (u === '/cookies') return html(FEAT_COOKIES);
+    if (u === '/video') return html('<!doctype html><title>video page</title><body style="margin:0"><video src="/clip.mp4" muted loop autoplay style="width:640px;height:360px;display:block;margin:40px"></video></body>');
+    if (u === '/pic.png') { r.setHeader('Content-Type', 'image/png'); return r.end(FEAT_PNG); }
+    if (u === '/clip.mp4' && fs.existsSync(path.join(OUT, 'clip.mp4'))) { const b = fs.readFileSync(path.join(OUT, 'clip.mp4')); r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length }); return r.end(b); }
+    r.writeHead(404); r.end();
+  }).listen(8794, '127.0.0.1');
+  const B = 'http://127.0.0.1:8794';
+  try {
+    // ---- reader view ----
+    await go(B + '/article', true);
+    await find(u => u.startsWith(B + '/article'), 30);
+    const btn = await poll(async () => { const tb = await toolbar(); const v = await tb.ev('S.url.includes("/article") && !document.getElementById("readerBtn").hidden && getComputedStyle(document.getElementById("readerBtn")).display !== "none"'); tb.close(); return v; }, 15000);
+    ok('reader view: the book button shows on an article', !!btn);
+    if (btn) {
+      { const tb = await toolbar(); await tb.ev(`document.getElementById('readerBtn').click(), 1`); tb.close(); }
+      const rt = await find(u => u.includes('newtab/reader.html'), 30);
+      const rc = rt && await connect(rt);
+      const r = rc && JSON.parse(await poll(() => rc.ev(`document.getElementById('tt').textContent ? JSON.stringify({ dir: document.documentElement.dir, imgs: [...document.querySelectorAll('article img')].map(i => i.getAttribute('src')),
+        caps: [...document.querySelectorAll('article figcaption')].map(f => f.textContent), bad: document.querySelectorAll('article script, article iframe').length + [...document.querySelectorAll('article *')].filter(e => [...e.attributes].some(a => /^on/i.test(a.name))).length,
+        js: [...document.querySelectorAll('article a')].filter(a => !/^https?:/.test(a.href)).length, ran: !!window.__bad, ad: /إعلان مزعج/.test(document.body.textContent) }) : null`), 10000) || '{}');
+      ok('reader view: the article with its pictures and captions, right to left', r && r.dir === 'rtl' && r.imgs.length === 2 && r.imgs.every(x => x === B + '/pic.png') && r.caps.join('|') === 'تعليق الصورة الأولى|تعليق الصورة الثانية' && !r.ad, JSON.stringify(r));
+      ok('reader view: nothing of the page can run (no script, frame, handlers, javascript: links)', r && r.bad === 0 && r.js === 0 && !r.ran, JSON.stringify(r));
+      const addr = await (async () => { const tb = await toolbar(); const v = await tb.ev('document.getElementById("addr").value'); tb.close(); return v; })();
+      ok('reader view: the address bar shows the article\'s address', addr === B + '/article', addr);
+      if (rc) { await shot(rc, 'reader'); rc.close(); }
+    }
+    await go(B + '/plain', true); await find(u => u.startsWith(B + '/plain'), 30); await sleep(3000);
+    const noBtn = await (async () => { const tb = await toolbar(); const v = await tb.ev('getComputedStyle(document.getElementById("readerBtn")).display === "none" && getComputedStyle(document.getElementById("mediaBtn")).display === "none"'); tb.close(); return v; })();
+    ok('reader view: no book button (and no download button) on a page that is not an article', noBtn === true);
+    // ---- picture in picture ----
+    await go(B + '/video', true);
+    const vt = await find(u => u.startsWith(B + '/video'), 30);
+    if (vt && fs.existsSync(path.join(OUT, 'clip.mp4'))) {
+      const vc = await connect(vt); await sleep(2500);
+      for (const [x, y] of [[300, 200], [330, 220]]) { await vc.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }); await sleep(250); }
+      await sleep(300);
+      for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await vc.send('Input.dispatchMouseEvent', { type, x: 360, y: 64, button: 'left', clickCount: 1 });
+      const pip = await poll(() => vc.ev('!!document.pictureInPictureElement'), 4000);
+      ok('picture in picture: the button over a video opens it', !!pip);
+      await vc.ev('document.pictureInPictureElement ? document.exitPictureInPicture().then(() => 1) : 1');
+      vc.close();
+    } else ok('picture in picture: the button over a video opens it', false, 'no video page');
+    // ---- tab cards and tab search ----
+    const tb = await toolbar();
+    await tb.ev(`ui.send('tab', 'activate', S.tabs.find(t => t.url.includes('/video')).id), 1`); await sleep(800);
+    const rects = JSON.parse(await tb.ev(`JSON.stringify([...document.querySelectorAll('.tab')].map(e => { const r = e.getBoundingClientRect(); return { id: e.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2, url: (S.tabs.find(t => String(t.id) === e.dataset.id) || {}).url }; }))`));
+    const vtab = rects.find(r => (r.url || '').includes('/video')), other = rects.find(r => r !== vtab);
+    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vtab.x, y: vtab.y }); await sleep(1000);   // entering the strip: the tab you are on is pictured
+    await tb.ev(`ui.send('tab', 'activate', ${other.id}), 1`); await sleep(700);
+    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: other.x, y: other.y }); await sleep(200);
+    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vtab.x, y: vtab.y + 1 });
+    const card = await poll(async () => { const v = await tb.ev(`(() => { const p = document.getElementById('tprev'); return p.classList.contains('on') && p.classList.contains('pic') ? p.querySelector('.t').textContent : null; })()`); return v; }, 5000);
+    ok('tab hover card: title and a picture of the tab', /video page/.test(card || ''), card);
+    await shot(tb, 'tab-card');
+    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 700 }); await sleep(300);
+    const bars = async () => (await targets()).filter(t => t.type === 'page' && t.url.includes('ui/toolbar.html'));
+    const had = (await bars()).map(t => t.id);
+    await tb.ev(`ui.send('tab', 'newWindow'), 1`); await sleep(2500);
+    const nb = (await bars()).find(t => !had.includes(t.id));
+    const tb2 = nb ? await connect(nb) : null;
+    if (tb2) { await tb2.ev(`ui.send('tab', 'go', ${JSON.stringify({ text: B + '/plain?w2', newTab: false })}), 1`); await sleep(2500); tb2.close(); }
+    hits = {};
+    await tb.ev(`openDrop('tabs', document.getElementById('tabSearch')), 1`); await sleep(800);
+    const listed = JSON.parse(await tb.ev(`JSON.stringify([...document.querySelectorAll('#drop .mi')].map(b => b.textContent.replace(/\\s+/g, ' ').trim()))`) || '[]');
+    ok('tab search: tabs of every window, with the window name', listed.some(x => /plain/.test(x) && /(نافذة|Window) 2/.test(x)) && listed.some(x => /video page/.test(x)), JSON.stringify(listed).slice(0, 400));
+    await shot(tb, 'tab-search');
+    await tb.ev(`(() => { const i = document.getElementById('tsIn'); i.value = 'w2'; i.dispatchEvent(new Event('input')); i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); return 1; })()`); await sleep(1200);
+    ok('tab search: goes to the tab in the other window without loading it again', !hits['/plain'], JSON.stringify(hits));
+    tb.close();
+    // ---- cookie popups (DuckDuckGo Autoconsent, bundled in the setup) ----
+    const bundled = fs.existsSync(path.join(path.dirname(exe), 'resources', 'app', 'src', 'vendor', 'autoconsent', 'autoconsent.cjs.js')) || fs.existsSync(path.join(appDir || '', 'src', 'vendor', 'autoconsent', 'autoconsent.cjs.js'));
+    if (bundled) {
+      await go(B + '/cookies', true);
+      const ct = await find(u => u.startsWith(B + '/cookies'), 30);
+      const cc = ct && await connect(ct);
+      const choice = cc && await poll(() => cc.ev('window.__choice || null'), 15000);
+      ok('cookie popups: answered "reject" by themselves', choice === 'reject', String(choice));
+      if (cc) cc.close();
+    } else console.log('::notice title=cookie popups::Autoconsent not bundled here (fetched at build time), not tested');
+  } finally { srv.close(); }
+}
+
 async function arablocn() {
   // reported: "the site goes to another page, comes straight back, nothing downloads". Follow a real game page and its download button.
   const note = (t, m) => console.log(`::notice title=arablocn ${t}::` + String(m).replace(/%/g, '%25').replace(/\r?\n/g, '%0A').slice(0, 3500));
@@ -530,8 +647,10 @@ async function main() {
   const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
+  if (only === 'features') await features();
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   if (process.platform === 'win32') { await mediaTest(); await arablocn(); await passkeys(); }
+  await features();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);
     // Dark Reader really runs on websites

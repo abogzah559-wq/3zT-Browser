@@ -113,7 +113,7 @@ const pkCode = (mode, ua) => `(() => {
   install(window);
 })();`;
 
-const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media)\.html$/i.test(decodeURIComponent(location.pathname));
+const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media|reader)\.html$/i.test(decodeURIComponent(location.pathname));
 
 if (SUB) {
   // a sign-in box embedded from another site must not open Windows' passkey window by itself either
@@ -163,6 +163,7 @@ if (SUB) {
     mediaTake: () => ipcRenderer.invoke('media:take'),
     mediaInfo: url => ipcRenderer.invoke('media:info', url),
     mediaWindow: () => ipcRenderer.send('media:window'),
+    readerGet: k => ipcRenderer.invoke('reader:get', k),
     mediaList: () => ipcRenderer.invoke('media:list'),
     mediaStart: o => ipcRenderer.invoke('media:start', o),
     mediaCancel: id => ipcRenderer.invoke('media:cancel', id),
@@ -366,6 +367,121 @@ if (SUB) {
     let ua = '';
     if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
     if (cfg.pk !== 'nofix' || ua) inMainWorld(pkCode(cfg.pk || 'off', ua));
+  }
+
+  /* ================= reader view: does this page look like an article? (after it has loaded, when the page is idle) =================
+     Mozilla's isProbablyReaderable: a few element counts, no copy of the page. The article itself is only taken out
+     when you press the button (reader:extract). */
+  if (cfg.reader) {
+    const probe = async () => {
+      try {
+        const code = await ipcRenderer.invoke('reader:code', 'probe'); if (!code) return;
+        const m = { exports: {} }; new Function('module', code)(m);
+        const yes = typeof m.exports === 'function' && m.exports(document, { minContentLength: 140, minScore: 20 });
+        ipcRenderer.send('reader:able', !!yes);
+      } catch (e) {}
+    };
+    const later = () => (window.requestIdleCallback ? requestIdleCallback(probe, { timeout: 3000 }) : setTimeout(probe, 800));
+    if (document.readyState === 'complete') later(); else window.addEventListener('load', later, { once: true });
+    ipcRenderer.on('reader:extract', async (e, nonce) => {
+      let out = null;
+      try {
+        const code = await ipcRenderer.invoke('reader:code', 'full');
+        const m = { exports: {} }; new Function('module', code)(m);
+        const doc = document.cloneNode(true);
+        // pictures that load only when scrolled to: their real address
+        for (const img of doc.querySelectorAll('img')) {
+          const real = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original') || img.getAttribute('data-url');
+          if (real && (!img.getAttribute('src') || /^data:|blank|placeholder|spacer/i.test(img.getAttribute('src')))) img.setAttribute('src', real);
+          const ss = img.getAttribute('data-srcset'); if (ss && !img.getAttribute('srcset')) img.setAttribute('srcset', ss);
+        }
+        const a = new m.exports(doc, { charThreshold: 300, keepClasses: false }).parse();
+        if (a && a.content) out = { title: a.title, byline: a.byline, siteName: a.siteName, lang: a.lang || document.documentElement.lang || '', dir: a.dir || document.documentElement.dir || '', publishedTime: a.publishedTime, content: a.content };
+      } catch (x) {}
+      ipcRenderer.send('reader:article', nonce, out);
+    });
+  }
+
+  /* ================= picture in picture: a small button over the video under the mouse =================
+     Only while the page has a video; the mouse is looked at a few times a second, nothing else runs. */
+  if (cfg.pip && document.pictureInPictureEnabled !== false) {
+    const vids = document.getElementsByTagName('video');   // live list: costs nothing to keep
+    let host = null, btn = null, cur = null, hideT = 0, last = 0, mx = -1, my = -1;
+    const L = (a, e) => (cfg.lang === 'en' ? e : a);
+    const make = () => {
+      host = document.createElement('div');
+      host.style.cssText = 'position:fixed;z-index:2147483647;top:0;left:0;width:0;height:0;pointer-events:none';
+      const sh = host.attachShadow({ mode: 'closed' });
+      sh.innerHTML = '<style>button{all:unset;pointer-events:auto;position:fixed;display:flex;align-items:center;gap:6px;padding:6px 11px 6px 9px;border-radius:999px;background:rgba(15,15,20,.78);color:#fff;font:600 12px/1 "Segoe UI",system-ui,sans-serif;cursor:pointer;opacity:0;transform:translateY(-4px);transition:opacity .14s ease,transform .14s ease;backdrop-filter:blur(8px);box-shadow:0 2px 10px rgba(0,0,0,.35)}button.on{opacity:1;transform:none}button:hover{background:rgba(30,30,38,.92)}svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}</style>'
+        + '<button part="b"><svg viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><rect x="12" y="11.5" width="7.5" height="6" rx="1.2" fill="currentColor" stroke="none"/></svg><span></span></button>';
+      btn = sh.querySelector('button');
+      btn.addEventListener('mousedown', e => { e.stopPropagation(); e.preventDefault(); }, true);
+      btn.addEventListener('click', async e => {
+        e.stopPropagation(); e.preventDefault();
+        try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (cur) await cur.requestPictureInPicture(); } catch (x) {}
+        hide();
+      }, true);
+      btn.addEventListener('mouseenter', () => clearTimeout(hideT));
+      btn.addEventListener('mouseleave', () => { hideT = setTimeout(hide, 900); });
+      (document.body || document.documentElement).appendChild(host);
+    };
+    const hide = () => { if (btn) btn.classList.remove('on'); cur = null; };
+    const show = v => {
+      if (!host || !host.isConnected) make();
+      const r = v.getBoundingClientRect();
+      btn.querySelector('span').textContent = document.pictureInPictureElement === v ? L('رجّعه للصفحة', 'Back to page') : L('صورة داخل صورة', 'Picture in picture');
+      btn.style.top = Math.max(8, r.top + 12) + 'px';
+      btn.style.left = Math.round(r.left + r.width / 2) + 'px';
+      btn.style.translate = '-50% 0';
+      btn.classList.add('on'); cur = v;
+      clearTimeout(hideT); hideT = setTimeout(hide, 2200);
+    };
+    const check = () => {
+      if (!vids.length || mx < 0) return;
+      let hit = null;
+      for (const v of vids) {
+        if (v.disablePictureInPicture || v.readyState === 0) continue;
+        const r = v.getBoundingClientRect();
+        if (r.width < 240 || r.height < 135) continue;   // ads and thumbnails stay alone
+        if (mx >= r.left && mx <= r.right && my >= r.top && my <= r.bottom) { hit = v; break; }
+      }
+      if (hit) { if (!btn || hit !== cur || !btn.classList.contains('on')) show(hit); else { clearTimeout(hideT); hideT = setTimeout(hide, 2200); } }
+    };
+    document.addEventListener('mousemove', e => {
+      mx = e.clientX; my = e.clientY;
+      if (!vids.length) return;
+      const now = performance.now(); if (now - last < 120) return; last = now;
+      check();
+    }, { passive: true, capture: true });
+    document.addEventListener('scroll', () => { if (btn && btn.classList.contains('on')) hide(); }, { passive: true, capture: true });
+  }
+
+  /* ================= cookie popups: answered "reject" by DuckDuckGo's Autoconsent (see main.js, AC) =================
+     Runs here, beside the page (not in it); the few checks that must read the page's own variables (a CMP's API)
+     are its small built-in functions, run in the page. Starts after the first paint: the page never waits for it. */
+  if (cfg.cookies) {
+    const go = async () => {
+      let r = null; try { r = await ipcRenderer.invoke('ac:get'); } catch (e) {}
+      if (!r || !r.code) return;
+      try {
+        const m = { exports: {} }; new Function('module', 'exports', r.code)(m, m.exports);
+        const AutoConsent = m.exports.default, snippets = m.exports.evalSnippets || {};
+        if (typeof AutoConsent !== 'function') return;
+        let ac = null;
+        const send = async msg => {
+          if (!msg || !ac) return;
+          if (msg.type === 'eval') {
+            let result = false;
+            const f = snippets[msg.snippetId];
+            if (typeof f === 'function') try { result = !!(await webFrame.executeJavaScript('(' + f.toString() + ')()')); } catch (e) {}
+            ac.receiveMessageCallback({ type: 'evalResp', id: msg.id, result });
+          } else if (msg.type === 'autoconsentDone' || (msg.type === 'optOutResult' && msg.result)) ipcRenderer.send('ac:done', msg.cmp);
+        };
+        ac = new AutoConsent(send, { enabled: true, autoAction: 'optOut', enablePrehide: false, enableCosmeticRules: true, enableGeneratedRules: true, detectRetries: 20, isMainWorld: false, logs: { lifecycle: false, rulesteps: false, detectionsteps: false, evals: false, errors: false, messages: false, waits: false } },
+          { autoconsent: [], compact: r.rules });
+      } catch (e) {}
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(go, 0), { once: true }); else setTimeout(go, 0);
   }
 
   if (cfg.yt) {

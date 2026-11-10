@@ -97,12 +97,14 @@ const PASSWORDS_FILE = path.join(SRC, 'newtab', 'passwords.html');
 const SETTINGS_FILE = path.join(SRC, 'newtab', 'settings.html');
 const DOWNLOADS_FILE = path.join(SRC, 'newtab', 'downloads.html');
 const MEDIA_FILE = path.join(SRC, 'newtab', 'media.html');
+const READER_FILE = path.join(SRC, 'newtab', 'reader.html');
 const NEWTAB_URL = pathToFileURL(NEWTAB_FILE).href;
 const HISTORY_URL = pathToFileURL(HISTORY_FILE).href;
 const TASKS_URL = pathToFileURL(TASKS_FILE).href;
 const PASSWORDS_URL = pathToFileURL(PASSWORDS_FILE).href;
 const SETTINGS_URL = pathToFileURL(SETTINGS_FILE).href;
 const DOWNLOADS_URL = pathToFileURL(DOWNLOADS_FILE).href;
+const READER_URL = pathToFileURL(READER_FILE).href;
 const UI_FILE = path.join(SRC, 'ui', 'toolbar.html');
 const PRELOAD_UI = path.join(SRC, 'preload-ui.js');
 const PRELOAD_TAB = path.join(SRC, 'preload-newtab.js');
@@ -117,8 +119,11 @@ const isTasks = u => same(u, TASKS_URL);
 const isPasswords = u => same(u, PASSWORDS_URL);
 const isSettings = u => same(u, SETTINGS_URL);
 const isDownloads = u => same(u, DOWNLOADS_URL);
-const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u) || isSettings(u) || isDownloads(u);
-const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? '3zt://history' : isTasks(u) ? '3zt://tasks' : isPasswords(u) ? '3zt://passwords' : isSettings(u) ? '3zt://settings' : isDownloads(u) ? '3zt://downloads' : u);
+const isReader = u => same(u, READER_URL);
+const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u) || isSettings(u) || isDownloads(u) || isReader(u);
+// reader view: the article's own address is shown (it is in the page's address: reader.html?k=…&u=<address>)
+const readerSrc = u => { try { const x = new URL(u).searchParams.get('u') || ''; return /^https?:\/\//i.test(x) ? x : ''; } catch (e) { return ''; } };
+const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? '3zt://history' : isTasks(u) ? '3zt://tasks' : isPasswords(u) ? '3zt://passwords' : isSettings(u) ? '3zt://settings' : isDownloads(u) ? '3zt://downloads' : isReader(u) ? readerSrc(u) : u);
 
 /* ---------- tiny JSON stores (debounced, atomic save) ---------- */
 function makeStore(name, def) {
@@ -348,6 +353,7 @@ class Win {
         })(),
         ytAds: settings.data.ytAds !== false,
         media: !!(t && (t.media || t.mediaSeen) && /^https?:/i.test(url)),
+        reader: !!(t && t.readerable && /^https?:/i.test(url) && settings.data.reader !== false), readerOn: isReader(url),
         dl: dlSummary(),
         isDefault: isDefaultCache, canDefault: process.platform === 'win32',
         pinned: pinnedExtensions(),
@@ -416,6 +422,7 @@ class Win {
     const t = this.tab(id); if (!t) return;
     if (!isInternal(t.url) && !this.private && !opts.forget) { closedStack.push({ url: t.url, title: t.title }); if (closedStack.length > 25) closedStack.shift(); }
     cancelPermissionsOf(t);
+    thumbs.delete(t.id);
     this.releaseTab(t);
     if (t.view) destroyView(t.view);
     if (!this.tabs.length) { this.win.close(); return; }
@@ -523,7 +530,7 @@ function makeView(tab, fromOpener) {
   });
   const nav = (e, url, inPage) => {
     if (url && url !== 'about:blank') tab.committed = true;
-    if (!inPage) tab.mediaSeen = false;   // a new document: it reports its own videos again
+    if (!inPage) { tab.mediaSeen = false; tab.readerable = false; tab.navSeq = (tab.navSeq || 0) + 1; }   // a new document: it reports its own videos / article again
     tab.media = knownMediaPage(url);
     const wasFlush = isNewtab(tab.url);
     tab.url = url;
@@ -568,6 +575,7 @@ function loadInto(tab, url) {
   else if (isPasswords(url)) wc.loadFile(PASSWORDS_FILE).catch(() => {});
   else if (isSettings(url)) wc.loadFile(SETTINGS_FILE).catch(() => {});
   else if (isDownloads(url)) wc.loadFile(DOWNLOADS_FILE).catch(() => {});
+  else if (isReader(url)) wc.loadURL(url).catch(() => {});
   else wc.loadURL(url).catch(() => {});
 }
 
@@ -842,6 +850,31 @@ function shortcutKey(i) {
   const map = { Equal: '=', Minus: '-', NumpadAdd: '+', NumpadSubtract: '-', Numpad0: '0' };
   return map[code] || (i.key || '').toLowerCase();
 }
+/* Picture in picture: the video under (x, y), else the one playing, else the biggest; again = back to the page.
+   Run with a user gesture (the shortcut / the menu), in the main page first, then in its frames (embedded players). */
+const PIP_JS = (x, y) => `(async () => {
+  try {
+    if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return 'exit'; }
+    const area = v => { const r = v.getBoundingClientRect(); return r.width * r.height; };
+    const vids = [...document.querySelectorAll('video')].filter(v => v.readyState > 0 && !v.disablePictureInPicture && area(v) > 0);
+    const x = ${+x || -1}, y = ${+y || -1};
+    let v = x >= 0 ? vids.find(v => { const r = v.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }) : null;
+    if (!v) v = vids.filter(v => !v.paused).sort((a, b) => area(b) - area(a))[0] || vids.sort((a, b) => area(b) - area(a))[0];
+    if (!v) return 'none';
+    await v.requestPictureInPicture(); return 'on';
+  } catch (e) { return 'error ' + e.name; }
+})()`;
+async function togglePip(wc, x, y) {
+  if (!wc || wc.isDestroyed()) return 'none';
+  const frames = [wc.mainFrame, ...wc.mainFrame.framesInSubtree.filter(f => f !== wc.mainFrame)];
+  for (const f of frames) {
+    let r = 'none';
+    try { r = await f.executeJavaScript(f === wc.mainFrame ? PIP_JS(x, y) : PIP_JS(-1, -1), true); } catch (e) { r = 'error ' + e.message; }
+    if (process.env.ZEUS_TEST) console.log('[3zT] pip', r);
+    if (r !== 'none') return r;
+  }
+  return 'none';
+}
 function handleKey(w, i) {
   if (i.type !== 'keyDown' || !w) return false;
   const c = i.control || i.meta, k = (c || i.alt) ? shortcutKey(i) : (i.key || '').toLowerCase();
@@ -862,6 +895,8 @@ function handleKey(w, i) {
   if (k === 'f3' && w.findText) { if (wc) wc.findInPage(w.findText, { forward: !i.shift, findNext: true }); return true; }
   if (i.alt && k === 'home') { if (t) { t.url = NEWTAB_URL; loadInto(t, NEWTAB_URL); w.layout(); w.focusAddress(); } return true; }
   if (c && i.shift && k === 'j') { if (wc) wc.openDevTools({ mode: 'right' }); return true; }
+  if (c && i.shift && k === 'a') { if (w.ui && !w.ui.webContents.isDestroyed()) { w.ui.webContents.focus(); w.ui.webContents.send('tab-search'); } return true; }
+  if (i.alt && !c && !i.shift && k === 'p') { if (wc && t && /^https?:/i.test(t.url || '')) togglePip(wc); return true; }   // picture in picture
   if (c && i.shift && k === 'delete') { const ex = allTabs().find(x => isSettings(x.url)); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(SETTINGS_URL); return true; }
   if (c && /^[1-8]$/.test(k)) { const x = w.tabs[+k - 1]; if (x) w.activate(x.id); return true; }
   if (c && k === '9') { const x = w.tabs[w.tabs.length - 1]; if (x) w.activate(x.id); return true; }
@@ -893,6 +928,38 @@ function zoom(w, d) {
   wc.setZoomFactor(Math.min(3, Math.max(0.3, Math.round((wc.getZoomFactor() + d) * 10) / 10))); w.pushState();
 }
 function cycle(w, dir) { if (w.tabs.length < 2) return; const i = w.tabs.findIndex(t => t.id === w.activeId); w.activate(w.tabs[(i + dir + w.tabs.length) % w.tabs.length].id); }
+/* ---------- tab hover cards: a small picture of each tab ----------
+   Taken once, of the tab you are on, when the mouse comes to the tab strip (that is when you are about to leave it),
+   and only if its page changed since. Kept in memory only, at most 40 (the oldest go), never for incognito. */
+const thumbs = new Map();   // tabId -> { url, seq, img (data URL), t }
+async function captureThumb(w) {
+  const t = w && w.active();
+  if (!t || !t.view || w.private || t.discarded || !/^https?:|^file:/i.test(t.url || '') || isNewtab(t.url)) return;
+  const old = thumbs.get(t.id);
+  if (old && old.url === t.url && old.seq === (t.navSeq || 0) && Date.now() - old.t < 60000) return;
+  try {
+    const img = await t.view.webContents.capturePage();
+    if (img.isEmpty()) return;
+    const sm = img.resize({ width: 320, quality: 'good' });
+    thumbs.delete(t.id);
+    thumbs.set(t.id, { url: t.url, seq: t.navSeq || 0, img: 'data:image/jpeg;base64,' + sm.toJPEG(72).toString('base64'), t: Date.now() });
+    while (thumbs.size > 40) thumbs.delete(thumbs.keys().next().value);
+  } catch (e) {}
+}
+/* ---------- tab search (Ctrl+Shift+A): every tab in every window, then the recently closed ones ---------- */
+function tabSearchList(w) {
+  const out = [];
+  wins.forEach((x, i) => {
+    if (x.private !== w.private || (x.private && x.partition !== w.partition)) return;   // incognito tabs only from their own incognito window
+    for (const t of x.tabs) out.push({ id: t.id, win: x.id, here: x === w, winN: i + 1, private: !!x.private, active: t.id === x.activeId,
+      title: t.title || shownUrl(t.url) || T('تبويب جديد', 'New tab'), url: shownUrl(t.url), favicon: isInternal(t.url) ? 'app' : (t.favicon || '') });
+  });
+  const closed = [];
+  if (!w.private) for (let i = closedStack.length - 1; i >= 0 && closed.length < 10; i--) {
+    const c = closedStack[i]; if (c && c.url && !Array.isArray(c.group)) closed.push({ closed: i, title: c.title || c.url, url: c.url, favicon: cachedFavicon(c.url) || '' });
+  }
+  return { tabs: out, closed };
+}
 function reopenClosed(w) {
   const c = closedStack.pop(); if (!c) return;
   // the tabs of the last session (browser closed with "restore my tabs" off): all of them, like Chrome
@@ -1009,6 +1076,7 @@ function contextMenu(tab, p) {
     items.push({ label: T('نسخ عنوان الصورة', 'Copy image address'), click: () => clipboard.writeText(p.srcURL) });
     items.push({ type: 'separator' });
   }
+  if (p.mediaType === 'video') items.push({ label: T('صورة داخل صورة', 'Picture in picture') + '\tAlt+P', click: () => togglePip(wc, p.x, p.y) });
   if ((p.mediaType === 'video' || p.mediaType === 'audio') && p.srcURL && /^https?:/i.test(p.srcURL)) {
     items.push({ label: p.mediaType === 'video' ? T('حفظ الفيديو باسم…', 'Save video as…') : T('حفظ الصوت باسم…', 'Save audio as…'), click: () => wc.downloadURL(p.srcURL) });
     items.push({ label: T('نسخ عنوان الملف', 'Copy media address'), click: () => clipboard.writeText(p.srcURL) });
@@ -1579,7 +1647,7 @@ function setupMediaIpc() {
     const { ses } = sesFor(e);
     try {
       const r = await mediaEngine().info({ url, cookies: await mediaCookies(url, ses), key: e.sender.id });
-      if (r && r.preview && r.previewHeaders) r.preview = previewLink(e.sender, r.preview, r.previewHeaders);
+      if (r && r.preview && r.previewHeaders) { r.previewDirect = r.preview; r.preview = previewLink(e.sender, r.preview, r.previewHeaders); }
       if (r) delete r.previewHeaders;
       return r;
     } catch (x) { return { error: String(x.message || x) }; }
@@ -1646,6 +1714,56 @@ function setupMediaIpc() {
     const r = await dialog.showOpenDialog(BrowserWindow.fromWebContents(e.sender) || undefined, { title: T('اختر مجلد الحفظ', 'Choose a folder'), defaultPath: cur, properties: ['openDirectory', 'createDirectory'] });
     if (!r.canceled && r.filePaths[0]) { settings.data.mediaDir = r.filePaths[0]; settings.save(); }
     return settings.data.mediaDir || cur;
+  });
+  /* ---------- reader view ----------
+     The page says whether it looks like an article (Mozilla's isProbablyReaderable, after it has loaded). Pressing the
+     button: the page's own preload takes the article out with Mozilla Readability (beside the page, not in it) and the
+     tab opens reader.html, which cleans it again and shows it. The article is kept here, for that tab only. */
+  const READER = { probe: null, full: null };
+  const readerCode = which => {
+    const f = which === 'full' ? 'Readability.js' : 'Readability-readerable.js';
+    if (!READER[which]) try { READER[which] = fs.readFileSync(path.join(SRC, 'vendor', 'readability', f), 'utf8'); } catch (e) { READER[which] = ''; }
+    return READER[which];
+  };
+  const readerDocs = new Map();   // key -> { tabId, url, article, t }
+  ipcMain.handle('reader:code', (e, which) => {
+    const t = tabOfWc(e.sender); let u = ''; try { u = e.senderFrame.url; } catch (x) {}
+    if (!t || e.senderFrame !== e.sender.mainFrame || !/^https?:/i.test(u) || settings.data.reader === false) return '';
+    return readerCode(which === 'full' ? 'full' : 'probe');
+  });
+  ipcMain.on('reader:able', (e, yes) => {
+    const t = tabOfWc(e.sender); if (!t || e.senderFrame !== e.sender.mainFrame || !!t.readerable === !!yes) return;
+    t.readerable = !!yes; if (t.id === t.win.activeId) t.win.pushState();
+  });
+  const readerPending = new Map();   // nonce -> resolve
+  ipcMain.on('reader:article', (e, nonce, a) => {
+    const r = readerPending.get(nonce); if (!r || r.wc !== e.sender.id || e.senderFrame !== e.sender.mainFrame) return;
+    readerPending.delete(nonce); r.res(a && typeof a === 'object' ? a : null);
+  });
+  ipcMain.on('reader:toggle', async e => {
+    const w = uiWin(e); const t = w && w.active(); if (!t || !t.view) return;
+    const wc = t.view.webContents;
+    if (isReader(t.url)) {   // back to the page
+      if (wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack(); else { const u = readerSrc(t.url); if (u) loadInto(t, u); }
+      return;
+    }
+    if (!/^https?:/i.test(t.url || '') || !t.readerable) return;
+    const nonce = require('crypto').randomBytes(12).toString('hex');
+    const a = await new Promise(res => { readerPending.set(nonce, { wc: wc.id, res }); wc.send('reader:extract', nonce); setTimeout(() => { if (readerPending.delete(nonce)) res(null); }, 10000); });
+    if (!a || typeof a.content !== 'string' || !a.content) { t.readerable = false; w.pushState(); return; }   // not an article after all: the button goes
+    const src = t.url, key = require('crypto').randomBytes(12).toString('hex');
+    for (const [k, v] of readerDocs) if (v.tabId === t.id || Date.now() - v.t > 6 * 3600e3) readerDocs.delete(k);
+    readerDocs.set(key, { tabId: t.id, url: src, t: Date.now(), article: {
+      title: String(a.title || '').slice(0, 500), byline: String(a.byline || '').slice(0, 300), siteName: String(a.siteName || '').slice(0, 200),
+      lang: String(a.lang || '').slice(0, 20), dir: a.dir === 'rtl' ? 'rtl' : a.dir === 'ltr' ? 'ltr' : '', published: String(a.publishedTime || '').slice(0, 60),
+      content: a.content.slice(0, 3e6) } });
+    loadInto(t, READER_URL + '?k=' + key + '&u=' + encodeURIComponent(src));
+  });
+  ipcMain.handle('reader:get', (e, key) => {
+    const t = tabOfWc(e.sender); let u = ''; try { u = e.senderFrame.url; } catch (x) {}
+    const d = readerDocs.get(String(key || ''));
+    if (!t || !isReader(u) || !d || d.tabId !== t.id) return null;
+    return { url: d.url, article: d.article, lang: settings.data.lang };
   });
   // the page itself says it has a real video on it (unknown sites)
   ipcMain.on('media:seen', e => {
@@ -1790,9 +1908,40 @@ function siteCfg(host) {
     pk: pkMode(),
     yt: isYT(host) ? { clean: ytCleanAttrs(), cleanCss: FEAT.YT_CLEAN_CSS, sponsor: d.sponsorBlock !== false ? (d.sbCats || []) : [], ambient: d.ambient !== false,
       maxQuality: d.ytMaxQuality !== false, dislikes: d.ytDislikes !== false } : null,
-    twitch: isTwitch(host) && adsOn && d.twitchAds !== false && !d.adAllow.includes('twitch.tv')
+    twitch: isTwitch(host) && adsOn && d.twitchAds !== false && !d.adAllow.includes('twitch.tv'),
+    cookies: d.cookiePopups !== false && !!host && !d.adAllow.includes(AdBlocker.site(host)) && AC.ready(),
+    pip: d.pipButton !== false && !isYT(host),
+    reader: d.reader !== false
   };
 }
+/* Cookie popups: DuckDuckGo's Autoconsent (src/vendor/autoconsent, fetched at build time) answers them with
+   "reject" / "necessary only" the way a person would, so the page carries on as if you had clicked it (no
+   hidden popup leaving the page locked). The library and only the rules that can apply to the page are sent. */
+const AC = {
+  dir: path.join(SRC, 'vendor', 'autoconsent'),
+  _ok: null, _code: null, _rules: null, _lib: null, _cache: new Map(),
+  ready() { if (this._ok === null) this._ok = fs.existsSync(path.join(this.dir, 'autoconsent.cjs.js')) && fs.existsSync(path.join(this.dir, 'compact-rules.json')); return this._ok; },
+  load() {
+    if (this._lib) return true;
+    try {
+      this._code = fs.readFileSync(path.join(this.dir, 'autoconsent.cjs.js'), 'utf8');
+      this._rules = JSON.parse(fs.readFileSync(path.join(this.dir, 'compact-rules.json'), 'utf8'));
+      const m = { exports: {} }; new Function('module', 'exports', 'window', 'document', this._code)(m, m.exports, undefined, undefined);
+      this._lib = m.exports;
+      return typeof this._lib.filterCompactRules === 'function';
+    } catch (e) { logError('autoconsent', e); this._ok = false; return false; }
+  },
+  forPage(url) {
+    if (!this.ready() || !this.load()) return null;
+    let host; try { host = new URL(url).hostname; } catch (e) { return null; }
+    let rules = this._cache.get(host);
+    if (!rules) {
+      try { rules = this._lib.filterCompactRules(this._rules, { url, mainFrame: true }); } catch (e) { return null; }
+      this._cache.set(host, rules); if (this._cache.size > 100) this._cache.delete(this._cache.keys().next().value);
+    }
+    return { code: this._code, rules };
+  }
+};
 function ytCleanAttrs() {
   const on = settings.data.ytClean || {}, out = {};
   for (const [id, attrs] of Object.entries(FEAT.YT_CLEAN)) for (const a of attrs) out[a] = !!on[id];
@@ -1806,6 +1955,12 @@ function setupSiteIpc() {
     e.returnValue = ok ? FEAT.code(name) : '';
   });
   ipcMain.handle('site:ambientMain', e => (isYT(senderHost(e)) ? FEAT.code('ambientMain') : ''));
+  ipcMain.handle('ac:get', e => {
+    const d = settings.data, url = (() => { try { return e.senderFrame.url; } catch (x) { return ''; } })(), host = senderHost(e);
+    if (!tabOfWc(e.sender) || e.senderFrame !== e.sender.mainFrame || !/^https?:/i.test(url) || d.cookiePopups === false || d.adAllow.includes(AdBlocker.site(host))) return null;
+    return AC.forPage(url);
+  });
+  ipcMain.on('ac:done', (e, cmp) => { if (process.env.ZEUS_TEST) console.log('[3zT] cookie popup answered:', String(cmp).slice(0, 60)); });
   ipcMain.handle('ryd:get', (e, id) => (isYT(senderHost(e)) && settings.data.ytDislikes !== false ? FEAT.rydVotes(id) : null));
   ipcMain.handle('sb:get', (e, id) => (isYT(senderHost(e)) && settings.data.sponsorBlock !== false ? FEAT.sbSegments(id, settings.data.sbCats) : []));
   // chrome.storage.local for ambient light
@@ -1883,6 +2038,24 @@ function setupIpc() {
     w.layout();
     // the new tab page moves its shortcuts bar under the toolbar
     for (const t of w.tabs) if (t.view && isNewtab(t.url)) t.view.webContents.send('strip', w.stripH);
+  });
+  ipcMain.on('tabs:strip', e => { const w = uiWin(e); if (w) captureThumb(w); });
+  ipcMain.handle('tabs:preview', (e, id) => {
+    const w = uiWin(e); const t = w && w.tab(+id); if (!t) return null;
+    const th = thumbs.get(t.id);
+    return { img: th && th.url === t.url && t.id !== w.activeId ? th.img : '' };
+  });
+  ipcMain.handle('tabs:all', e => { const w = uiWin(e); return w ? tabSearchList(w) : null; });
+  ipcMain.on('tabs:go', (e, o) => {
+    const w = uiWin(e); if (!w || !o) return;
+    if (o.closed != null) {   // a closed tab opens again, here
+      const i = +o.closed; const c = closedStack[i]; if (!c || !c.url || Array.isArray(c.group)) return;
+      closedStack.splice(i, 1); w.createTab(c.url); saveSessionSoon(); return;
+    }
+    const x = wins.find(v => v.id === +o.win); if (!x || x.private !== w.private || (x.private && x.partition !== w.partition)) return;
+    const t = x.tab(+o.id); if (!t) return;
+    x.activate(t.id);   // the page itself is not loaded again
+    if (x !== w) { if (x.win.isMinimized()) x.win.restore(); x.win.focus(); }
   });
   ipcMain.on('ui:expand', (e, on) => { const w = uiWin(e); if (!w) return; w.uiExpanded = typeof on === 'number' ? on : !!on; w.layout(); });
   ipcMain.on('win', (e, cmd) => {
@@ -2001,6 +2174,9 @@ function setupIpc() {
     if (key === 'ambient') settings.data.ambient = !!val;
     if (key === 'ytMaxQuality') settings.data.ytMaxQuality = !!val;
     if (key === 'ytDislikes') settings.data.ytDislikes = !!val;
+    if (key === 'cookiePopups') settings.data.cookiePopups = !!val;
+    if (key === 'pipButton') settings.data.pipButton = !!val;
+    if (key === 'reader') { settings.data.reader = !!val; for (const x of wins) x.pushState(); }
     if (key === 'twitchAds') settings.data.twitchAds = !!val;
     if (key === 'ytClean' && val && typeof val === 'object') { const o = {}; for (const k of Object.keys(FEAT.YT_CLEAN)) if (val[k]) o[k] = true; settings.data.ytClean = o; pushSiteCfg(); }
     if (key === 'lang' && (val === 'ar' || val === 'en')) settings.data.lang = val;
@@ -2183,7 +2359,7 @@ function setupSettingsIpc() {
     return {
       lang: d.lang, perfMode: d.perfMode || 'normal', perfActive: FAST ? 'fast' : 'normal',
       memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, darkPages: d.darkPages !== false, darkPagesActive: DARK_PAGES, siteFont: !!d.siteFont, restoreTabs: !!d.restoreTabs,
-      adblock: d.adblock !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
+      adblock: d.adblock !== false, cookiePopups: d.cookiePopups !== false, pipButton: d.pipButton !== false, reader: d.reader !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytMaxQuality: d.ytMaxQuality !== false, ytDislikes: d.ytDislikes !== false, ytClean: d.ytClean || {},
       passkeys: !!d.passkeys, dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,

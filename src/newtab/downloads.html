@@ -43,6 +43,9 @@ html[dir=rtl] .pb.ind i{animation-direction:reverse}
 /* finished files can be dragged out */
 .it[draggable=true]{cursor:grab}
 #empty{text-align:center;color:var(--muted);margin:70px 0;line-height:1.9}
+
+/* appears softly (none if Windows asks for less motion) */
+@media (prefers-reduced-motion: no-preference){body{animation:ztIn .16s ease-out}@keyframes ztIn{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}}
 </style>
 </head>
 <body>

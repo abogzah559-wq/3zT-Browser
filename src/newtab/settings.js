@@ -72,6 +72,8 @@ function render() {
     restart(S.darkPages !== S.darkPagesActive) +
     row(L('خط ثمانية لكل المواقع', 'Thmanyah font on every site'), L('يحط خط ثمانية على نصوص المواقع (يوتيوب، قوقل، إكس...). الأيقونات تبقى زي ما هي، ولو موقع تخرب طفّه. يحتاج خط ثمانية مثبّت على الويندوز.', 'Puts the Thmanyah font on website text (YouTube, Google, X...). Icons keep their own font; turn it off if a site breaks. Needs the Thmanyah font installed on Windows.'), sw(S.siteFont, 'data-tog="siteFont"')) +
     row(L('رجّع تبويباتي لما أفتح المتصفح', 'Restore my tabs on start'), '', sw(S.restoreTabs, 'data-tog="restoreTabs"')) +
+    row(L('وضع القراءة', 'Reader view'), L('زر كتاب في شريط العنوان يطلع في صفحات المقالات: يعرض المقال بخط مريح بدون إعلانات ولا زحمة.', 'A book button in the address bar on article pages: shows just the article, in a comfortable font, without ads or clutter.'), sw(S.reader, 'data-tog="reader"')) +
+    row(L('زر صورة داخل صورة', 'Picture-in-picture button'), L('زر صغير يطلع فوق الفيديو لما تمرر عليه الماوس، يطلّعه نافذة صغيرة فوق كل شي. وفي أي موقع: Alt+P أو الزر اليمين على الفيديو.', 'A small button over a video when the mouse is on it: the video moves to a small window above everything. On any site: Alt+P, or right-click the video.'), sw(S.pipButton, 'data-tog="pipButton"')) +
     row(L('كلمات السر', 'Passwords'), L('عرض واستيراد كلمات السر المحفوظة.', 'View and import saved passwords.'), `<button data-open="passwords">${L('فتح', 'Open')}</button>`) +
     row(L('السجل', 'History'), '', `<button data-open="history">${L('فتح', 'Open')}</button>`));
   sec.perf = card('perf', L('الأداء والسرعة', 'Speed & performance'),
@@ -94,6 +96,7 @@ function render() {
         <button data-act="permClear" data-arg="${esc(p.origin)}">${L('إعادة ضبط', 'Reset')}</button></div>`).join('')
         : row(L('ما فيه قرارات محفوظة', 'Nothing saved yet'), L('أول ما موقع يطلب صلاحية وتختار سماح أو رفض، يطلع هنا.', 'When a site asks and you choose Allow or Block, it shows up here.'), '', 'sub')),
       S.perms ? S.perms.length : 0) +
+    row(L('نوافذ الكوكيز', 'Cookie popups'), L('يرد على نوافذ «الموافقة على ملفات تعريف الارتباط» بالرفض بدالك، فتختفي وتكمل تصفحك. المواقع المستثناة من المانع ما يلمسها.', 'Answers "accept cookies" popups with "reject" for you, so they go away. Sites excluded from the blocker are left alone.'), sw(S.cookiePopups, 'data-tog="cookiePopups"')) +
     row(L('تسجيل الدخول بمفاتيح المرور (Passkeys)', 'Sign in with passkeys'), L('مطفي: المواقع ما تقدر تفتح نافذة «أمان ويندوز» (مفتاح الأمان / Windows Hello) وتكمل بكلمة المرور. إلا مفتاح الأمان كخطوة تحقق ثانية لحسابك بعد ما تضغط بنفسك. شغّله إذا تدخل بمفتاح مرور. يتطبق على الصفحات اللي تفتحها بعده.', 'Off: sites cannot open the "Windows Security" window (security key / Windows Hello); you continue with your password. A security key as your account\'s second step, after you click, still works. Turn it on if you sign in with a passkey. Applies to pages you open after.'), sw(S.passkeys, 'data-tog="passkeys"')) +
     row(L('مسح بيانات التصفح', 'Clear browsing data'), L('يمسح السجل والكاش والكوكيز (بيطلعك من حساباتك).', 'Clears history, cache and cookies (signs you out).'), `<button data-act="clearData">${L('مسح…', 'Clear…')}</button>`));
   const sbOn = S.sponsorBlock;
