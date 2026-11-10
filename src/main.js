@@ -477,7 +477,6 @@ function makeView(tab, fromOpener) {
     webPreferences: {
       preload: PRELOAD_TAB,            // gives an API only to our own internal pages (checked inside)
       nodeIntegrationInSubFrames: true,   // only so the preload also reaches iframes (passkey fix); Node stays off, sandbox on
-      additionalArguments: process.env.ZEUS_NO_PASSKEY_FIX ? ['--3zt-no-passkey-fix'] : [],
       partition: tab.win.partition,
       contextIsolation: true, sandbox: true, nodeIntegration: false,
       plugins: true,                   // built-in PDF viewer
@@ -1189,6 +1188,7 @@ function taskRows() {
 const FIREFOX_UA = process.platform === 'win32'
   ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0'
   : 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0';
+const pkMode = () => (process.env.ZEUS_NO_PASSKEY_FIX ? 'nofix' : settings.data.passkeys ? 'on' : 'off');
 const SIGNIN_URLS = ['*://accounts.google.com/*', '*://accounts.youtube.com/*'];
 let adSaveTimer = null;
 const setUpSessions = new WeakSet();
@@ -1438,7 +1438,7 @@ function openMediaWindow(url, partition) {
   const give = () => { if (!url || mw.isDestroyed()) return; mediaPending.set(mw.webContents.id, { url, partition: partition || null }); mw.webContents.send('media:url', url); };
   if (mw && !mw.isDestroyed()) { if (mw.isMinimized()) mw.restore(); mw.focus(); give(); return mw; }
   mw = new BrowserWindow(Object.assign({
-    width: 560, height: 760, minWidth: 440, minHeight: 520, show: false, backgroundColor: '#0b0b0f', title: '3zT',
+    width: 620, height: Math.min(820, Math.max(540, screen.getPrimaryDisplay().workAreaSize.height - 40)), minWidth: 460, minHeight: 540, show: false, backgroundColor: '#0b0b0f', title: '3zT',
     autoHideMenuBar: true, titleBarStyle: 'hidden', titleBarOverlay: { color: '#0b0b0f', symbolColor: '#dddddd', height: 38 },
     webPreferences: { preload: PRELOAD_TAB, partition: partition || undefined, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false }
   }, ICON_OPT));
@@ -1449,7 +1449,17 @@ function openMediaWindow(url, partition) {
   mw.webContents.on('will-navigate', e => e.preventDefault());   // it only ever shows its own page
   mw.webContents.setWindowOpenHandler(d => { if (/^https?:/i.test(d.url)) { const w = wins.find(x => (x.private ? x.partition : null) === (partition || null)); if (w) { w.createTab(d.url); w.win.focus(); } else if (!partition) newWindow({ url: d.url }); } return { action: 'deny' }; });
   mw.once('ready-to-show', () => mw.show());
+  // closing it stops everything it started (after asking, if something is still downloading)
+  let closeOk = false;
+  mw.on('close', e => {
+    if (closeOk || quitting || !media || !media.running(partition || null)) return;
+    e.preventDefault();
+    const r = dialog.showMessageBoxSync(mw, { type: 'question', buttons: [T('أوقفه وأقفل', 'Stop and close'), T('إلغاء', 'Cancel')], defaultId: 1, cancelId: 1, noLink: true,
+      title: '3zT', message: T('فيه تحميل شغال. توقفه وتقفل النافذة؟', 'A download is still running. Stop it and close?') });
+    if (r === 0) { closeOk = true; mw.close(); }
+  });
   mw.on('closed', () => {
+    if (media) media.reset(partition || null, id);   // programs stopped, temporary files and the list gone
     mediaWins.delete(key); mediaWinPart.delete(id); mediaPending.delete(id);
     if (!wins.length && !mediaWins.size) app.quit();
   });
@@ -1486,6 +1496,37 @@ function mediaEngine() {
   try { media.copied = true; media.copyPacked(); } catch (e) {}   // tools from the setup, ready at once
   return media;
 }
+/* the link of the video you are looking at. TikTok's "For You" feed keeps the address at tiktok.com/ while you
+   scroll, so the page itself is asked which video is on screen (in a separate script world the page cannot touch) */
+const FEED_JS = String.raw`(() => {
+  const area = v => { const r = v.getBoundingClientRect(); return Math.max(0, Math.min(r.bottom, innerHeight) - Math.max(r.top, 0)) * Math.max(0, Math.min(r.right, innerWidth) - Math.max(r.left, 0)); };
+  const vids = [...document.querySelectorAll('video')].map(v => ({ v, a: area(v), p: !v.paused })).filter(x => x.a > 0).sort((x, y) => (y.p - x.p) || (y.a - x.a));
+  for (const { v } of vids) {
+    let user = '', vid = '';
+    for (let el = v, i = 0; el && i < 14; el = el.parentElement, i++) {
+      if (i && el.querySelectorAll('video').length > 1) break;   // left this video's own box: the rest belongs to other videos
+      if (!user) { const u = el.querySelector && el.querySelector('a[href*="/@"]'); if (u) { const m = /\/@([\w.-]+)/.exec(u.getAttribute('href') || ''); if (m) user = m[1]; } }
+      const a = el.querySelector && el.querySelector('a[href*="/video/"], a[href*="/photo/"]');
+      if (a) { const m = /\/@([\w.-]+)\/(video|photo)\/(\d+)/.exec(a.href); if (m) return 'https://www.tiktok.com/@' + m[1] + '/' + m[2] + '/' + m[3]; }
+      const id = /(?:^|[^\d])(\d{17,21})(?:[^\d]|$)/.exec(el.id || '');
+      if (id && !vid) vid = id[1];
+      if (vid && user) break;
+    }
+    if (vid) return 'https://www.tiktok.com/@' + user + '/video/' + vid;   // the account name is only a nicety (the number is enough)
+  }
+  return '';
+})()`;
+async function currentMediaUrl(t) {
+  let u = t.url;
+  try {
+    const x = new URL(u);
+    if (/(^|\.)tiktok\.com$/i.test(x.hostname) && !/\/(video|photo)\/\d+/.test(x.pathname) && t.view && !t.view.webContents.isDestroyed()) {
+      const r = await Promise.race([t.view.webContents.executeJavaScriptInIsolatedWorld(1999, [{ code: FEED_JS }]), new Promise(res => setTimeout(() => res(''), 1500))]);
+      if (typeof r === 'string' && /^https:\/\/www\.tiktok\.com\/@[\w.-]*\/(video|photo)\/\d+$/.test(r)) u = r;
+    }
+  } catch (e) {}
+  return u;
+}
 /* the cookies of the link's own site only (for posts you can see because you are signed in) */
 async function mediaCookies(url, ses) {
   let host = ''; try { host = new URL(url).hostname; } catch (e) { return []; }
@@ -1502,10 +1543,10 @@ function setupMediaIpc() {
   };
   const cleanUrl = u => { try { const x = new URL(String(u || '').trim()); return /^https?:$/.test(x.protocol) ? x.href : null; } catch (e) { return null; } };
   // the address-bar button: open the downloads page with this page's link
-  ipcMain.on('media:open', e => {
+  ipcMain.on('media:open', async e => {
     const w = uiWin(e); if (!w) return;
     const t = w.active(); if (!t || !/^https?:/i.test(t.url)) return;
-    openMediaWindow(t.url, w.private ? w.partition : null);
+    openMediaWindow(await currentMediaUrl(t), w.private ? w.partition : null);
   });
   ipcMain.on('media:window', e => { const t = tabOfWc(e.sender); if (!t || !isDownloads(t.url)) return; openMediaWindow('', t.win.private ? t.win.partition : null); });
   ipcMain.handle('media:info', async (e, u) => {
@@ -1525,7 +1566,7 @@ function setupMediaIpc() {
     try {
       const m = mediaEngine();
       const winId = (() => { const w = wins.find(x => (x.private ? x.partition : null) === partition); return w ? w.id : null; })();
-      return o.mode === 'images' ? await m.startImages({ url, cookies, partition, winId }) : await m.startVideo({ url, mode: o.mode, q: o.q, trim: !!o.trim, cookies, partition, winId });
+      return o.mode === 'images' ? await m.startImages({ url, cookies, partition, winId }) : await m.startVideo({ url, mode: o.mode, q: o.q, trim: !!o.trim, cookies, partition, winId, start: o.start, end: o.end, exact: !!o.exact, infoId: o.infoId });
     } catch (x) { return { error: String(x.message || x) }; }
   });
   ipcMain.handle('media:cancel', (e, id) => (okPage(e) && media ? media.cancel(String(id)) : false));
@@ -1698,6 +1739,8 @@ function setupPasswordIpc() {
   });
   // YouTube ad blocking: asked by the page preload before YouTube's own scripts run
   ipcMain.on('signin:ua', e => { e.returnValue = FIREFOX_UA; });
+  // frames inside pages: passkeys on/off (Settings) and, inside Google's sign-in, the Firefox look
+  ipcMain.on('pk:mode', (e, signin) => { e.returnValue = { mode: pkMode(), ua: signin ? FIREFOX_UA : '' }; });
   ipcMain.handle('tr:batch', async (e, texts, tl) => {
     if (!tabOfWc(e.sender) || !Array.isArray(texts)) return [];
     return trBatch(texts.slice(0, 400).map(x => String(x).slice(0, 5000)), tl === 'en' ? 'en' : 'ar');
@@ -1717,7 +1760,7 @@ function siteCfg(host) {
   const d = settings.data, adsOn = d.adblock !== false;
   return {
     fast: FAST, lang: d.lang,
-    passkeyFix: !process.env.ZEUS_NO_PASSKEY_FIX,
+    pk: pkMode(),
     yt: isYT(host) ? { clean: ytCleanAttrs(), cleanCss: FEAT.YT_CLEAN_CSS, sponsor: d.sponsorBlock !== false ? (d.sbCats || []) : [], ambient: d.ambient !== false } : null,
     twitch: isTwitch(host) && adsOn && d.twitchAds !== false && !d.adAllow.includes('twitch.tv')
   };
@@ -1938,6 +1981,7 @@ function setupIpc() {
     if (key === 'adblock') settings.data.adblock = !!val;
     if (key === 'ytAds') settings.data.ytAds = !!val;
     if (key === 'dlAsk') settings.data.dlAsk = !!val;
+    if (key === 'passkeys') settings.data.passkeys = !!val;
     settings.save(); settings.flush();
     for (const w of wins) w.pushState();
     settingsChanged();
@@ -2111,7 +2155,7 @@ function setupSettingsIpc() {
       adblock: d.adblock !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytClean: d.ytClean || {},
-      dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,
+      passkeys: !!d.passkeys, dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,
       perms: perms ? perms.all() : [],
       extensions: listExtensions(), versions: { app: app.getVersion(), chrome: process.versions.chrome }
     };
