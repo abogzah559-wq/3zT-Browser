@@ -51,12 +51,15 @@ function sha256File(f) {
   return new Promise((res, rej) => { const h = crypto.createHash('sha256'); fs.createReadStream(f).on('data', d => h.update(d)).on('end', () => res(h.digest('hex'))).on('error', rej); });
 }
 
-/* release notes: the "### العربية" / "### English" parts of the release text */
+/* release notes. Since 0.15.1: the English list under "## What's new in <version>", the Arabic one in a hidden
+   "<!-- 3zt-ar … -->" block of the same text. Older releases: "### English" / "### العربية" parts. */
 function notesFor(body, lang) {
   const text = String(body || '').replace(/\r/g, '');
-  const part = name => { const m = text.match(new RegExp('^###\\s*' + name + '\\s*\\n([\\s\\S]*?)(?=^###\\s|^##\\s|<!--\\s*end notes\\s*-->|$(?![\\s\\S]))', 'm')); return m ? m[1].trim() : ''; };
-  const lines = s => s.split('\n').map(l => l.replace(/^\s*[-*]\s+/, '').replace(/\*\*/g, '').trim()).filter(Boolean);
-  const ar = lines(part('العربية')), en = lines(part('English'));
+  const part = name => { const m = text.match(new RegExp('^###\\s*' + name + '\\s*\\n([\\s\\S]*?)(?=^###\\s|^##\\s|<!--|$(?![\\s\\S]))', 'm')); return m ? m[1].trim() : ''; };
+  const lines = s => s.split('\n').map(l => l.replace(/^\s*[-*]\s+/, '').replace(/\*\*/g, '').trim()).filter(l => l && !/^<!--|-->$|^#{1,4}\s/.test(l));
+  const hidden = (/<!--\s*3zt-ar\s*\n([\s\S]*?)-->/.exec(text) || [])[1] || '';
+  const news = (/^##\s*What's new[^\n]*\n([\s\S]*?)(?=^##\s|^###\s*(?:Page speed|Resource use|Memory)|<!--|$(?![\s\S]))/m.exec(text) || [])[1] || '';
+  const ar = lines(part('العربية') || hidden), en = lines(part('English') || news);
   return lang === 'en' ? (en.length ? en : ar) : (ar.length ? ar : en);
 }
 

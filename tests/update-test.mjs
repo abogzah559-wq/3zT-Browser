@@ -31,7 +31,9 @@ const PUB = publicKey.export({ type: 'spki', format: 'der' }).toString('base64')
 const SIG = crypto.sign(null, Buffer.from(`3zT-Browser-Setup.exe\n${nextVer}\n${digest}`), privateKey).toString('base64');
 const changelog = fs.readFileSync(new URL('../CHANGELOG.md', import.meta.url), 'utf8');
 const section = changelog.split(/^## /m).find(s => /^\d/.test(s)) || '';
-const body = 'Test release.\n\n## ' + section;
+// the same shape as the release workflow writes: English list, then the Arabic one in a hidden block
+const arNotes = fs.readFileSync(new URL('../installer/notes-ar.md', import.meta.url), 'utf8').split(/^## /m).find(s => /^\d/.test(s)) || '';
+const body = 'Test release.\n\n## What\'s new in ' + section + '\n\n<!-- 3zt-ar\n' + arNotes.split('\n').slice(1).join('\n').trim() + '\n-->';
 let served = 0;
 const srv = http.createServer((req, res) => {
   if (req.url.startsWith('/latest.json')) {
