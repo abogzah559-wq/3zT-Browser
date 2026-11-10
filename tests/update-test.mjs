@@ -79,7 +79,8 @@ async function main() {
   ok('nothing was shown while browsing', (await cdp(9334, 'ui/toolbar.html', 'document.getElementById("toast").hidden')) !== false);
 
   // 3. close normally
-  await cdp(9334, 'ui/toolbar.html', `ui.send('win','close'), 1`);
+  // every window (the profile may have more than one from earlier tests)
+  for (let i = 0; i < 6; i++) { const r = await cdp(9334, 'ui/toolbar.html', `ui.send('win','close'), 1`); if (r == null) break; await sleep(800); }
   const exited = await until(() => !running(), 30000);
   ok('browser closes normally', !!exited);
 
