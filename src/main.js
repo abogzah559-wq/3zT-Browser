@@ -84,7 +84,9 @@ process.on('uncaughtException', err => logError('uncaught', err));
 process.on('unhandledRejection', err => logError('unhandled', err));
 
 // files that built-in YouTube features load into the page (must be allowed past the site's CSP, like an extension's files)
-protocol.registerSchemesAsPrivileged([{ scheme: 'zeus-res', privileges: { standard: true, secure: true, bypassCSP: true, supportFetchAPI: true, corsEnabled: true } }]);
+protocol.registerSchemesAsPrivileged([{ scheme: 'zeus-res', privileges: { standard: true, secure: true, bypassCSP: true, supportFetchAPI: true, corsEnabled: true } },
+  // the downloader's preview of sites that only send their video with their own headers (TikTok): see previewLink
+  { scheme: 'ztpv', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
 
 /* ---------- paths ---------- */
 const SRC = __dirname;
@@ -1197,6 +1199,8 @@ function setupSession(ses) {
   if (setUpSessions.has(ses)) return;   // a private window's tabs share one session: set it up once
   setUpSessions.add(ses);
   try { ses.protocol.handle('zeus-res', FEAT.serve); } catch (e) {}
+  // registered with the session (a page only sees the schemes handled before it was made): see previewLink
+  try { ses.protocol.handle('ztpv', req => previewServe(ses, req)); } catch (e) {}
   try { ses.setSpellCheckerEnabled(false); } catch (e) {}   // no dictionary download, less memory
   ses.webRequest.onBeforeSendHeaders({ urls: SIGNIN_URLS }, (d, cb) => {
     const h = d.requestHeaders;
@@ -1460,6 +1464,7 @@ function openMediaWindow(url, partition) {
     if (r === 0) { closeOk = true; mw.close(); }
   });
   mw.on('closed', () => {
+    for (const [k, v] of previewLinks) if (v.wc === id) previewLinks.delete(k);
     if (media) media.reset(partition || null, id);   // programs stopped, temporary files and the list gone
     mediaWins.delete(key); mediaWinPart.delete(id); mediaPending.delete(id);
     if (!wins.length && !mediaWins.size) app.quit();
@@ -1469,6 +1474,24 @@ function openMediaWindow(url, partition) {
 }
 const mediaSaved = new Set();     // jobs already added to the downloads list
 const trimOwners = new Map();     // list id -> { proc } of a running trim (for Cancel)
+/* The preview player can't send a site's own headers, so for such a site it plays ztpv://p/<random> instead: that is
+   answered here with the site's file, fetched with those headers (seeking works: the Range header is passed on).
+   Only on the downloader window's own session, only for links it was given, forgotten when the window closes. */
+const previewLinks = new Map();   // token -> { url, headers, wc, t, ses }
+async function previewServe(ses, req) {
+  const p = previewLinks.get(new URL(req.url).pathname.slice(1));
+  if (!p || p.ses !== ses || Date.now() - p.t > 3600e3) return new Response('', { status: 404 });
+  const h = { ...p.headers }; const range = req.headers.get('range'); if (range) h.Range = range;
+  try { return await ses.fetch(p.url, { headers: h, bypassCustomProtocolHandlers: true }); } catch (x) { return new Response('', { status: 502 }); }
+}
+function previewLink(wc, url, headers) {
+  if (!/^https?:\/\//i.test(url)) return url;
+  const ses = wc.session;
+  for (const [k, v] of previewLinks) if (v.wc === wc.id || Date.now() - v.t > 3600e3) previewLinks.delete(k);   // one preview per window
+  const tok = require('crypto').randomBytes(16).toString('hex');
+  previewLinks.set(tok, { url, headers, wc: wc.id, t: Date.now(), ses });
+  return 'ztpv://p/' + tok;
+}
 function mediaEngine() {
   if (media) return media;
   const { MediaEngine } = require('./media/engine');
@@ -1554,7 +1577,12 @@ function setupMediaIpc() {
     if (!okPage(e)) return { error: 'denied' };
     const url = cleanUrl(u); if (!url) return { error: 'bad-url' };
     const { ses } = sesFor(e);
-    try { return await mediaEngine().info({ url, cookies: await mediaCookies(url, ses), key: e.sender.id }); } catch (x) { return { error: String(x.message || x) }; }
+    try {
+      const r = await mediaEngine().info({ url, cookies: await mediaCookies(url, ses), key: e.sender.id });
+      if (r && r.preview && r.previewHeaders) r.preview = previewLink(e.sender, r.preview, r.previewHeaders);
+      if (r) delete r.previewHeaders;
+      return r;
+    } catch (x) { return { error: String(x.message || x) }; }
   });
   // the link from the address-bar button, given once (a reload of the page does not fill it again)
   ipcMain.handle('media:take', e => { if (!okPage(e)) return null; const p = mediaPending.get(e.sender.id); if (!p || p.taken) return null; p.taken = true; return p.url; });

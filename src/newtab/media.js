@@ -20,7 +20,6 @@ const isFeed = u => /tiktok\.com\/?([a-z]{2}(-[A-Z]{2})?)?\/?(\?.*)?$/i.test(u) 
 /* ---------- time ---------- */
 const fmt = s => { s = Math.max(0, +s || 0); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + x.toFixed(1).padStart(4, '0'); };
 const fmtShort = s => { s = Math.round(+s || 0); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60; return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(x).padStart(2, '0'); };
-const parseT = t => { const p = String(t).trim().split(':').map(Number); return p.some(isNaN) ? NaN : p.reduce((a, v) => a * 60 + v, 0); };
 const dur = () => (info && info.duration > 0 && isFinite(info.duration) ? info.duration : 0);
 const end = () => (cut.e > 0 ? cut.e : dur());
 const isWhole = () => !dur() || (cut.s < 0.05 && Math.abs(end() - dur()) < 0.05);
@@ -33,6 +32,8 @@ function explain(e) {
   if (e === 'cancelled') return L('انلغى.', 'Cancelled.');
   if (e === 'busy') return L('فيه 3 تحميلات شغالة، انتظر واحد يخلص.', 'Three downloads are running, wait for one to finish.');
   if (e === 'expired') return L('انتهت صلاحية هذا العنصر، ابدأه من جديد.', 'This item expired, start it again.');
+  if (e === 'no-picture') return L('الموقع ما أعطى إلا الصوت لهذا المقطع.', 'The site only gave the sound for this video.');
+  if (e === 'empty') return L('الملف وصل فاضي. جرب مرة ثانية.', 'The file came back empty. Try again.');
   if (e === 'no-photos') return L('ما لقيت صور في هذا الرابط.', 'No photos found at this link.');
   if (/^tools:/.test(e)) return L('أدوات التحميل ما اشتغلت. جرّب «تحديث أدوات التحميل».', 'The download tools did not start. Try "Update download tools".');
   if (/unsupported url/i.test(e)) return L('هذا الرابط مو رابط مقطع. افتح المقطع نفسه (مو الصفحة الرئيسية) وجرب.', 'This is not a link to a video. Open the video itself (not the home page) and try again.');
@@ -41,7 +42,7 @@ function explain(e) {
   if (/HTTP Error (403|429)\b|\brate[- ]?limit|too many requests/i.test(e)) return L('الموقع رفض الطلب مؤقتاً. جرب بعد شوي، أو حدّث أدوات التحميل.', 'The site refused for now. Try again shortly, or update the download tools.');
   return L('ما قدرت أحمّل هذا المقطع.', 'Could not download this.');
 }
-const isCode = e => /^(bad-url|busy|busy-update|cancelled|expired|no-photos)$/.test(String(e || ''));
+const isCode = e => /^(bad-url|busy|busy-update|cancelled|expired|no-photos|no-picture|empty)$/.test(String(e || ''));
 
 /* ---------- drawing ---------- */
 function setMode(m) {
@@ -58,18 +59,17 @@ function drawTexts() {
   $('murl').placeholder = L('الصق رابط المقطع أو المنشور (يوتيوب، تيك توك، انستقرام، إكس…)', 'Paste a video or post link (YouTube, TikTok, Instagram, X…)');
   $('mpasteT').textContent = L('لصق', 'Paste');
   $('m-video').lastElementChild.textContent = L('فيديو', 'Video');
-  $('m-audio').lastElementChild.textContent = L('صوت MP3', 'MP3');
+  $('m-audio').lastElementChild.textContent = L('MP3', 'MP3');
   $('m-images').lastElementChild.textContent = L('صور', 'Photos');
   $('mq').options[0].textContent = L('أعلى جودة', 'Best quality');
-  $('cutT').textContent = L('الجزء اللي تبيه', 'Part to keep');
+  $('memptyT').textContent = L('الصق رابط مقطع، أو اضغط زر الثعلب في شريط العنوان وأنت على صفحة المقطع.', 'Paste a video link, or press the fox button in the address bar on the video\'s page.');
   $('cutFull').textContent = L('المقطع كامل', 'Whole video');
-  $('tsL').textContent = L('من', 'From'); $('teL').textContent = L('إلى', 'To');
-  $('tsNow').textContent = $('teNow').textContent = L('الوقت الحالي', 'Current time');
-  $('tsNow').title = $('teNow').title = L('من مكان التشغيل في المعاينة', 'From where the preview is playing');
-  $('cmF').textContent = L('سريع وبنفس الجودة', 'Fast, same quality');
-  $('cmFs').textContent = L('بدون إعادة ترميز. يبدأ من أقرب إطار مفتاحي، فممكن يبدأ قبل وقتك بثواني قليلة.', 'No re-encoding. Starts at the nearest key frame, so it may begin a few seconds early.');
-  $('cmE').textContent = L('دقيق على الإطار', 'Frame-exact');
-  $('cmEs').textContent = L('يعيد ترميز أطراف المقطع عشان يقص بالضبط. أبطأ شوي.', 'Re-encodes the edges to cut exactly. A little slower.');
+  $('cmF').textContent = L('قص سريع', 'Fast cut');
+  $('cmFl').title = L('بدون إعادة ترميز. يبدأ من أقرب إطار مفتاحي، فممكن يبدأ قبل وقتك بثواني قليلة.', 'No re-encoding. Starts at the nearest key frame, so it may begin a few seconds early.');
+  $('cmE').textContent = L('قص دقيق', 'Exact cut');
+  $('cmEl').title = L('يعيد ترميز أطراف المقطع عشان يقص بالضبط. أبطأ شوي.', 'Re-encodes the edges to cut exactly. A little slower.');
+  $('pmute').title = pv.muted || !vol ? L('تشغيل الصوت', 'Unmute') : L('كتم الصوت', 'Mute');
+  $('pmute').innerHTML = pv.muted || !vol ? ICON.mute : ICON.vol;
   $('perrS').textContent = L('التفاصيل', 'Details');
   $('mwhereL').textContent = L('الحفظ في', 'Saving to'); $('mwhere').textContent = M.folder || '';
   $('mchg').textContent = L('تغيير', 'Change'); $('mopen').textContent = L('فتح المجلد', 'Open folder');
@@ -85,10 +85,9 @@ function goText() {
 function drawCut() {
   const d = dur(), show = !!info && !info.loading && !info.error && d > 0 && mode !== 'images';
   $('cut').hidden = !show;
-  if (!show) return;
+  if (!show) { $('cutModes').hidden = true; return; }
   const e = end();
-  if (document.activeElement !== $('tsi')) $('tsi').value = fmt(cut.s);
-  if (document.activeElement !== $('tei')) $('tei').value = fmt(e);
+  $('tsT').textContent = fmt(cut.s); $('teT').textContent = fmt(e);
   $('ts').value = Math.round(cut.s / d * 1000); $('te').value = Math.round(e / d * 1000);
   $('tr').style.insetInlineStart = (cut.s / d * 100) + '%';
   $('tr').style.width = Math.max(0, (e - cut.s) / d * 100) + '%';
@@ -96,6 +95,7 @@ function drawCut() {
   $('selLen').textContent = whole ? fmtShort(d) : fmt(e - cut.s);
   $('cutFull').hidden = whole;
   $('cutModes').hidden = whole;
+  $('cutFull').textContent = L('المقطع كامل', 'Whole video');
 }
 function draw() {
   drawTexts();
@@ -110,6 +110,7 @@ function jobText(j) {
   if (j.state === 'running' && j.kind === 'images') return L('أجيب الصور… ', 'Getting the photos… ') + ((j.items || []).length || '');
   if (j.state === 'running' && (j.stage === 'tools' || j.stage === 'preparing')) return L('جاري التجهيز…', 'Getting ready…');
   if ((j.state === 'running' && j.stage === 'trimming') || j.state === 'trim') return L('أقص الجزء اللي اخترته… ', 'Cutting your part… ') + (j.pct ? j.pct + '%' : '');
+  if (j.state === 'running' && j.stage === 'converting') return L('أحوّله لصيغة تشتغل في كل مكان… ', 'Converting so it plays everywhere… ') + (j.pct ? j.pct + '%' : '');
   if (j.state === 'running' && j.stage === 'finishing') return L('أجهّز الملف…', 'Finishing the file…');
   if (j.state === 'running') return L('جاري التحميل ', 'Downloading ') + j.pct + '%';
   if (j.state === 'done' && j.kind === 'images') return L(`لقيت ${(j.items || []).length}، اختر اللي تبيه واحفظ`, `Found ${(j.items || []).length}, pick and save`);
@@ -119,13 +120,15 @@ function jobText(j) {
   return '';
 }
 const ICON = {
+  vol: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M15.5 9a4 4 0 0 1 0 6"/><path d="M18 6.5a7.5 7.5 0 0 1 0 11"/></svg>',
+  mute: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>',
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
   folder: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   retry: '<svg viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v5h5"/></svg>'
 };
 function drawJobs() {
-  let h = M.jobs.length ? `<h3>${L('التحميلات', 'Downloads')}</h3>` : '';
-  for (const j of M.jobs.slice(0, 8)) {
+  let h = '';
+  for (const j of M.jobs.slice(0, 3)) {   // the last three; everything finished is also in the browser's downloads list
     const m = meta.get(j.id) || {};
     const bad = j.state === 'error', ind = j.state === 'running' && (j.kind === 'images' || j.stage === 'tools' || j.stage === 'preparing' || j.stage === 'finishing' || !j.pct);
     const gal = j.kind === 'images' && j.state === 'done';
@@ -172,13 +175,13 @@ function showError(code) {
 }
 async function preview(u) {
   u = String(u || '').trim();
-  if (!/^https?:\/\//i.test(u)) { info = null; $('card').hidden = true; resetPlayer(); return draw(); }
+  if (!/^https?:\/\//i.test(u)) { info = null; $('card').hidden = true; $('mempty').hidden = false; resetPlayer(); return draw(); }
   if (info && info.url === u) return;
   const my = ++infoSeq;
   info = { url: u, loading: true };
   cut = { s: 0, e: 0 }; note = ''; noteBad = false;
   resetPlayer();
-  $('card').hidden = false; $('card').className = 'card loading';
+  $('card').hidden = false; $('mempty').hidden = true; $('card').className = 'card loading';
   $('pm').style.backgroundImage = ''; $('pdur').hidden = $('psite').hidden = true;
   $('ptitle').textContent = 'loading'; $('pby').textContent = 'loading';
   showError('');
@@ -207,10 +210,10 @@ async function preview(u) {
   for (const o of $('mq').options) if (o.value !== 'best') o.hidden = hs.length ? !hs.some(h => h >= +o.value * 0.9) : false;
   if ($('mq').selectedOptions[0] && $('mq').selectedOptions[0].hidden) $('mq').value = 'best';
   // a light stream to watch the part before downloading (some sites don't allow it: then the picture stays)
-  if (r.preview) { pv.src = r.preview; pv.hidden = false; $('pplay').hidden = false; }
+  if (r.preview) { pv.src = r.preview; pv.hidden = false; $('pplay').hidden = false; $('pvol').hidden = false; }
   draw();
 }
-function resetPlayer() { pv.pause(); pv.removeAttribute('src'); pv.load(); pv.hidden = true; $('pplay').hidden = true; $('pm').classList.remove('playing'); $('tph').hidden = true; }
+function resetPlayer() { pv.pause(); pv.removeAttribute('src'); pv.load(); pv.hidden = true; $('pplay').hidden = true; $('pvol').hidden = true; $('pm').classList.remove('playing'); $('tph').hidden = true; }
 // some sites don't say how long the video is: the preview stream does
 pv.addEventListener('loadedmetadata', () => { if (info && !info.loading && !(info.duration > 0) && isFinite(pv.duration) && pv.duration > 0) { info.duration = pv.duration; $('pdur').hidden = false; $('pdur').textContent = fmtShort(pv.duration); draw(); } });
 pv.addEventListener('error', () => { if (pv.getAttribute('src')) { pv.hidden = true; $('pplay').hidden = true; } });
@@ -220,6 +223,20 @@ $('pm').onclick = () => {
   if (pv.paused) { if (pv.currentTime < cut.s - 0.05 || pv.currentTime >= end() - 0.05) pv.currentTime = cut.s; pv.play().catch(() => {}); }
   else pv.pause();
 };
+let vol = 25;
+try { const v = +localStorage.getItem('3zt-media-vol'); if (localStorage.getItem('3zt-media-vol') !== null && v >= 0 && v <= 100) vol = v; } catch (e) {}
+const setVol = (v, save) => {
+  vol = Math.max(0, Math.min(100, Math.round(v)));
+  pv.volume = vol / 100; pv.muted = vol === 0; $('pvolR').value = vol;
+  $('pvolR').style.background = '';
+  if (save) try { localStorage.setItem('3zt-media-vol', String(vol)); } catch (e) {}
+  drawTexts();
+};
+let volBefore = 25;
+$('pvolR').addEventListener('input', () => setVol(+$('pvolR').value, true));
+$('pmute').onclick = e => { e.stopPropagation(); if (vol > 0) { volBefore = vol; setVol(0, true); } else setVol(volBefore || 25, true); };
+$('pvol').addEventListener('click', e => e.stopPropagation());   // the sound bar is not a click on the picture
+setVol(vol, false);
 pv.addEventListener('play', () => $('pm').classList.add('playing'));
 pv.addEventListener('pause', () => $('pm').classList.remove('playing'));
 pv.addEventListener('timeupdate', () => {
@@ -233,16 +250,6 @@ const MIN = 0.3;
 $('ts').addEventListener('input', () => { const d = dur(); if (!d) return; cut.s = Math.min(+$('ts').value / 1000 * d, end() - MIN); if (cut.s < 0) cut.s = 0; seekTo(cut.s); draw(); });
 $('te').addEventListener('input', () => { const d = dur(); if (!d) return; cut.e = Math.min(d, Math.max(+$('te').value / 1000 * d, cut.s + MIN)); seekTo(cut.e); draw(); });
 function seekTo(t) { if (!pv.hidden && pv.getAttribute('src') && pv.readyState > 0) { pv.pause(); pv.currentTime = t; } }
-const setTime = (which, t) => {
-  const d = dur(); if (isNaN(t) || t < 0 || !d) return draw();
-  t = Math.min(t, d);
-  if (which === 's') cut.s = Math.min(t, end() - MIN); else cut.e = Math.max(t, cut.s + MIN);
-  draw();
-};
-$('tsi').addEventListener('change', () => setTime('s', parseT($('tsi').value)));
-$('tei').addEventListener('change', () => setTime('e', parseT($('tei').value)));
-$('tsNow').onclick = () => setTime('s', pv.hidden ? NaN : pv.currentTime);
-$('teNow').onclick = () => setTime('e', pv.hidden ? NaN : pv.currentTime);
 $('cutFull').onclick = () => { cut = { s: 0, e: 0 }; draw(); };
 $('mq').onchange = draw;
 
