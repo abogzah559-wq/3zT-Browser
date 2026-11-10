@@ -535,7 +535,7 @@ async function features() {
     await go(B + '/article', true);
     await find(u => u.startsWith(B + '/article'), 30);
     const btn = await poll(async () => { const tb = await toolbar(); const v = await tb.ev('S.url.includes("/article") && !document.getElementById("readerBtn").hidden && getComputedStyle(document.getElementById("readerBtn")).display !== "none"'); tb.close(); return v; }, 15000);
-    ok('reader view: the book button shows on an article', !!btn);
+    ok('reader view: the book button shows on an article', !!btn, btn ? '' : await (async () => { const tb = await toolbar(); const v = await tb.ev('JSON.stringify({ url: S.url, reader: S.reader, hidden: document.getElementById("readerBtn").hidden })'); tb.close(); return v; })());
     if (btn) {
       { const tb = await toolbar(); await tb.ev(`document.getElementById('readerBtn').click(), 1`); tb.close(); }
       const rt = await find(u => u.includes('newtab/reader.html'), 30);
@@ -561,7 +561,8 @@ async function features() {
       await sleep(300);
       for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await vc.send('Input.dispatchMouseEvent', { type, x: 360, y: 64, button: 'left', clickCount: 1 });
       const pip = await poll(() => vc.ev('!!document.pictureInPictureElement'), 4000);
-      ok('picture in picture: the button over a video opens it', !!pip);
+      const why = pip ? '' : await vc.ev(`JSON.stringify({ en: document.pictureInPictureEnabled, rs: document.querySelector('video').readyState, r: (() => { const r = document.querySelector('video').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(), dpr: devicePixelRatio, at: (document.elementFromPoint(360, 64) || {}).tagName })`);
+      ok('picture in picture: the button over a video opens it', !!pip, why);
       await vc.ev('document.pictureInPictureElement ? document.exitPictureInPicture().then(() => 1) : 1');
       vc.close();
     } else ok('picture in picture: the button over a video opens it', false, 'no video page');
@@ -576,7 +577,7 @@ async function features() {
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: other.x, y: other.y }); await sleep(200);
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vtab.x, y: vtab.y + 1 });
     const card = await poll(async () => { const v = await tb.ev(`(() => { const p = document.getElementById('tprev'); return p.classList.contains('on') && p.classList.contains('pic') ? p.querySelector('.t').textContent : null; })()`); return v; }, 8000);
-    ok('tab hover card: title and a picture of the tab', /video page/.test(card || ''), card);
+    ok('tab hover card: title and a picture of the tab', /video page/.test(card || ''), card || await tb.ev(`JSON.stringify({ cls: document.getElementById('tprev').className, t: document.querySelector('#tprev .t').textContent })`));
     await shot(tb, 'tab-card');
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 700 }); await sleep(300);
     const bars = async () => (await targets()).filter(t => t.type === 'page' && t.url.includes('ui/toolbar.html'));
@@ -692,7 +693,7 @@ function report() {
     const esc = t => String(t).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
     // the failures first, on their own (a long list is cut short by GitHub)
     const prop = t => esc(t).replace(/:/g, '%3A').replace(/,/g, '%2C');   // inside a property, ':' and ',' must be escaped too
-    for (const r of failed) console.log(`::error title=${prop('e2e FAIL ' + r.name.slice(0, 110))}::` + esc(String(r.info || '')).slice(0, 3000));
+    for (const r of failed) console.log(`::error title=${prop('e2e FAIL ' + r.name.slice(0, 110))}::` + esc(String(r.info || 'failed (no details)')).slice(0, 3000));
     console.log(`::${failed.length ? 'error' : 'notice'} title=e2e ${results.length - failed.length}/${results.length}::` + esc(results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + String(r.info).slice(0, 160) : ''}`).join('\n')));
   }
 }
