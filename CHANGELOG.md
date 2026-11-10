@@ -11,7 +11,7 @@ the browser's "updated" note are made from these sections.
 - A new look for the downloader: big preview with length and site, the timeline, mode buttons with icons, a clear "Download 1080p · 0:23" button, cards with thumbnails, plain-language errors (the technical text is under "Details").
 - TikTok For You: pressing the fox button while scrolling the feed now downloads the video on screen (the feed's address never changes, so 3zT builds the video's own link).
 - Closing the downloader window stops everything it started, deletes its temporary files and clears its list (it asks first if something is still downloading). It opens empty next time.
-- New setting: Settings → Ads & privacy → "Sign in with passkeys", off by default. While it is off, no site can open the Windows Security "insert your security key" window; you continue with your password.
+- New setting: Settings → Ads & privacy → "Sign in with passkeys", off by default. While it is off, no site can open the Windows Security "insert your security key" window by itself; you continue with your password (a security key as your account's second step still works after you click).
 - The passkey fix and Google's sign-in disguise now also reach the blank frames and windows a sign-in page makes, which is how the security-key window still appeared about one time in three. Fewer "Couldn't sign you in" pages from Google (it can still happen now and then: Try again).
 
 ### العربية
@@ -20,7 +20,7 @@ the browser's "updated" note are made from these sections.
 - شكل جديد للمحمّل: معاينة كبيرة فيها المدة واسم الموقع، شريط القص، أزرار بأيقونات، زر واضح مثل «تحميل 1080p · 0:23»، بطاقات فيها صورة المقطع، ورسائل خطأ مفهومة (التفاصيل التقنية تحت «التفاصيل»).
 - تيك توك «For You»: لو ضغطت زر الثعلب وأنت تتصفح الريلز، يحمّل المقطع اللي قدامك (رابط الصفحة ما يتغير، فالمتصفح يسوي رابط المقطع بنفسه).
 - قفل نافذة المحمّل يوقف كل شي شغّله، ويمسح ملفاته المؤقتة والقائمة (ويسألك أول إذا فيه تحميل شغال). وتفتح فاضية المرة الجاية.
-- خيار جديد: الإعدادات ← الإعلانات والخصوصية ← «تسجيل الدخول بمفاتيح المرور (Passkeys)»، مطفي من الأساس. وهو مطفي ما يقدر أي موقع يفتح نافذة أمان ويندوز «أدخل مفتاح الأمان»، وتكمل بكلمة المرور.
+- خيار جديد: الإعدادات ← الإعلانات والخصوصية ← «تسجيل الدخول بمفاتيح المرور (Passkeys)»، مطفي من الأساس. وهو مطفي ما يقدر أي موقع يفتح نافذة أمان ويندوز «أدخل مفتاح الأمان» لحاله، وتكمل بكلمة المرور (ومفتاح الأمان كخطوة تحقق ثانية لحسابك يشتغل بعد ما تضغط بنفسك).
 - حل مفاتيح المرور وتنكّر صفحة دخول قوقل صاروا يوصلون للإطارات والنوافذ الفاضية اللي تسويها صفحة الدخول، وهذا كان سبب ظهور نافذة المفتاح تقريباً مرة من كل ثلاث. وصفحة «Couldn't sign you in» من قوقل بتقل (ممكن تطلع أحياناً: اضغط Try again).
 
 ## 0.14.0

@@ -4,6 +4,7 @@
    (video, MP3 or the photos of a post). Closing the window stops everything it started and forgets the list. */
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const cssUrl = u => String(u).replace(/["\\\n\r()]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0'));   // safe inside url("…")
 const fileUrl = p => 'file:///' + String(p).replace(/\\/g, '/').split('/').map((s, i) => (i === 0 && /^[A-Za-z]:$/.test(s) ? s : encodeURIComponent(s))).join('/');
 let lang = 'ar';
 const L = (ar, en) => (lang === 'en' ? en : ar);
@@ -34,10 +35,10 @@ function explain(e) {
   if (e === 'expired') return L('انتهت صلاحية هذا العنصر، ابدأه من جديد.', 'This item expired, start it again.');
   if (e === 'no-photos') return L('ما لقيت صور في هذا الرابط.', 'No photos found at this link.');
   if (/^tools:/.test(e)) return L('أدوات التحميل ما اشتغلت. جرّب «تحديث أدوات التحميل».', 'The download tools did not start. Try "Update download tools".');
-  if (/sign in|log ?in|private|cookies|age/i.test(e)) return L('هذا المحتوى يحتاج تسجيل دخول أو هو خاص. سجّل دخولك في الموقع من المتصفح وجرب مرة ثانية.', 'This needs you to be signed in, or it is private. Sign in to the site in the browser and try again.');
   if (/unsupported url/i.test(e)) return L('هذا الرابط مو رابط مقطع. افتح المقطع نفسه (مو الصفحة الرئيسية) وجرب.', 'This is not a link to a video. Open the video itself (not the home page) and try again.');
+  if (/sign in|log ?in|private (video|account|post)|this (video|post|account) is private|--cookies|\bage[- ]?(restricted|gate|limit|verif)|confirm your age|inappropriate for some users/i.test(e)) return L('هذا المحتوى يحتاج تسجيل دخول أو هو خاص. سجّل دخولك في الموقع من المتصفح وجرب مرة ثانية.', 'This needs you to be signed in, or it is private. Sign in to the site in the browser and try again.');
   if (/unavailable|removed|not available|404/i.test(e)) return L('المقطع محذوف أو غير متاح في منطقتك.', 'The video was removed or is not available in your region.');
-  if (/HTTP Error 403|429|rate/i.test(e)) return L('الموقع رفض الطلب مؤقتاً. جرب بعد شوي، أو حدّث أدوات التحميل.', 'The site refused for now. Try again shortly, or update the download tools.');
+  if (/HTTP Error (403|429)\b|\brate[- ]?limit|too many requests/i.test(e)) return L('الموقع رفض الطلب مؤقتاً. جرب بعد شوي، أو حدّث أدوات التحميل.', 'The site refused for now. Try again shortly, or update the download tools.');
   return L('ما قدرت أحمّل هذا المقطع.', 'Could not download this.');
 }
 const isCode = e => /^(bad-url|busy|busy-update|cancelled|expired|no-photos)$/.test(String(e || ''));
@@ -129,7 +130,7 @@ function drawJobs() {
     const bad = j.state === 'error', ind = j.state === 'running' && (j.kind === 'images' || j.stage === 'tools' || j.stage === 'preparing' || j.stage === 'finishing' || !j.pct);
     const gal = j.kind === 'images' && j.state === 'done';
     h += `<div class="job${gal ? ' wide' : ''}" data-j="${esc(j.id)}">
-      <div class="th"${m.thumb ? ` style="background-image:url(&quot;${esc(m.thumb)}&quot;)"` : ''}></div>
+      <div class="th"${m.thumb ? ` style="background-image:url(&quot;${esc(cssUrl(m.thumb))}&quot;)"` : ''}></div>
       <div class="tx"><div class="nm" title="${esc(j.url)}">${esc(m.title || j.title || j.name || j.url)}</div>
         <div class="st${bad ? ' bad' : j.state === 'done' ? ' ok' : ''}">${esc(jobText(j))}</div>
         ${j.state === 'running' || j.state === 'trim' ? `<div class="pb${ind ? ' ind' : ''}"><i style="width:${j.pct}%"></i></div>` : ''}</div>
@@ -195,7 +196,7 @@ async function preview(u) {
     else showError((r && r.error) || 'no-info');
     return draw();
   }
-  if (r.thumbnail) $('pm').style.backgroundImage = `url("${String(r.thumbnail).replace(/"/g, '%22')}")`;
+  if (r.thumbnail) $('pm').style.backgroundImage = `url("${cssUrl(r.thumbnail)}")`;
   $('pdur').hidden = !r.duration; $('pdur').textContent = r.duration ? fmtShort(r.duration) : '';
   const site = siteName(r.site, u);
   $('psite').hidden = !site; $('psite').textContent = site;
@@ -246,7 +247,7 @@ $('cutFull').onclick = () => { cut = { s: 0, e: 0 }; draw(); };
 $('mq').onchange = draw;
 
 /* ---------- downloading ---------- */
-async function start(url, m) {
+async function start(url, m, again) {
   url = (url || '').trim();
   if (!url) { note = L('الصق الرابط أول.', 'Paste a link first.'); noteBad = true; return draw(); }
   if (m === 'video' && isPhotoLink(url)) m = 'images';
@@ -257,10 +258,11 @@ async function start(url, m) {
     o.infoId = info.infoId;   // the page was already read: the download starts right away
     if (m !== 'images' && !isWhole()) { o.start = cut.s; o.end = end(); o.exact = document.querySelector('input[name=cm]:checked').value === 'exact'; }
   }
+  if (again) Object.assign(o, again, { infoId: (info && info.url === url && info.infoId) || again.infoId });   // "Retry": the same part and quality as the first time
   const r = await zeus.mediaStart(o);
   starting = false;
   if (r && r.error) { note = explain(r.error); noteBad = true; }
-  else if (r && r.id) meta.set(r.id, { thumb: info && info.url === url ? info.thumbnail : '', title: info && info.url === url ? info.title : '' });
+  else if (r && r.id) meta.set(r.id, { o, thumb: info && info.url === url ? info.thumbnail : '', title: info && info.url === url ? info.title : '' });
   await load();
 }
 $('mgo').onclick = () => start($('murl').value, mode);
@@ -285,7 +287,7 @@ $('mjobs').addEventListener('click', async e => {
   const c = b.dataset.m;
   if (c === 'cancel') { await zeus.mediaCancel(j.id); return load(); }
   if (c === 'show') return zeus.mediaShow(j.file);
-  if (c === 'retry') { $('murl').value = j.url; return start(j.url, j.kind === 'images' ? 'images' : j.mode || 'video'); }
+  if (c === 'retry') { const m0 = meta.get(j.id) || {}; return start(j.url, j.kind === 'images' ? 'images' : j.mode || 'video', m0.o ? { mode: m0.o.mode, q: m0.o.q, start: m0.o.start, end: m0.o.end, exact: m0.o.exact } : null); }
   if (c === 'all') { msel.set(j.id, new Set(j.items.map(x => x.i))); return drawJobs(); }
   if (c === 'none') { msel.set(j.id, new Set()); return drawJobs(); }
   if (c === 'save') {
