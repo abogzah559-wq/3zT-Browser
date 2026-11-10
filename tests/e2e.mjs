@@ -574,8 +574,11 @@ async function features() {
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await sleep(300);
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vtab.x, y: vtab.y }); await sleep(2000);   // entering the strip: the tab you are on is pictured
     await tb.ev(`ui.send('tab', 'activate', ${other.id}), 1`); await sleep(700);
-    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: other.x, y: other.y }); await sleep(200);
-    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vtab.x, y: vtab.y + 1 });
+    // where the video tab is now (the strip may have scrolled when the other tab was chosen)
+    const at = JSON.parse(await tb.ev(`(() => { const e = document.querySelector('.tab[data-id="${vtab.id}"]'); e.scrollIntoView({ block: 'nearest', inline: 'nearest' }); const r = e.getBoundingClientRect(); return JSON.stringify({ x: r.left + r.width / 2, y: r.top + r.height / 2 }); })()`));
+    await sleep(300);
+    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await sleep(200);
+    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
     const card = await poll(async () => { const v = await tb.ev(`(() => { const p = document.getElementById('tprev'); return p.classList.contains('on') && p.classList.contains('pic') ? p.querySelector('.t').textContent : null; })()`); return v; }, 8000);
     ok('tab hover card: title and a picture of the tab', /video page/.test(card || ''), card || await tb.ev(`JSON.stringify({ cls: document.getElementById('tprev').className, t: document.querySelector('#tprev .t').textContent })`));
     await shot(tb, 'tab-card');
