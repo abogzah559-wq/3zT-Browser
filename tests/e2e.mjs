@@ -688,7 +688,9 @@ function report() {
   const failed = results.filter(r => !r.pass);
   if (process.env.GITHUB_ACTIONS) {
     const esc = t => String(t).replace(/%/g, '%25').replace(/\r/g, '').replace(/\n/g, '%0A');
-    console.log(`::${failed.length ? 'error' : 'notice'} title=e2e ${results.length - failed.length}/${results.length}::` + esc(results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + r.info : ''}`).join('\n')));
+    // the failures first, on their own (a long list is cut short by GitHub)
+    for (const r of failed) console.log(`::error title=e2e FAIL ${esc(r.name).slice(0, 120)}::` + esc(String(r.info || '')).slice(0, 3000));
+    console.log(`::${failed.length ? 'error' : 'notice'} title=e2e ${results.length - failed.length}/${results.length}::` + esc(results.map(r => `${r.pass ? 'PASS' : 'FAIL'} ${r.name}${r.info ? ' - ' + String(r.info).slice(0, 160) : ''}`).join('\n')));
   }
 }
 // the whole run may take at most 20 minutes

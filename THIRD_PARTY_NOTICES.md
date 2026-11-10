@@ -108,9 +108,24 @@ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTH
  WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
+## Mozilla Readability 0.6.0
+
+Used by the reader view (`src/vendor/readability/`: `Readability.js`, `Readability-readerable.js`), unmodified,
+from <https://github.com/mozilla/readability> (commit ab4027a). Copyright (c) 2010 Arc90 Inc and Mozilla.
+Licensed under the Apache License, Version 2.0; the full text is in `src/vendor/readability/LICENSE.md`.
+
+## DuckDuckGo Autoconsent 18.2.0
+
+Used for the "Cookie popups" setting. The npm package `@duckduckgo/autoconsent` (<https://github.com/duckduckgo/autoconsent>)
+is downloaded unmodified when the setup is built (`scripts/fetch_autoconsent.mjs`, pinned version, checked against the
+registry's sha512 integrity) and shipped in `resources\app\src\vendor\autoconsent\` with its license.
+Copyright (c) DuckDuckGo, Inc. and contributors. Licensed under the Mozilla Public License 2.0
+(<https://mozilla.org/MPL/2.0/>); its source is available at the address above.
+
 ## Used, not included
 
 - **SponsorBlock** (<https://sponsor.ajay.app>) - skip segments are fetched from the public API. The data is made by the SponsorBlock community and licensed CC BY-NC-SA 4.0 (<https://creativecommons.org/licenses/by-nc-sa/4.0/>). 3zT is free and non-commercial.
+- **Return YouTube Dislike** (<https://returnyoutubedislike.com>) - dislike counts are read from its public API (`returnyoutubedislikeapi.com`); only the video ID is sent. No code from the project is included.
 - **EasyList / EasyPrivacy** (<https://easylist.to>) - filter lists downloaded at runtime; dual licensed GPL-3.0 / CC BY-SA 3.0.
 - **Clean YouTube: Block Shorts, Hide Comments & Feeds** (Chrome Web Store, v1.9.8) - the list of YouTube page elements hidden by the Clean YouTube switches (`src/features.js`) is adapted from this extension. Credit to its developer; it will be changed or removed on request.
 - **yt-dlp** (<https://github.com/yt-dlp/yt-dlp>, Unlicense), **gallery-dl** (<https://codeberg.org/mikf/gallery-dl>, GPL-2.0) and **FFmpeg** (<https://ffmpeg.org>, GPL; the Windows build from <https://github.com/yt-dlp/FFmpeg-Builds>, source at <https://git.ffmpeg.org/ffmpeg.git>) - shipped unmodified in the setup (`resources\tools`), fetched from their official releases when the setup is built and checked against their published SHA-256 sums, and run as separate programs.

@@ -165,10 +165,13 @@ jobs:
         run: |
           v="v$(node -p "require('./package.json').version")"
           if gh release view "$v" >/dev/null 2>&1; then echo "::notice title=release::$v already published"; exit 0; fi
-          # what's new (English + Arabic) from CHANGELOG.md; the browser's "Details" button reads these parts
+          # what's new (English) from CHANGELOG.md; the browser's "Details" button reads it
           changes="$(node -e "const s=require('fs').readFileSync('CHANGELOG.md','utf8').replace(/\r/g,'');const v=require('./package.json').version;const p=s.split(/^## /m).find(x=>x.split('\n')[0].trim()===v);process.stdout.write(p?'## What\'s new in '+p.trim():'')")"
           notes="Download **3zT-Browser-Setup.exe** below and run it. Windows 10/11, 64-bit. No administrator rights needed. Installed copies update themselves."
           [ -n "$changes" ] && notes="$notes"$'\n\n'"$changes"
+          # the Arabic notes for the browser's "Details" button, hidden in the release text (installer/notes-ar.md)
+          ar="$(node -e "const s=require('fs').readFileSync('installer/notes-ar.md','utf8').replace(/\r/g,'');const v=require('./package.json').version;const p=s.split(/^## /m).find(x=>x.split('\n')[0].trim()===v);process.stdout.write(p?p.split('\n').slice(1).join('\n').trim():'')")"
+          [ -n "$ar" ] && notes="$notes"$'\n\n<!-- 3zt-ar\n'"$ar"$'\n-->'
           [ -f tests/out/speed.md ] && notes="$notes"$'\n\n### Page speed on this build\nSame websites, new profiles, GitHub Windows machine:\n\n'"$(cat tests/out/speed.md)"
           [ -f tests/out/resources.md ] && notes="$notes"$'\n\n### Resource use on this build\nGitHub Windows machine (no graphics card), new profile, all 3zT processes added up, CPU averaged over 20 s:\n\n'"$(cat tests/out/resources.md)"
           [ -f tests/out/bench.md ] && notes="$notes"$'\n\n### Memory on this build\nSame 3 websites in 3 tabs, new profiles, GitHub Windows machine, two rounds averaged:\n\n'"$(cat tests/out/bench.md)"
