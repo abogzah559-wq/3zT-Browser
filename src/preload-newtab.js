@@ -427,6 +427,56 @@ if (SUB) {
     document.addEventListener('DOMContentLoaded', refresh);
     setInterval(() => { if (vid() !== segFor) refresh(); else bind(); }, 2000);
 
+    /* --- Return YouTube Dislike: the count next to the dislike button --- */
+    if (yt.dislikes) {
+      let rydFor = '', rydVal = null;
+      const fmtN = n => { try { return new Intl.NumberFormat(document.documentElement.lang || undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(n); } catch (e) { return String(n); } };
+      const paint = () => {
+        const b = document.querySelector('ytd-watch-metadata dislike-button-view-model button, ytd-watch-metadata #segmented-dislike-button button');
+        if (!b) return;
+        let t = b.querySelector('.zt-ryd');
+        if (rydVal == null) { if (t) t.remove(); return; }
+        if (!t) {
+          t = document.createElement('span'); t.className = 'zt-ryd';
+          t.style.cssText = 'margin-inline-start:6px;font:500 14px/1 Roboto,Arial,sans-serif;white-space:nowrap';
+          b.appendChild(t);
+          b.style.width = 'auto'; b.style.paddingInline = '12px 14px';
+        }
+        const txt = fmtN(rydVal); if (t.textContent !== txt) t.textContent = txt;
+      };
+      const rydRefresh = async () => {
+        const id = vid(); if (id === rydFor) return paint();
+        rydFor = id; rydVal = null; paint();
+        if (!id || location.pathname !== '/watch') return;
+        try { const r = await ipcRenderer.invoke('ryd:get', id); if (rydFor === id && r) rydVal = r.dislikes; } catch (e) {}
+        paint();
+      };
+      document.addEventListener('yt-navigate-finish', rydRefresh);
+      setInterval(rydRefresh, 1500);   // YouTube redraws the buttons: cheap check, nothing is fetched twice
+    }
+
+    /* --- the best quality from the start: YouTube's own player functions, from the page's world.
+           Once per video (and once more if the player put it back); a quality you pick yourself stays. --- */
+    if (yt.maxQuality) inMainWorld(`(() => {
+      let doneFor = '', tries = 0;
+      const vid = () => { const u = new URL(location.href); return u.pathname === '/watch' ? u.searchParams.get('v') || '' : ''; };
+      const apply = () => {
+        const id = vid(); if (!id || doneFor === id) return;
+        const p = document.getElementById('movie_player');
+        if (!p || typeof p.getAvailableQualityLevels !== 'function') return;
+        const lv = (p.getAvailableQualityLevels() || []).filter(q => q && q !== 'auto');
+        if (!lv.length) return;
+        const best = lv[0];
+        try { p.setPlaybackQualityRange(best, best); } catch (e) {}
+        try { p.setPlaybackQuality(best); } catch (e) {}
+        doneFor = id; tries = 0;
+        setTimeout(() => { if (vid() === id && p.getPlaybackQuality && p.getPlaybackQuality() !== best && tries++ < 1) { try { p.setPlaybackQualityRange(best, best); } catch (e) {} } }, 3000);
+      };
+      document.addEventListener('yt-navigate-finish', () => setTimeout(apply, 300));
+      document.addEventListener('loadeddata', e => { if (e.target && e.target.classList && e.target.classList.contains('html5-main-video')) apply(); }, true);
+      document.addEventListener('playing', e => { if (e.target && e.target.classList && e.target.classList.contains('html5-main-video')) apply(); }, true);
+    })();`);
+
     /* --- Ambient light for YouTube: the original scripts, in their own isolated world (like an extension's),
            so YouTube's script rules (CSP / Trusted Types) don't apply to them --- */
     if (yt.ambient && !/^\/(live_chat|embed)/.test(location.pathname)) {

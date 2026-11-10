@@ -8,3 +8,6 @@ installer/Arabic.isl
 # Thmanyah font files: free to use but not to redistribute - install from thmanyah.com
 src/fonts/*.otf
 tools-cache/
+
+# DuckDuckGo Autoconsent: fetched at build time (scripts/fetch_autoconsent.mjs)
+src/vendor/autoconsent/
