@@ -15,34 +15,38 @@ const inMainWorld = code => {
   catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
 };
 /* sign-in pages and the "Windows Security" window: see where it is used below.
-   mode: 'off'   = passkeys are off (the default): every passkey request from a site is answered "no passkey" at once,
-                   so Windows' window never opens and the site carries on with the password
-         'on'    = passkeys allowed: only background requests are refused, anything you click still goes to Windows
+   mode: 'off'   = passkeys are off (the default): passkey requests are answered "no passkey" at once, so the site
+                   carries on with the password. The one exception is a security key used as a second step for an
+                   account (the site names the account's key) right after you clicked: that still reaches Windows.
+         'on'    = passkeys allowed: only requests you did not ask for are refused (background, or "any passkey" without a click)
          'nofix' = tests only: nothing changed
    ua:   Google's sign-in only: look like Firefox (Google refuses Electron browsers)
    Everything is applied again inside blank frames and windows of the same page (about:blank, window.open), because
-   sign-in pages take an untouched copy of navigator.credentials.get from such a frame. The changed functions show
-   their original source to toString, like built-in ones. */
+   sign-in pages take an untouched copy of navigator.credentials.get from such a frame. The changed functions
+   behave like built-in ones toward the page (toString shows the original source, no prototype, can't be "new"ed). */
 const pkCode = (mode, ua) => `(() => {
+  'use strict';
   const MODE = ${JSON.stringify(mode)}, UA = ${JSON.stringify(ua || '')};
   const fts0 = Function.prototype.toString;
   const src = f => { try { return fts0.call(f); } catch (e) { return 'function () { [native code] }'; } };
   const native = new WeakMap();      // our function -> the source text of the one it replaced
-  const done = new WeakSet();
-  const same = (f, orig) => { native.set(f, src(orig)); try { Object.defineProperty(f, 'name', { value: orig.name, configurable: true }); } catch (e) {} try { Object.defineProperty(f, 'length', { value: orig.length, configurable: true }); } catch (e) {} return f; };
+  const done = new WeakSet(), foreign = new WeakSet();
+  const same = (f, orig, name) => { native.set(f, src(orig)); try { Object.defineProperty(f, 'name', { value: name || orig.name, configurable: true }); } catch (e) {} try { Object.defineProperty(f, 'length', { value: orig.length, configurable: true }); } catch (e) {} return f; };
   const setFn = (o, k, f) => { const d = o && Object.getOwnPropertyDescriptor(o, k); if (!d || typeof d.value !== 'function') return; try { Object.defineProperty(o, k, { value: same(f(d.value), d.value), configurable: true, writable: true, enumerable: d.enumerable }); } catch (e) {} };
   const setGet = (o, k, f) => { const d = o && Object.getOwnPropertyDescriptor(o, k); if (!d || !d.get) return; try { Object.defineProperty(o, k, Object.assign({}, d, { get: same(f(d.get), d.get) })); } catch (e) {} };
+  // methods written as { m() {} } are like built-in ones: no prototype, can't be called with "new"
   const install = w => {
+    if (!w || foreign.has(w)) return;
     let realm;   // one per document's global (a frame that loads a new page gets a new one)
-    try { realm = w && w.document && w.Function.prototype; } catch (e) { return; }   // another site's frame: its own copy of this runs there
+    try { realm = w.document && w.Function.prototype; } catch (e) { foreign.add(w); return; }   // another site's frame: its own copy of this runs there
     if (!realm || done.has(realm)) return;
     done.add(realm);
     try {
       // toString of a changed function shows the built-in source (checked by sign-in pages)
       const FP = w.Function.prototype, fts = FP.toString;
       if (!native.has(fts)) {
-        const ts = function toString() { return native.has(this) ? native.get(this) : fts.call(this); };
-        native.set(ts, src(fts)); try { Object.defineProperty(ts, 'name', { value: 'toString' }); } catch (e) {}
+        const ts = ({ toString() { return native.has(this) ? native.get(this) : fts.call(this); } }).toString;
+        native.set(ts, src(fts));
         try { Object.defineProperty(FP, 'toString', { value: ts, configurable: true, writable: true, enumerable: false }); } catch (e) {}
       }
       const DE = w.DOMException, P = w.Promise;
@@ -51,9 +55,10 @@ const pkCode = (mode, ua) => `(() => {
         const N = w.Navigator.prototype;
         const val = { userAgent: UA, appVersion: UA.slice(8), vendor: '', userAgentData: undefined, platform: UA.includes('Windows') ? 'Win32' : 'Linux x86_64', oscpu: UA.includes('Windows') ? 'Windows NT 10.0; Win64; x64' : 'Linux x86_64' };
         for (const k of Object.keys(val)) {
+          const g = Object.getOwnPropertyDescriptor({ get [k]() { return val[k]; } }, k).get;
           const d = Object.getOwnPropertyDescriptor(N, k);
-          if (d && d.get) setGet(N, k, () => function () { return val[k]; });
-          else { const g = function () { return val[k]; }; native.set(g, 'function get ' + k + '() { [native code] }'); try { Object.defineProperty(N, k, { get: g, configurable: true, enumerable: true }); } catch (e) {} }
+          if (d && d.get) { same(g, d.get); try { Object.defineProperty(N, k, Object.assign({}, d, { get: g })); } catch (e) {} }
+          else { native.set(g, 'function get ' + k + '() { [native code] }'); try { Object.defineProperty(N, k, { get: g, configurable: true, enumerable: true }); } catch (e) {} }
         }
         try { delete w.chrome; } catch (e) {}
         // Chrome's passkeys live inside Chrome and aren't reachable here: straight to the password
@@ -61,44 +66,47 @@ const pkCode = (mode, ua) => `(() => {
       }
       if (MODE !== 'nofix') {
         const CC = w.CredentialsContainer && w.CredentialsContainer.prototype;
-        setFn(CC, 'get', orig => function get(opts) {
+        setFn(CC, 'get', orig => ({ get(opts) {
           if (opts && opts.publicKey) {
             const ac = w.navigator.userActivation, youAsked = !!(ac && ac.isActive);
             if (opts.mediation === 'conditional') {
               // the background "passkey autofill" request: waits forever (no list to show), like Chrome when you pick nothing
               return new P((res, rej) => { const s = opts.signal; if (s) { if (s.aborted) return rej(s.reason || new DE('The operation was aborted.', 'AbortError')); s.addEventListener('abort', () => rej(s.reason || new DE('The operation was aborted.', 'AbortError')), { once: true }); } });
             }
-            if (MODE === 'off' || UA || opts.mediation === 'immediate') return no();
-            // passkeys on: a request for "any passkey" (no account named) that you didn't ask for (no click or key just before)
-            // is answered as if you pressed Cancel; a named account, or anything you click, still goes to Windows
+            if (UA || opts.mediation === 'immediate') return no();
+            // a request for "any passkey" (no account named) or one you didn't ask for (no click or key just before):
+            // answered as if you pressed Cancel. Passkeys off: only an account's own security key after a click goes through.
             const named = Array.isArray(opts.publicKey.allowCredentials) && opts.publicKey.allowCredentials.length > 0;
-            if (!named && !youAsked) return no();
+            if (MODE === 'off' ? !(named && youAsked) : (!named && !youAsked)) return no();
           }
           return orig.apply(this, arguments);
-        });
+        } }).get);
         const PKC = w.PublicKeyCredential;
         if (PKC) {
-          setFn(PKC, 'isConditionalMediationAvailable', () => function isConditionalMediationAvailable() { return P.resolve(false); });
-          if (MODE === 'off') setFn(PKC, 'isUserVerifyingPlatformAuthenticatorAvailable', () => function isUserVerifyingPlatformAuthenticatorAvailable() { return P.resolve(false); });
-          setFn(PKC, 'getClientCapabilities', orig => function getClientCapabilities() {
+          setFn(PKC, 'isConditionalMediationAvailable', () => ({ isConditionalMediationAvailable() { return P.resolve(false); } }).isConditionalMediationAvailable);
+          if (MODE === 'off') setFn(PKC, 'isUserVerifyingPlatformAuthenticatorAvailable', () => ({ isUserVerifyingPlatformAuthenticatorAvailable() { return P.resolve(false); } }).isUserVerifyingPlatformAuthenticatorAvailable);
+          setFn(PKC, 'getClientCapabilities', orig => ({ getClientCapabilities() {
             return orig.apply(this, arguments).then(c => { const o = Object.assign({}, c, { conditionalGet: false }); if (MODE === 'off') { o.passkeyPlatformAuthenticator = false; o.userVerifyingPlatformAuthenticator = false; o.hybridTransport = false; } return o; });
-          });
+          } }).getClientCapabilities);
         }
       }
       // frames and windows made by this page get the same, the moment the page can reach them
       const kids = () => { try { for (let i = 0; i < w.length; i++) install(w[i]); } catch (e) {} };
-      const viaWin = g => function () { const r = g.apply(this, arguments); try { install(r); } catch (e) {} return r; };
-      const viaDoc = g => function () { const r = g.apply(this, arguments); try { if (r) install(r.defaultView); } catch (e) {} return r; };
+      const viaWin = g => ({ f() { const r = g.apply(this == null ? w : this, arguments); try { install(r); } catch (e) {} return r; } }).f;
+      const viaDoc = g => ({ f() { const r = g.apply(this, arguments); try { if (r) install(r.defaultView); } catch (e) {} return r; } }).f;
       for (const C of [w.HTMLIFrameElement, w.HTMLFrameElement, w.HTMLObjectElement, w.HTMLEmbedElement]) if (C) { setGet(C.prototype, 'contentWindow', viaWin); setGet(C.prototype, 'contentDocument', viaDoc); if (C.prototype.getSVGDocument) setFn(C.prototype, 'getSVGDocument', viaDoc); }
       setFn(w, 'open', viaWin);
       // window[0] / frames[0]: there is no hook for those, so after anything is added to the page the new frames are covered
-      let n = 0;
-      const after = f => function () { const r = f.apply(this, arguments); if (w.length !== n) { n = w.length; kids(); } return r; };
+      let n = w.length;
+      const after = f => ({ f() { const r = f.apply(this, arguments); if (w.length !== n) { n = w.length; kids(); } return r; } }).f;
       const NP = w.Node.prototype, EP = w.Element.prototype, DP = w.Document.prototype;
       for (const k of ['appendChild', 'insertBefore', 'replaceChild']) setFn(NP, k, after);
       for (const k of ['append', 'prepend', 'after', 'before', 'replaceWith', 'replaceChildren', 'insertAdjacentElement', 'insertAdjacentHTML']) setFn(EP, k, after);
       for (const k of ['write', 'writeln']) setFn(DP, k, after);
-      for (const k of ['innerHTML', 'outerHTML']) { const d = Object.getOwnPropertyDescriptor(EP, k); if (d && d.set) { const set0 = d.set; const ns = function (v) { set0.call(this, v); if (w.length !== n) { n = w.length; kids(); } }; native.set(ns, src(set0)); try { Object.defineProperty(EP, k, Object.assign({}, d, { set: ns })); } catch (e) {} } }
+      for (const k of ['innerHTML', 'outerHTML']) {
+        const d = Object.getOwnPropertyDescriptor(EP, k);
+        if (d && d.set) { const set0 = d.set; const ns = Object.getOwnPropertyDescriptor({ set [k](v) { set0.call(this, v); if (w.length !== n) { n = w.length; kids(); } } }, k).set; same(ns, set0); try { Object.defineProperty(EP, k, Object.assign({}, d, { set: ns })); } catch (e) {} }
+      }
       kids();
     } catch (e) {}
   };
@@ -110,8 +118,11 @@ const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|his
 if (SUB) {
   // a sign-in box embedded from another site must not open Windows' passkey window by itself either
   if (/^https?:$/.test(location.protocol)) {
-    let m = null; try { m = ipcRenderer.sendSync('pk:mode', /^accounts\.(google|youtube)\.com$/i.test(location.hostname)); } catch (e) {}
-    if (m && (m.mode !== 'nofix' || m.ua)) inMainWorld(pkCode(m.mode, m.ua));
+    const arg = (Array.isArray(process.argv) ? process.argv : []).find(x => x.startsWith('--3zt-pk='));
+    const mode = arg ? arg.slice(9) : 'off';
+    let ua = '';
+    if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
+    if (mode !== 'nofix' || ua) inMainWorld(pkCode(mode, ua));
   }
 } else if (internal) {
   contextBridge.exposeInMainWorld('zeus', {

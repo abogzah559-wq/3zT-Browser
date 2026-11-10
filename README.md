@@ -178,8 +178,9 @@ gets there with half the memory of Chrome and without loading ads and trackers. 
   the page it came from, `window.opener`), the same as in Chrome. Download sites rely on this.
 - Sign-in pages no longer pop up the Windows Security window (Windows Hello / "insert your security
   key") by themselves. **Passkeys are off by default** (*Settings → Ads & privacy → Sign in with passkeys*):
-  every passkey request from a site is answered "no passkey", so the site carries on with your
-  password. This also covers embedded sign-in boxes and the blank frames and windows a sign-in page
+  passkey requests from sites are answered "no passkey", so the site carries on with your password.
+  The one exception is a security key used as your account's second step (the site names your key)
+  right after you click: that still reaches Windows, so 2-step sign-in with a key keeps working. This also covers embedded sign-in boxes and the blank frames and windows a sign-in page
   makes to get an untouched copy of the passkey function (Google's sign-in does that), and the changed
   functions look built in to the page. Turn the option on if you use a passkey or a security key: then
   only background requests are refused, and a passkey you choose yourself (a click on "Sign in with a

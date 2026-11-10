@@ -477,6 +477,7 @@ function makeView(tab, fromOpener) {
     webPreferences: {
       preload: PRELOAD_TAB,            // gives an API only to our own internal pages (checked inside)
       nodeIntegrationInSubFrames: true,   // only so the preload also reaches iframes (passkey fix); Node stays off, sandbox on
+      additionalArguments: ['--3zt-pk=' + pkMode()],   // frames read passkeys on/off from here (no message per frame); the page itself asks live
       partition: tab.win.partition,
       contextIsolation: true, sandbox: true, nodeIntegration: false,
       plugins: true,                   // built-in PDF viewer
@@ -1739,8 +1740,6 @@ function setupPasswordIpc() {
   });
   // YouTube ad blocking: asked by the page preload before YouTube's own scripts run
   ipcMain.on('signin:ua', e => { e.returnValue = FIREFOX_UA; });
-  // frames inside pages: passkeys on/off (Settings) and, inside Google's sign-in, the Firefox look
-  ipcMain.on('pk:mode', (e, signin) => { e.returnValue = { mode: pkMode(), ua: signin ? FIREFOX_UA : '' }; });
   ipcMain.handle('tr:batch', async (e, texts, tl) => {
     if (!tabOfWc(e.sender) || !Array.isArray(texts)) return [];
     return trBatch(texts.slice(0, 400).map(x => String(x).slice(0, 5000)), tl === 'en' ? 'en' : 'ar');

@@ -17,6 +17,7 @@ const { spawn, execFile, execFileSync } = require('child_process');
 const isWin = process.platform === 'win32';
 const exe = n => n + (isWin ? '.exe' : '');
 const QUALITIES = ['best', '2160', '1440', '1080', '720', '480', '360'];
+const alive = pid => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
 const IMG = /\.(jpe?g|png|webp|gif|avif|bmp)$/i, VID = /\.(mp4|webm|mov|m4v|mkv)$/i, AUD = /\.(mp3|m4a|aac|ogg|opus|wav)$/i;
 const MAX_JOBS = 3, MAX_IMAGES = 300;
 // UTF-8 everywhere so Arabic titles and file names come through intact
@@ -34,6 +35,8 @@ class MediaEngine {
     this.o = opts;
     this.toolsDir = path.join(opts.dir, 'tools');
     this.tmp = path.join(os.tmpdir(), '3zt-media-' + process.pid);
+    // left behind by a run that crashed: their programs are gone, so are their temp files
+    try { for (const d of fs.readdirSync(os.tmpdir())) { const m = /^3zt-media-(\d+)$/.exec(d); if (m && +m[1] !== process.pid && !alive(+m[1])) fs.rm(path.join(os.tmpdir(), d), { recursive: true, force: true }, () => {}); } } catch (e) {}
     this.jobs = new Map();
     this.infos = new Map();       // preview details kept for the download: id -> { file, dir, url, t, key }
     this.procs = new Set();
@@ -346,7 +349,7 @@ class MediaEngine {
       if (!retry) try { fs.rmSync(path.join(job.dir, 'cookies.txt'), { force: true }); } catch (e) {}   // kept only for the second try
       if (code === 0 && src) {
         job.pct = 100; job.name = path.basename(src);
-        if (job.trim && VID.test(src)) { job.state = 'trim'; job.temp = src; }   // waits in the temp folder until you pick the part to keep
+        if ((job.trim && VID.test(src)) || (job.autoCut && AUD.test(src))) { job.state = 'trim'; job.temp = src; }   // waits in the temp folder until you pick the part to keep
         else {
           try { job.file = this.moveFile(src, this.outDir(), job.name); job.name = path.basename(job.file); job.state = 'done'; }
           catch (e) { job.state = 'error'; job.error = 'save: ' + e.message; }
@@ -355,7 +358,7 @@ class MediaEngine {
       } else if (retry) return retryWhole();
       else { job.state = 'error'; job.error = this.cleanErr(err) || 'failed'; fs.rm(job.dir, { recursive: true, force: true }, () => {}); }
       this.changed(job);
-      if (job.state === 'trim' && job.autoCut) this.finishTrim(job.id, { start: job.cut.s, end: job.cut.e, exact: job.cut.exact }).catch(e => { job.state = 'error'; job.error = 'trim: ' + (e.message || e); this.changed(job); });
+      if (job.state === 'trim' && job.autoCut) this.finishTrim(job.id, { start: job.cut.s, end: job.cut.e, exact: job.cut.exact }).catch(e => { job.state = 'error'; job.error = 'trim: ' + (e.message || e); fs.rm(job.dir, { recursive: true, force: true }, () => {}); this.changed(job); });
     };
   }
   /* how long a media file plays (0 if it has no picture or sound): read from ffmpeg's own report */
@@ -386,11 +389,11 @@ class MediaEngine {
   /* the downloader window closed: everything of it stops and is forgotten (programs, temporary files, the list) */
   reset(part, key) {
     for (const j of [...this.jobs.values()]) if ((j.partition || null) === (part || null)) {
-      if (j.proc) this.killTree(j.proc, true);
       j.state = 'cancelled';
+      if (j.proc) this.killTree(j.proc);   // without waiting: closing the window must not freeze the browser
       this.jobs.delete(j.id); fs.rm(j.dir, { recursive: true, force: true }, () => {});
     }
-    if (this.infoProcs && key != null && this.infoProcs.has(key)) { this.killTree(this.infoProcs.get(key), true); this.infoProcs.delete(key); }
+    if (this.infoProcs && key != null && this.infoProcs.has(key)) { this.killTree(this.infoProcs.get(key)); this.infoProcs.delete(key); }
     for (const [id, x] of this.infos) if (key == null || x.key === key) { this.infos.delete(id); fs.rm(x.dir, { recursive: true, force: true }, () => {}); }
   }
   running(part) { return [...this.jobs.values()].some(j => (j.partition || null) === (part || null) && j.state === 'running'); }
@@ -421,7 +424,10 @@ class MediaEngine {
         if (!j) { fs.rm(dir, { recursive: true, force: true }, () => {}); return done({ error: this.cleanErr(err) || 'no-info' }); }
         // kept for the download (--load-info-json) for a few minutes
         const infoId = crypto.randomBytes(6).toString('hex');
-        try { fs.writeFileSync(path.join(dir, 'info.json'), out); this.infos.set(infoId, { file: path.join(dir, 'info.json'), dir, url, t: Date.now(), key }); } catch (e) {}
+        // the site's cookies stay out of the saved copy (the download gets them again, in its own short-lived file)
+        const strip = o => { if (!o || typeof o !== 'object') return; delete o.cookies; if (o.http_headers) for (const h of Object.keys(o.http_headers)) if (/^cookie$/i.test(h)) delete o.http_headers[h]; };
+        strip(j); for (const f of [...(j.formats || []), ...(j.requested_formats || []), ...(j.requested_downloads || [])]) strip(f);
+        try { fs.writeFileSync(path.join(dir, 'info.json'), JSON.stringify(j), { mode: 0o600 }); this.infos.set(infoId, { file: path.join(dir, 'info.json'), dir, url, t: Date.now(), key }); } catch (e) {}
         this.pruneInfos();
         // a light stream for the preview player: one file with picture and sound, plain http(s), 480p or less
         const fm = (j.formats || []).filter(f => f.url && /^https?$/.test(f.protocol || '') && f.vcodec !== 'none' && f.acodec !== 'none' && (f.vcodec || f.acodec || /^(mp4|webm|m4v|mov)$/.test(f.ext || '')) && !/dash|m3u8/.test(f.protocol || ''));
@@ -506,9 +512,11 @@ class MediaEngine {
     const p = this.paths();
     const dur = Math.max(0.1, end - start);
     const args = ['-hide_banner', '-nostdin', '-y', '-ss', start.toFixed(3), '-i', src, '-t', dur.toFixed(3), '-map', '0:v:0?', '-map', '0:a?'];
-    if (exact) args.push('-c:v', 'libx264', '-crf', '17', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k');
+    const audio = AUD.test(dest);
+    if (exact) args.push(...(audio ? [] : ['-c:v', 'libx264', '-crf', '17', '-preset', 'veryfast', '-pix_fmt', 'yuv420p']), ...(/\.mp3$/i.test(dest) ? ['-c:a', 'libmp3lame', '-q:a', '0'] : ['-c:a', 'aac', '-b:a', '192k']));
     else args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero');
-    args.push('-movflags', '+faststart', '-progress', 'pipe:1', dest);
+    if (/\.(mp4|m4v|mov|m4a)$/i.test(dest)) args.push('-movflags', '+faststart');
+    args.push('-progress', 'pipe:1', dest);
     return new Promise((res, rej) => {
       const pr = this.run(path.join(p.ffmpegDir, exe('ffmpeg')), args);
       if (owner) owner.proc = pr;   // so Cancel can stop it
@@ -528,7 +536,7 @@ class MediaEngine {
       job.file = this.moveFile(job.temp, this.outDir(), name);
     } else {
       job.state = 'running'; job.stage = 'trimming'; job.pct = 0; this.changed(job);
-      const ext = exact ? '.mp4' : path.extname(name) || '.mp4';
+      const ext = exact && !AUD.test(name) ? '.mp4' : path.extname(name) || '.mp4';
       const outName = this.freeName(this.outDir(), name.slice(0, name.length - path.extname(name).length) + ' (clip)' + ext);
       const dest = path.join(this.outDir(), outName);
       let failed = null;
@@ -550,7 +558,7 @@ class MediaEngine {
   /* trim any video already on disk (from the downloads list): a new file next to it */
   async trimExisting(src, { start, end, exact }, onPct, owner) {
     await this.ensureTools();
-    const dir = path.dirname(src), name = path.basename(src), ext = exact ? '.mp4' : path.extname(name) || '.mp4';
+    const dir = path.dirname(src), name = path.basename(src), ext = exact && !AUD.test(name) ? '.mp4' : path.extname(name) || '.mp4';
     const dest = path.join(dir, this.freeName(dir, name.slice(0, name.length - path.extname(name).length) + ' (clip)' + ext));
     try { return await this.trimFile(src, +start, +end, !!exact, dest, onPct, owner); }
     catch (e) { try { fs.rmSync(dest, { force: true }); } catch (x) {} throw e; }

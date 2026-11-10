@@ -376,7 +376,7 @@ async function mediaTest() {
     ok('downloader window: preview and timeline show before downloading', !!c1.ready, c1.ready);
     ok('only the chosen part is downloaded (frame-exact)', Math.abs(c1.d - 3.8) < 0.2, `${c1.d} s in ${c1.secs} s, button "${c1.label}"`);
     const c2 = await cutUi('http://127.0.0.1:8792/watch2', '0:04', '0:12', 'fast');
-    ok('a site that cannot send parts: whole video, then cut here', c2.d > 7 && c2.d < 12.6, `${c2.d} s in ${c2.secs} s`);
+    ok('a site that cannot send parts: whole video, then cut here', c2.d > 7 && c2.d < 12.6 && /\(clip\)/.test((c2.j && c2.j.name) || ''), `${c2.d} s in ${c2.secs} s, ${c2.j && c2.j.name}`);
     const id = await dp.ev(`zeus.dlList().then(d => (d.items.find(x => x.media && /clip/.test(x.name) && !/\\(clip\\)/.test(x.name)) || {}).id)`);
     if (id) {
       const r = await dp.ev(`zeus.mediaTrimFile(${JSON.stringify(id)}, { start: 4, end: 12, exact: false })`);
@@ -400,7 +400,8 @@ async function mediaTest() {
     const before = await mp.ev('zeus.mediaList().then(d => d.jobs.length)');
     mp.ev('window.close(), 1').catch(() => {}); mp.close();
     await sleep(2500);
-    const left = (() => { try { return (execSync('tasklist /NH').toString().match(/yt-dlp|gallery-dl|ffmpeg/gi) || []).length; } catch (e) { return -1; } })();
+    // only the browser's own copies count (the test machine may run other ffmpeg)
+    const left = (() => { try { return +execSync(`powershell -NoProfile -Command "@(Get-Process yt-dlp,gallery-dl,ffmpeg -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*3zT*' }).Count"`).toString().trim(); } catch (e) { return -1; } })();
     await dp.ev('zeus.mediaWindow(), 1');
     const mp2 = await connect(await find('newtab/media.html', 30));
     await poll(() => mp2.ev('typeof preview === "function"'), 15000);
