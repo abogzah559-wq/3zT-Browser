@@ -120,7 +120,8 @@ const isPasswords = u => same(u, PASSWORDS_URL);
 const isSettings = u => same(u, SETTINGS_URL);
 const isDownloads = u => same(u, DOWNLOADS_URL);
 const isReader = u => same(u, READER_URL);
-const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u) || isSettings(u) || isDownloads(u) || isReader(u);
+// the browser's own trusted pages (the reader view is not one: it shows a website's text, so it gets no special rights)
+const isInternal = u => isNewtab(u) || isHistory(u) || isTasks(u) || isPasswords(u) || isSettings(u) || isDownloads(u);
 // reader view: the article's own address is shown (it is in the page's address: reader.html?k=…&u=<address>)
 const readerSrc = u => { try { const x = new URL(u).searchParams.get('u') || ''; return /^https?:\/\//i.test(x) ? x : ''; } catch (e) { return ''; } };
 const shownUrl = u => (isNewtab(u) ? '' : isHistory(u) ? '3zt://history' : isTasks(u) ? '3zt://tasks' : isPasswords(u) ? '3zt://passwords' : isSettings(u) ? '3zt://settings' : isDownloads(u) ? '3zt://downloads' : isReader(u) ? readerSrc(u) : u);
@@ -422,7 +423,7 @@ class Win {
     const t = this.tab(id); if (!t) return;
     if (!isInternal(t.url) && !this.private && !opts.forget) { closedStack.push({ url: t.url, title: t.title }); if (closedStack.length > 25) closedStack.shift(); }
     cancelPermissionsOf(t);
-    thumbs.delete(t.id);
+    thumbs.delete(t.id); forgetReader(t.id);
     this.releaseTab(t);
     if (t.view) destroyView(t.view);
     if (!this.tabs.length) { this.win.close(); return; }
@@ -536,7 +537,7 @@ function makeView(tab, fromOpener) {
     tab.url = url;
     view.setBackgroundColor(isNewtab(url) ? '#000000' : PAGE_BG);
     if (isInternal(url)) { tab.favicon = ''; tab.title = ''; }
-    else tab.favicon = cachedFavicon(url) || '';
+    else tab.favicon = cachedFavicon(isReader(url) ? readerSrc(url) : url) || '';
     if (!tab.win.private) addHistory(url, wc.getTitle());
     if (wasFlush !== isNewtab(url) && tab.id === tab.win.activeId) tab.win.layout();
     upd(); saveSessionSoon();
@@ -867,6 +868,11 @@ const PIP_JS = (x, y) => `(async () => {
 async function togglePip(wc, x, y) {
   if (!wc || wc.isDestroyed()) return 'none';
   const frames = [wc.mainFrame, ...wc.mainFrame.framesInSubtree.filter(f => f !== wc.mainFrame)];
+  // one already playing somewhere on the page (an embedded player too): back to the page, nothing else
+  for (const f of frames) {
+    let r = false; try { r = await f.executeJavaScript('document.pictureInPictureElement ? document.exitPictureInPicture().then(() => true, () => false) : false', true); } catch (e) {}
+    if (r) return 'exit';
+  }
   for (const f of frames) {
     let r = 'none';
     try { r = await f.executeJavaScript(f === wc.mainFrame ? PIP_JS(x, y) : PIP_JS(-1, -1), true); } catch (e) { r = 'error ' + e.message; }
@@ -896,7 +902,7 @@ function handleKey(w, i) {
   if (i.alt && k === 'home') { if (t) { t.url = NEWTAB_URL; loadInto(t, NEWTAB_URL); w.layout(); w.focusAddress(); } return true; }
   if (c && i.shift && k === 'j') { if (wc) wc.openDevTools({ mode: 'right' }); return true; }
   if (c && i.shift && k === 'a') { if (w.ui && !w.ui.webContents.isDestroyed()) { w.ui.webContents.focus(); w.ui.webContents.send('tab-search'); } return true; }
-  if (i.alt && !c && !i.shift && k === 'p') { if (wc && t && /^https?:/i.test(t.url || '')) togglePip(wc); return true; }   // picture in picture
+  if (i.alt && !c && !i.shift && k === 'p' && wc && t && /^https?:/i.test(t.url || '')) { togglePip(wc); return true; }   // picture in picture (websites)
   if (c && i.shift && k === 'delete') { const ex = allTabs().find(x => isSettings(x.url)); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(SETTINGS_URL); return true; }
   if (c && /^[1-8]$/.test(k)) { const x = w.tabs[+k - 1]; if (x) w.activate(x.id); return true; }
   if (c && k === '9') { const x = w.tabs[w.tabs.length - 1]; if (x) w.activate(x.id); return true; }
@@ -931,10 +937,12 @@ function cycle(w, dir) { if (w.tabs.length < 2) return; const i = w.tabs.findInd
 /* ---------- tab hover cards: a small picture of each tab ----------
    Taken once, of the tab you are on, when the mouse comes to the tab strip (that is when you are about to leave it),
    and only if its page changed since. Kept in memory only, at most 40 (the oldest go), never for incognito. */
+let readerDocs = null;
+const forgetReader = tabId => { if (readerDocs) for (const [k, v] of readerDocs) if (v.tabId === tabId) readerDocs.delete(k); };
 const thumbs = new Map();   // tabId -> { url, seq, img (data URL), t }
 async function captureThumb(w) {
   const t = w && w.active();
-  if (!t || !t.view || w.private || t.discarded || !/^https?:|^file:/i.test(t.url || '') || isNewtab(t.url)) return;
+  if (!t || !t.view || w.private || t.discarded || !/^https?:/i.test(t.url || '')) return;   // websites only (never the passwords page or other own pages)
   const old = thumbs.get(t.id);
   if (old && old.url === t.url && old.seq === (t.navSeq || 0) && Date.now() - old.t < 60000) return;
   try {
@@ -1725,7 +1733,7 @@ function setupMediaIpc() {
     if (!READER[which]) try { READER[which] = fs.readFileSync(path.join(SRC, 'vendor', 'readability', f), 'utf8'); } catch (e) { READER[which] = ''; }
     return READER[which];
   };
-  const readerDocs = new Map();   // key -> { tabId, url, article, t }
+  readerDocs = new Map();   // key -> { tabId, url, article, t }
   ipcMain.handle('reader:code', (e, which) => {
     const t = tabOfWc(e.sender); let u = ''; try { u = e.senderFrame.url; } catch (x) {}
     if (!t || e.senderFrame !== e.sender.mainFrame || !/^https?:/i.test(u) || settings.data.reader === false) return '';
@@ -1748,10 +1756,12 @@ function setupMediaIpc() {
       return;
     }
     if (!/^https?:/i.test(t.url || '') || !t.readerable) return;
+    const src = t.url, seq = t.navSeq;   // the page the article comes from (it must still be shown when the article arrives)
     const nonce = require('crypto').randomBytes(12).toString('hex');
     const a = await new Promise(res => { readerPending.set(nonce, { wc: wc.id, res }); wc.send('reader:extract', nonce); setTimeout(() => { if (readerPending.delete(nonce)) res(null); }, 10000); });
     if (!a || typeof a.content !== 'string' || !a.content) { t.readerable = false; w.pushState(); return; }   // not an article after all: the button goes
-    const src = t.url, key = require('crypto').randomBytes(12).toString('hex');
+    if (t.url !== src || t.navSeq !== seq || !t.view) return;
+    const key = require('crypto').randomBytes(12).toString('hex');
     for (const [k, v] of readerDocs) if (v.tabId === t.id || Date.now() - v.t > 6 * 3600e3) readerDocs.delete(k);
     readerDocs.set(key, { tabId: t.id, url: src, t: Date.now(), article: {
       title: String(a.title || '').slice(0, 500), byline: String(a.byline || '').slice(0, 300), siteName: String(a.siteName || '').slice(0, 200),
@@ -1926,14 +1936,16 @@ const AC = {
     try {
       this._code = fs.readFileSync(path.join(this.dir, 'autoconsent.cjs.js'), 'utf8');
       this._rules = JSON.parse(fs.readFileSync(path.join(this.dir, 'compact-rules.json'), 'utf8'));
-      const m = { exports: {} }; new Function('module', 'exports', 'window', 'document', this._code)(m, m.exports, undefined, undefined);
+      // only its rule filter is used here, in a bare JavaScript context: no Node, no require, no process, no files
+      const m = { exports: {} };
+      require('vm').runInNewContext(this._code, { module: m, exports: m.exports, URL, console: { log() {}, warn() {}, error() {}, debug() {}, info() {} } }, { timeout: 2000 });
       this._lib = m.exports;
       return typeof this._lib.filterCompactRules === 'function';
     } catch (e) { logError('autoconsent', e); this._ok = false; return false; }
   },
   forPage(url) {
     if (!this.ready() || !this.load()) return null;
-    let host; try { host = new URL(url).hostname; } catch (e) { return null; }
+    let host; try { const x = new URL(url); host = x.hostname + x.pathname; } catch (e) { return null; }   // rules can depend on the path
     let rules = this._cache.get(host);
     if (!rules) {
       try { rules = this._lib.filterCompactRules(this._rules, { url, mainFrame: true }); } catch (e) { return null; }
@@ -2049,7 +2061,7 @@ function setupIpc() {
   ipcMain.on('tabs:go', (e, o) => {
     const w = uiWin(e); if (!w || !o) return;
     if (o.closed != null) {   // a closed tab opens again, here
-      const i = +o.closed; const c = closedStack[i]; if (!c || !c.url || Array.isArray(c.group)) return;
+      const i = +o.closed; const c = closedStack[i]; if (!c || !c.url || Array.isArray(c.group) || c.url !== o.url) return;   // the list may have changed since it was shown
       closedStack.splice(i, 1); w.createTab(c.url); saveSessionSoon(); return;
     }
     const x = wins.find(v => v.id === +o.win); if (!x || x.private !== w.private || (x.private && x.partition !== w.partition)) return;

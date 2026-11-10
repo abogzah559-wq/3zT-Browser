@@ -327,7 +327,7 @@ async function renderTabSearch(d) {
     box.innerHTML = h;
     const s = box.querySelector('.mi.sel'); if (s) s.scrollIntoView({ block: 'nearest' });
   };
-  const go = n => { const r = rows[n]; if (!r) return; closeDrop(); ui.send('tabs:go', r.kind === 'closed' ? { closed: r.x.closed } : { win: r.x.win, id: r.x.id }); };
+  const go = n => { const r = rows[n]; if (!r) return; closeDrop(); ui.send('tabs:go', r.kind === 'closed' ? { closed: r.x.closed, url: r.x.url } : { win: r.x.win, id: r.x.id }); };
   inp.addEventListener('input', () => { sel = 0; draw(); });
   inp.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown') { e.preventDefault(); sel = Math.min(rows.length - 1, sel + 1); draw(); }

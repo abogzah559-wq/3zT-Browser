@@ -113,7 +113,9 @@ const pkCode = (mode, ua) => `(() => {
   install(window);
 })();`;
 
-const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media|reader)\.html$/i.test(decodeURIComponent(location.pathname));
+const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media)\.html$/i.test(decodeURIComponent(location.pathname));
+// the reader view shows text taken from a website: it only gets its own article, nothing else of the browser
+const readerPage = !SUB && location.protocol === 'file:' && /\/newtab\/reader\.html$/i.test(decodeURIComponent(location.pathname));
 
 if (SUB) {
   // a sign-in box embedded from another site must not open Windows' passkey window by itself either
@@ -124,6 +126,8 @@ if (SUB) {
     if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
     if (mode !== 'nofix' || ua) inMainWorld(pkCode(mode, ua));
   }
+} else if (readerPage) {
+  contextBridge.exposeInMainWorld('zeus', { readerGet: k => ipcRenderer.invoke('reader:get', String(k || '').slice(0, 64)) });
 } else if (internal) {
   contextBridge.exposeInMainWorld('zeus', {
     getBookmarks: () => ipcRenderer.invoke('bm:get'),
@@ -163,7 +167,6 @@ if (SUB) {
     mediaTake: () => ipcRenderer.invoke('media:take'),
     mediaInfo: url => ipcRenderer.invoke('media:info', url),
     mediaWindow: () => ipcRenderer.send('media:window'),
-    readerGet: k => ipcRenderer.invoke('reader:get', k),
     mediaList: () => ipcRenderer.invoke('media:list'),
     mediaStart: o => ipcRenderer.invoke('media:start', o),
     mediaCancel: id => ipcRenderer.invoke('media:cancel', id),
@@ -481,7 +484,16 @@ if (SUB) {
           { autoconsent: [], compact: r.rules });
       } catch (e) {}
     };
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => setTimeout(go, 0), { once: true }); else setTimeout(go, 0);
+    /* Most pages have no consent popup: the library is only loaded when the page shows signs of one (a consent
+       manager's elements or frame). Checked when the page is ready, when it has loaded, and once more a little later
+       (popups are often added late). */
+    const SIGNS = '[id*="cookie" i],[class*="cookie" i],[id*="consent" i],[class*="consent" i],[id*="gdpr" i],[class*="gdpr" i],[id*="cmp" i],[class*="cmp-" i],'
+      + '[id^="onetrust"],[id*="didomi"],[id*="usercentrics"],[id^="sp_message"],[id*="truste"],[class*="truste"],[id^="qc-cmp"],[id*="cybot" i],[class*="privacy-banner" i],'
+      + 'iframe[src*="consent"],iframe[src*="privacy-mgmt"],iframe[src*="cmp"]';
+    let started = false;
+    const look = () => { if (started || !document.documentElement) return; try { if (document.querySelector(SIGNS)) { started = true; go(); } } catch (e) {} };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', look, { once: true }); else look();
+    window.addEventListener('load', () => { look(); setTimeout(look, 2500); }, { once: true });
   }
 
   if (cfg.yt) {
@@ -579,7 +591,7 @@ if (SUB) {
       const apply = () => {
         const id = vid(); if (!id || doneFor === id) return;
         const p = document.getElementById('movie_player');
-        if (!p || typeof p.getAvailableQualityLevels !== 'function') return;
+        if (!p || typeof p.getAvailableQualityLevels !== 'function' || p.classList.contains('ad-showing')) return;   // not on an ad before the video
         const lv = (p.getAvailableQualityLevels() || []).filter(q => q && q !== 'auto');
         if (!lv.length) return;
         const best = lv[0];

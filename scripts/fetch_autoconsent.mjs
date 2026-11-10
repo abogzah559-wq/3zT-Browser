@@ -9,6 +9,8 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 
 const VERSION = process.env.AUTOCONSENT_VERSION || '18.2.0';
+// the package's sha512 as first published, pinned here: a changed package under the same version is refused
+const PINNED = { '18.2.0': process.env.AUTOCONSENT_SHA512 || '' };
 const OUT = path.resolve(process.argv[2] || 'src/vendor/autoconsent');
 const meta = await fetch(`https://registry.npmjs.org/@duckduckgo/autoconsent/${VERSION}`);
 if (!meta.ok) {
@@ -20,6 +22,8 @@ const tgz = Buffer.from(await (await fetch(dist.tarball)).arrayBuffer());
 const [alg, want] = String(dist.integrity).split('-');
 const got = crypto.createHash(alg).update(tgz).digest('base64');
 if (alg !== 'sha512' || got !== want) throw new Error(`autoconsent ${VERSION}: integrity mismatch`);
+if (PINNED[VERSION] && PINNED[VERSION] !== got) throw new Error(`autoconsent ${VERSION}: not the pinned package (${got})`);
+if (!PINNED[VERSION]) console.log(`::notice title=autoconsent sha512::${VERSION} sha512-${got}`);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'autoconsent-'));
 fs.writeFileSync(path.join(tmp, 'p.tgz'), tgz);
 execFileSync('tar', ['-xzf', 'p.tgz'], { cwd: tmp });

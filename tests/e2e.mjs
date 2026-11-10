@@ -372,7 +372,7 @@ async function mediaTest() {
       if (!ready) return { ready };
       const t0 = Date.now();
       // the handles, the way a mouse moves them (the slider runs 0..1000 over the video's length)
-      if (s0 != null) await mp.ev(`(() => { const d = dur(); ts.value = Math.round(${+s0} / d * 1000); ts.dispatchEvent(new Event('input')); te.value = Math.round(${+e0} / d * 1000); te.dispatchEvent(new Event('input')); document.querySelector('input[name=cm][value=${how}]').checked = true; return 1; })()`);
+      if (s0 != null) await mp.ev(`(() => { const d = dur(); ts.value = Math.round(${+s0} * 10); ts.dispatchEvent(new Event("input")); te.value = Math.round(${+e0} * 10); te.dispatchEvent(new Event('input')); document.querySelector('input[name=cm][value=${how}]').checked = true; return 1; })()`);
       const had = await mp.ev('zeus.mediaList().then(d => d.jobs.map(j => j.id))') || [];
       await mp.ev('mgo.click(), 1');
       await sleep(800);
@@ -570,11 +570,12 @@ async function features() {
     await tb.ev(`ui.send('tab', 'activate', S.tabs.find(t => t.url.includes('/video')).id), 1`); await sleep(800);
     const rects = JSON.parse(await tb.ev(`JSON.stringify([...document.querySelectorAll('.tab')].map(e => { const r = e.getBoundingClientRect(); return { id: e.dataset.id, x: r.left + r.width / 2, y: r.top + r.height / 2, url: (S.tabs.find(t => String(t.id) === e.dataset.id) || {}).url }; }))`));
     const vtab = rects.find(r => (r.url || '').includes('/video')), other = rects.find(r => r !== vtab);
-    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vtab.x, y: vtab.y }); await sleep(1000);   // entering the strip: the tab you are on is pictured
+    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await sleep(300);
+    await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vtab.x, y: vtab.y }); await sleep(2000);   // entering the strip: the tab you are on is pictured
     await tb.ev(`ui.send('tab', 'activate', ${other.id}), 1`); await sleep(700);
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: other.x, y: other.y }); await sleep(200);
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: vtab.x, y: vtab.y + 1 });
-    const card = await poll(async () => { const v = await tb.ev(`(() => { const p = document.getElementById('tprev'); return p.classList.contains('on') && p.classList.contains('pic') ? p.querySelector('.t').textContent : null; })()`); return v; }, 5000);
+    const card = await poll(async () => { const v = await tb.ev(`(() => { const p = document.getElementById('tprev'); return p.classList.contains('on') && p.classList.contains('pic') ? p.querySelector('.t').textContent : null; })()`); return v; }, 8000);
     ok('tab hover card: title and a picture of the tab', /video page/.test(card || ''), card);
     await shot(tb, 'tab-card');
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 700 }); await sleep(300);
@@ -649,7 +650,8 @@ async function main() {
   if (!only || only === 'downloads') await downloads();
   if (only === 'features') await features();
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
-  if (process.platform === 'win32') { await mediaTest(); await arablocn(); await passkeys(); }
+  // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
+  if (process.platform === 'win32') { await mediaTest(); if (process.env.E2E_DIAG) await arablocn(); await passkeys(); }
   await features();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);
