@@ -184,7 +184,8 @@ class MediaEngine {
   }
   lines(stream, cb) {
     let buf = ''; stream.setEncoding('utf8');
-    stream.on('data', d => { buf += d; let i; while ((i = buf.search(/\r?\n|\r/)) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (l.trim()) cb(l.trim()); } });
+    const t = this.o.trace;   // tests: every line the tools print
+    stream.on('data', d => { buf += d; let i; while ((i = buf.search(/\r?\n|\r/)) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (l.trim()) { if (t) t(l.trim()); cb(l.trim()); } } });
     stream.on('end', () => { if (buf.trim()) cb(buf.trim()); });
   }
   /* stop everything (browser closing) */

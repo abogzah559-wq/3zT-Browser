@@ -1,0 +1,21 @@
+name: Downloader check on real sites
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['diag/**']
+
+jobs:
+  real-sites:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Downloader tools
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/fetch_tools.mjs tools-cache
+      - name: Real YouTube and TikTok downloads
+        run: node tests/media-real.mjs
