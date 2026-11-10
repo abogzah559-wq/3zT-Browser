@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 
 const VERSION = process.env.AUTOCONSENT_VERSION || '18.2.0';
 // the package's sha512 as first published, pinned here: a changed package under the same version is refused
-const PINNED = { '18.2.0': process.env.AUTOCONSENT_SHA512 || '' };
+const PINNED = { '18.2.0': '2gq60kLJ2wqgxFQ1zs2ZPZ2eY54WBiiH04od0RqLKGVg5hKZ7JvPSfsfLsrPfXWVJx/cS02cB5bJLCMirQN6Qw==' };
 const OUT = path.resolve(process.argv[2] || 'src/vendor/autoconsent');
 const meta = await fetch(`https://registry.npmjs.org/@duckduckgo/autoconsent/${VERSION}`);
 if (!meta.ok) {
