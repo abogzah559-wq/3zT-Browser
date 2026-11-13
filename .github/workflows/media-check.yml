@@ -22,6 +22,9 @@ jobs:
           npm view @duckduckgo/autoconsent dist-tags --json
           node scripts/fetch_autoconsent.mjs
           node -e "const m={exports:{}};new Function('module','exports',require('fs').readFileSync('src/vendor/autoconsent/autoconsent.cjs.js','utf8'))(m,m.exports);console.log('::notice title=autoconsent exports::'+Object.keys(m.exports).join(', '));const r=require('./src/vendor/autoconsent/compact-rules.json');console.log('::notice title=autoconsent rules::keys '+Object.keys(r).join(',')+' rules '+(r.r||[]).length+' index '+JSON.stringify(r.index||null).slice(0,300))"
+      - name: Fast-cut diagnosis (key frames far apart)
+        continue-on-error: true
+        run: node tests/cut-diag.mjs
       - name: Real YouTube and TikTok downloads
         run: node tests/media-real.mjs
       - name: Electron (checksum verified)
