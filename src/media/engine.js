@@ -381,6 +381,12 @@ class MediaEngine {
     if (tooLong && !whole && job.tries.length) return this.nextTry(job, p);
     const needCut = !!job.cut && (!t.part || whole);
     const needConvert = job.mode === 'video' && m.ok && /^(hevc|h265)$/i.test(m.video || '');
+    /* a part downloaded without re-encoding starts at the key frame before your start: the extra seconds stay in
+       the file, hidden by an "edit list" that tells players to skip them. Chrome and VLC follow it; Windows' own
+       players don't, so the clip started in the middle with picture and sound out of step. Such a part is encoded
+       again from the exact start (the part is short, and the picture keeps its quality: CRF 17). */
+    const hidden = job.cut && t.part && !needCut && job.mode === 'video' && m.ok ? await this.hiddenStart(src) : 0;
+    if (hidden > 0.3) this.log('part has', hidden.toFixed(2), 's hidden before its start: encoded again');
     if (job.cut && !needCut && t.part) this.log('part ok', m.dur);
     let file = src;
     if (job.trim && !job.cut && VID.test(src)) {   // the old "trim after download" flow: waits for the part to keep
@@ -388,12 +394,13 @@ class MediaEngine {
       try { fs.rmSync(path.join(job.dir, 'cookies.txt'), { force: true }); } catch (e) {}
       return this.changed(job);
     }
-    if (needCut || needConvert) {
+    const needClean = hidden > 0.3;
+    if (needCut || needConvert || needClean) {
       const ext = job.mode === 'video' ? '.mp4' : path.extname(src);
       const tmp = path.join(job.dir, 'out-3zt' + ext);
       job.stage = needCut ? 'trimming' : 'converting'; job.pct = 0; this.changed(job);
       const s0 = needCut ? job.cut.s : 0, e0 = needCut ? job.cut.e : (m.dur || 1e7);
-      try { await this.trimFile(src, s0, e0, needConvert || (needCut && job.cut.exact), tmp, pc => { job.pct = pc; this.changed(job); }, job); }
+      try { await this.trimFile(src, s0, e0, needConvert || needClean || (needCut && job.cut.exact), tmp, pc => { job.pct = pc; this.changed(job); }, job); }
       catch (e) {
         job.proc = null;
         if (job.state === 'running' && job.tries.length) { job.lastErr = 'trim: ' + (e.message || e); return this.nextTry(job, p); }
@@ -412,6 +419,17 @@ class MediaEngine {
     job.state = 'done'; job.stage = ''; job.pct = 100; job.error = '';
     fs.rm(job.dir, { recursive: true, force: true }, () => {});
     this.changed(job);
+  }
+  /* seconds of picture before the file's start that players are told to skip (0 if none or unknown) */
+  hiddenStart(f) {
+    return new Promise(res => {
+      let out = '';
+      let pr; try { pr = this.run(path.join(this.paths().ffmpegDir, exe('ffprobe')), ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'packet=pts_time', '-read_intervals', '%+#1', '-of', 'csv=p=0', f], ENV); } catch (e) { return res(0); }
+      const t = setTimeout(() => this.killTree(pr), 15000);
+      pr.stdout.setEncoding('utf8'); pr.stdout.on('data', d => { if (out.length < 2000) out += d; });
+      pr.on('error', () => { clearTimeout(t); res(0); });
+      pr.on('close', () => { clearTimeout(t); const v = parseFloat(String(out).trim().split(/\r?\n/)[0]); res(isFinite(v) && v < 0 ? -v : 0); });
+    });
   }
   /* what a media file holds, from ffmpeg's own report: { ok, dur, video: codec or null, audio } */
   probeMedia(f) {

@@ -2,6 +2,22 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.16.1
+
+### Browsing
+- Page and frame loads now carry the browser's User-Agent Client Hints (`Sec-CH-UA`, `Sec-CH-UA-Mobile`,
+  `Sec-CH-UA-Platform`). Electron sends them only with subresources, so to a server every page load came from a
+  "Chrome" without hints, which bot checks treat as automated traffic. Fixed as a result: Cloudflare's "verify you
+  are human" box appearing on sites that pass silently in Chrome, and video sites refusing their player ("the
+  session has expired") or sending their ad tab to google.com. The values are the engine's own, copied from its
+  first request that has them; nothing is spoofed.
+
+### Downloader
+- Fast (no re-encode) ranges no longer keep hidden seconds before their start. They began at the key frame before
+  the chosen start, with an MP4 edit list telling players to skip the extra part; Windows Media Player ignores it, so
+  clips appeared to start in the middle with picture and sound out of step. Such a range is now re-encoded from its
+  exact start and checked with ffprobe.
+
 ## 0.16.0
 
 ### Browsing

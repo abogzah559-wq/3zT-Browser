@@ -1273,7 +1273,28 @@ const FIREFOX_UA = process.platform === 'win32'
   ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0'
   : 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0';
 const pkMode = () => (process.env.ZEUS_NO_PASSKEY_FIX ? 'nofix' : settings.data.passkeys ? 'on' : 'off');
-const SIGNIN_URLS = ['*://accounts.google.com/*', '*://accounts.youtube.com/*'];
+const SIGNIN_HOST = /^accounts\.(google|youtube)\.com$/i;
+/* Client hints on page loads. Chromium tells every secure request which browser it is (Sec-CH-UA, -Mobile,
+   -Platform: the same as navigator.userAgentData). Electron leaves them off page and frame loads (it sends them
+   only with a page's images, scripts and data), so to a website the page itself arrived from a "Chrome" with no
+   hints: what scripts and bots look like. Cloudflare and many video sites judge exactly those requests, hence the
+   "verify you are human" pages and refused players. The values are the engine's own, copied from its first request
+   that has them (kept for the next start, per Chromium version): nothing is invented, only completed. */
+const CH = {
+  v: null,
+  load() { const c = settings && settings.data.clientHints; if (c && c.chrome === process.versions.chrome && c.ua) this.v = c; },
+  fill(h, url) {
+    let ua = null, mob = null, plat = null;
+    for (const k of Object.keys(h)) { const l = k.toLowerCase(); if (l === 'sec-ch-ua') ua = h[k]; else if (l === 'sec-ch-ua-mobile') mob = h[k]; else if (l === 'sec-ch-ua-platform') plat = h[k]; }
+    if (ua) {
+      if (!this.v && mob && plat) { this.v = { chrome: process.versions.chrome, ua, mobile: mob, platform: plat }; settings.data.clientHints = this.v; settings.save(); }
+      return;
+    }
+    if (!this.v) this.load();
+    // secure addresses only, like Chromium (this computer's own addresses count as secure)
+    if (this.v && /^(https:|http:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/])/i.test(url)) { h['sec-ch-ua'] = this.v.ua; h['sec-ch-ua-mobile'] = this.v.mobile; h['sec-ch-ua-platform'] = this.v.platform; }
+  }
+};
 let adSaveTimer = null;
 const setUpSessions = new WeakSet();
 function setupSession(ses) {
@@ -1283,10 +1304,14 @@ function setupSession(ses) {
   // registered with the session (a page only sees the schemes handled before it was made): see previewLink
   try { ses.protocol.handle('ztpv', req => previewServe(ses, req)); } catch (e) {}
   try { ses.setSpellCheckerEnabled(false); } catch (e) {}   // no dictionary download, less memory
-  ses.webRequest.onBeforeSendHeaders({ urls: SIGNIN_URLS }, (d, cb) => {
+  ses.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (d, cb) => {
     const h = d.requestHeaders;
-    h['User-Agent'] = FIREFOX_UA;
-    for (const k of Object.keys(h)) if (/^sec-ch-ua/i.test(k)) delete h[k];   // Firefox sends no client hints
+    if (SIGNIN_HOST.test(hostOf(d.url) || '')) {
+      h['User-Agent'] = FIREFOX_UA;
+      for (const k of Object.keys(h)) if (/^sec-ch-ua/i.test(k)) delete h[k];   // Firefox sends no client hints
+      return cb({ requestHeaders: h });
+    }
+    CH.fill(h, d.url);
     cb({ requestHeaders: h });
   });
   ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (d, cb) => {

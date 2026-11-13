@@ -321,6 +321,13 @@ async function mediaTest() {
     if (q.url === '/watch') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch</title><video src="/clip.mp4" controls width=640 height=360></video>'); }
     if (q.url === '/watch2') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch2</title><video src="/clip.mp4?norange" controls></video>'); }
     if (q.url.startsWith('/hevc.mp4') && fs.existsSync(vid.replace('clip.mp4', 'hevc.mp4'))) { const b = fs.readFileSync(vid.replace('clip.mp4', 'hevc.mp4')); r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length, 'Accept-Ranges': 'none' }); return r.end(b); }
+    // key frames 12 s apart (like many music videos): a fast part must not keep hidden seconds before its start
+    if (q.url.startsWith('/gop.mp4') && fs.existsSync(vid.replace('clip.mp4', 'gop.mp4'))) {
+      const b = fs.readFileSync(vid.replace('clip.mp4', 'gop.mp4')), m = /bytes=(\d+)-(\d*)/.exec(q.headers.range || '');
+      if (m) { const a = +m[1], e = m[2] ? Math.min(+m[2], b.length - 1) : b.length - 1; r.writeHead(206, { 'Content-Type': 'video/mp4', 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${a}-${e}/${b.length}`, 'Content-Length': e - a + 1 }); return r.end(b.subarray(a, e + 1)); }
+      r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length, 'Accept-Ranges': 'bytes' }); return r.end(b);
+    }
+    if (q.url === '/watch4') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch4</title><video src="/gop.mp4" controls></video>'); }
     if (q.url === '/watch3') { r.setHeader('Content-Type', 'text/html'); return r.end('<title>watch3</title><video src="/hevc.mp4" controls></video>'); }
     r.writeHead(404); r.end();
   }).listen(8792, '127.0.0.1');
@@ -352,6 +359,7 @@ async function mediaTest() {
     // a local video made with the downloaded ffmpeg: download, trim exact and fast
     if (fs.existsSync(ff)) execSync(`"${ff}" -loglevel error -y -f lavfi -i testsrc=size=640x360:rate=30 -f lavfi -i sine=frequency=440 -t 20 -c:v libx264 -g 60 -c:a aac -shortest "${vid}"`);
     if (fs.existsSync(vid)) try { execSync(`"${ff}" -loglevel error -y -i "${vid}" -c:v libx265 -tag:v hvc1 -c:a copy "${vid.replace('clip.mp4', 'hevc.mp4')}"`); } catch (e) {}
+    if (fs.existsSync(ff)) try { execSync(`"${ff}" -loglevel error -y -f lavfi -i testsrc=size=640x360:rate=30 -f lavfi -i sine=frequency=500 -t 60 -c:v libx264 -g 360 -keyint_min 360 -sc_threshold 0 -pix_fmt yuv420p -c:a aac -shortest "${vid.replace('clip.mp4', 'gop.mp4')}"`); } catch (e) {}
     const probe = f => { try { return +execSync(`"${ff.replace('ffmpeg.exe', 'ffprobe.exe')}" -v error -show_entries format=duration -of csv=p=0 "${f}"`).toString().trim(); } catch (e) { return 0; } };
     const inf = await mp.ev(`zeus.mediaInfo('http://127.0.0.1:8792/clip.mp4')`);
     // a bare video file has no metadata (sites give title, picture, length, channel)
@@ -392,6 +400,11 @@ async function mediaTest() {
     ok('an HEVC video is saved as H.264 (plays everywhere)', c3.j && c3.j.file && vcodec(c3.j.file) === 'h264' && Math.abs(c3.d - 20) < 0.5, `${c3.j && c3.j.file} ${c3.j && c3.j.file && vcodec(c3.j.file)} ${c3.d} s ${c3.j && c3.j.error || ''}`);
     const c4 = await cutUi('http://127.0.0.1:8792/watch3', 2, 7, 'fast');
     ok('…and a part of it too', c4.j && c4.j.file && vcodec(c4.j.file) === 'h264' && c4.d > 4.5 && c4.d < 9, `${c4.j && c4.j.name} ${c4.d} s`);
+    // a fast part of a video with distant key frames: starts at 0 with nothing hidden (Windows' players ignore the hidden part)
+    const c5 = await cutUi('http://127.0.0.1:8792/watch4', 31, 41, 'fast');
+    const first = f => { try { return execSync(`"${ff.replace('ffmpeg.exe', 'ffprobe.exe')}" -v error -select_streams v:0 -show_entries packet=pts_time -read_intervals %+#1 -of csv=p=0 "${f}"`).toString().trim(); } catch (e) { return 'err'; } };
+    const f5 = c5.j && c5.j.file ? first(c5.j.file) : 'no file';
+    ok('a fast part starts on its first frame, nothing hidden before it (plays the same in Windows Media Player)', !!(c5.j && c5.j.file) && Math.abs(parseFloat(f5)) < 0.05 && c5.d > 9.5 && c5.d < 10.6, `${c5.j && c5.j.name} ${c5.d} s, first picture at ${f5} s`);
     const id = await dp.ev(`zeus.dlList().then(d => (d.items.find(x => x.media && /clip/.test(x.name) && !/\\(clip\\)/.test(x.name)) || {}).id)`);
     if (id) {
       const r = await dp.ev(`zeus.mediaTrimFile(${JSON.stringify(id)}, { start: 4, end: 12, exact: false })`);
@@ -516,6 +529,23 @@ const FEAT_COOKIES = `<!doctype html><meta charset="utf-8"><title>cookies</title
 <script>window.OnetrustActiveGroups=',C0001,C0002,C0003,';window.__choice='';
 document.getElementById('onetrust-reject-all-handler').onclick=()=>{window.__choice='reject';window.OnetrustActiveGroups=',C0001,';document.getElementById('onetrust-banner-sdk').style.display='none';};
 document.getElementById('onetrust-accept-btn-handler').onclick=()=>{window.__choice='accept';document.getElementById('onetrust-banner-sdk').style.display='none';};</script></body>`;
+/* client hints: page and frame loads carry Sec-CH-UA like every other request (Electron leaves them off) */
+async function clientHints() {
+  const seen = [];
+  const srv = http.createServer((q, r) => {
+    seen.push({ url: q.url, ch: q.headers['sec-ch-ua'] || '', plat: q.headers['sec-ch-ua-platform'] || '' });
+    if (q.url.startsWith('/ch-page')) { r.setHeader('Content-Type', 'text/html'); return r.end('<title>ch</title><img src="/ch-img.png"><iframe src="/ch-frame"></iframe>'); }
+    if (q.url.startsWith('/ch-frame')) { r.setHeader('Content-Type', 'text/html'); return r.end('<p>frame</p>'); }
+    r.writeHead(404); r.end();
+  }).listen(8796, '127.0.0.1');
+  try {
+    await go('http://127.0.0.1:8796/ch-page?1', true); await find(u => u.includes('/ch-page?1'), 30); await sleep(2000);
+    await go('http://127.0.0.1:8796/ch-page?2', true); await find(u => u.includes('/ch-page?2'), 30); await sleep(2000);
+    const img = seen.find(x => x.url === '/ch-img.png' && x.ch), page = seen.find(x => x.url === '/ch-page?2'), frame = seen.filter(x => x.url === '/ch-frame').pop();
+    ok('page and frame loads carry the browser\'s client hints, the same as its other requests', !!img && !!page && !!frame && page.ch === img.ch && frame.ch === img.ch && !!page.plat, JSON.stringify({ img, page, frame }));
+  } finally { srv.close(); }
+}
+
 async function features() {
   let hits = {};
   const srv = http.createServer((q, r) => {
@@ -694,10 +724,11 @@ async function main() {
   const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
-  if (only === 'features') await features();
+  if (only === 'features') { await clientHints(); await features(); }
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
   if (process.platform === 'win32') { await mediaTest(); if (process.env.E2E_DIAG) await arablocn(); await passkeys(); }
+  await clientHints();
   await features();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);
