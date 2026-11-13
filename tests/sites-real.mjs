@@ -59,8 +59,8 @@ async function tiktok(label) {
         definition: v.definition, size: v.width + 'x' + v.height };
       else out.video = 'no video in the page data';
     } else out.video = 'no __UNIVERSAL_DATA_FOR_REHYDRATION__';
-    out.fetched = performance.getEntriesByType('resource').map(e => e.name).filter(n => /video\/tos|mime_type=video|\.mp4|bytevc|\/video\//.test(n)).slice(0, 8).map(n => n.slice(0, 220));
-    out.workers = performance.getEntriesByType('resource').filter(e => e.initiatorType === 'other' && /\.js/.test(e.name)).length;
+    out.fetched = performance.getEntriesByType('resource').map(e => e.name).filter(n => /video\\/tos|mime_type=video|\\.mp4|bytevc|\\/video\\//.test(n)).slice(0, 8).map(n => n.slice(0, 220));
+    out.workers = performance.getEntriesByType('resource').filter(e => e.initiatorType === 'other' && /\\.js/.test(e.name)).length;
     out.parse = JSON.parse.toString();
     return JSON.stringify(out);
   } catch (e) { return 'diag error ' + e.message; } })()`);
