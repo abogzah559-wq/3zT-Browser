@@ -354,6 +354,88 @@ if (SUB) {
   /* --- Twitch ads (TwitchAdSolutions "vaft", runs before Twitch's own player) --- */
   if (cfg.twitch) { let c = ''; try { c = ipcRenderer.sendSync('site:code', 'twitch'); } catch (e) {} if (c) mainWorld(c); }
 
+  /* --- TikTok / Instagram: the highest quality the site sends, and no sponsored posts ---
+     Both sites send every quality of a video with its details and let their player pick one, usually a low one
+     for a browser window. Here the details are changed before the player reads them, so only the highest quality
+     this computer can play is left: TikTok's list of streams (bitrateInfo, playAddr), Instagram's DASH list
+     (video_dash_manifest) and plain file list (video_versions). With the ad blocker on, the sponsored posts the
+     sites mix into their feeds are taken out of the same data (TikTok: isAd; Instagram: ad_id, injected, ad), so
+     they never show and nothing is left blank. Nothing else is touched, and only on these two sites.
+     JSON.parse and Response.json are wrapped with a Proxy: to the page they are still the built-in functions. */
+  if (cfg.social && (cfg.social.site === 'tiktok' || cfg.social.site === 'instagram')) mainWorld(`(() => {
+    const SITE = ${JSON.stringify(cfg.social.site)}, HQ = ${!!cfg.social.hq}, ADS = ${!!cfg.social.ads};
+    const can = (mime, codecs) => { try { return window.MediaSource ? MediaSource.isTypeSupported(mime + '; codecs="' + codecs + '"') : true; } catch (e) { return true; } };
+    let hevc = null;
+    const hevcOk = () => (hevc === null ? (hevc = can('video/mp4', 'hvc1.1.6.L120.90') || can('video/mp4', 'hev1.1.6.L120.90')) : hevc);
+    /* TikTok: { video: { playAddr, PlayAddrStruct, bitrateInfo: [{ Bitrate, CodecType, PlayAddr: { UrlList, Width, Height } }] } } */
+    const side = b => { const p = b.PlayAddr || {}; return Math.min(+p.Width || 0, +p.Height || 0) || +p.Height || 0; };
+    const tiktok = v => {
+      const list = v.bitrateInfo.filter(b => b && b.PlayAddr && Array.isArray(b.PlayAddr.UrlList) && b.PlayAddr.UrlList.length
+        && (!/265|hevc|bytevc1/i.test(String(b.CodecType || '')) || hevcOk()));
+      if (!list.length) return;
+      list.sort((a, b) => side(b) - side(a) || (+b.Bitrate || 0) - (+a.Bitrate || 0));
+      const top = side(list[0]);
+      if (!(top > 0)) return;
+      const best = list[0];
+      v.bitrateInfo = list.filter(b => side(b) === top);   // the same size only (other codecs of it stay as a fallback)
+      v.playAddr = best.PlayAddr.UrlList[0];
+      if (v.PlayAddrStruct && typeof v.PlayAddrStruct === 'object') v.PlayAddrStruct = best.PlayAddr;
+      if (best.PlayAddr.Width && best.PlayAddr.Height) { v.width = best.PlayAddr.Width; v.height = best.PlayAddr.Height; }
+      if (best.Bitrate) v.bitrate = best.Bitrate;
+      if (typeof v.definition === 'string' && best.GearName) { const m = /(\\d{3,4})/.exec(best.GearName); if (m) v.definition = m[1] + 'p'; }
+    };
+    /* Instagram: the DASH list keeps one video stream, the largest this computer can play */
+    const mpd = text => {
+      try {
+        const doc = new DOMParser().parseFromString(text, 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) return text;
+        let changed = false;
+        for (const as of [...doc.getElementsByTagName('AdaptationSet')]) {
+          const reps = [...as.getElementsByTagName('Representation')];
+          const type = (as.getAttribute('contentType') || '') + ' ' + (as.getAttribute('mimeType') || '') + ' ' + reps.map(r => r.getAttribute('mimeType') || '').join(' ');
+          if (reps.length < 2 || !/video/i.test(type)) continue;
+          const ok = reps.filter(r => { const c = r.getAttribute('codecs') || as.getAttribute('codecs'); return !c || can(r.getAttribute('mimeType') || as.getAttribute('mimeType') || 'video/mp4', c); });
+          const area = r => (+r.getAttribute('width') || +as.getAttribute('width') || 0) * (+r.getAttribute('height') || +as.getAttribute('height') || 0);
+          ok.sort((a, b) => area(b) - area(a) || (+b.getAttribute('bandwidth') || 0) - (+a.getAttribute('bandwidth') || 0));
+          if (!ok[0]) continue;
+          for (const r of reps) if (r !== ok[0]) { r.remove(); changed = true; }
+        }
+        return changed ? new XMLSerializer().serializeToString(doc) : text;
+      } catch (e) { return text; }
+    };
+    const insta = o => {
+      if (typeof o.video_dash_manifest === 'string' && o.video_dash_manifest.indexOf('<MPD') >= 0) o.video_dash_manifest = mpd(o.video_dash_manifest);
+      if (Array.isArray(o.video_versions) && o.video_versions.length > 1)
+        o.video_versions = o.video_versions.slice().sort((a, b) => ((b && b.width) || 0) * ((b && b.height) || 0) - ((a && a.width) || 0) * ((a && a.height) || 0));
+    };
+    /* a sponsored post (checked on the post and on what wraps it in a list) */
+    const adObj = o => !!o && typeof o === 'object' && (SITE === 'tiktok'
+      ? o.isAd === true || o.is_ad === true || (o.adAuthorization === true && !!o.adLabelVersion)
+      : !!o.ad_id || o.is_ad === true || (!!o.injected && typeof o.injected === 'object') || (!!o.ad && typeof o.ad === 'object' && !Array.isArray(o.ad) && Object.keys(o.ad).length > 0));
+    const isAd = e => adObj(e) || (!!e && typeof e === 'object' && (adObj(e.item) || adObj(e.itemStruct) || adObj(e.node) || adObj(e.media) || (e.node && adObj(e.node.media))));
+    const walk = (o, depth) => {
+      if (!o || typeof o !== 'object' || depth > 40) return;
+      if (Array.isArray(o)) {
+        if (ADS) for (let i = o.length - 1; i >= 0; i--) if (isAd(o[i])) o.splice(i, 1);
+        for (let i = 0; i < o.length; i++) walk(o[i], depth + 1);
+        return;
+      }
+      if (HQ) {
+        if (SITE === 'tiktok') { if (o.video && typeof o.video === 'object' && Array.isArray(o.video.bitrateInfo)) try { tiktok(o.video); } catch (e) {} }
+        else if ('video_dash_manifest' in o || 'video_versions' in o) try { insta(o); } catch (e) {}
+      }
+      for (const k in o) { const x = o[k]; if (x && typeof x === 'object') walk(x, depth + 1); }
+    };
+    const KEYS = SITE === 'tiktok' ? ['bitrateInfo', 'isAd'] : ['video_', 'ad_id', '"injected"', '"ad"'];
+    const fix = o => { try { walk(o, 0); } catch (e) {} return o; };
+    JSON.parse = new Proxy(JSON.parse, { apply(f, self, args) {
+      const r = Reflect.apply(f, self, args);
+      const s = args[0];
+      return typeof s === 'string' && s.length > 64 && KEYS.some(k => s.indexOf(k) >= 0) ? fix(r) : r;
+    } });
+    Response.prototype.json = new Proxy(Response.prototype.json, { apply(f, self, args) { return Reflect.apply(f, self, args).then(fix); } });
+  })();`);
+
   /* --- sign-in pages and the "Windows Security" window ---
      Many sign-in pages (Google, Microsoft, GitHub...) ask for a passkey in the background as soon as they open
      (navigator.credentials.get with mediation "conditional"), so Chrome can offer saved passkeys in the
@@ -403,60 +485,6 @@ if (SUB) {
       } catch (x) {}
       ipcRenderer.send('reader:article', nonce, out);
     });
-  }
-
-  /* ================= picture in picture: a small button over the video under the mouse =================
-     Only while the page has a video; the mouse is looked at a few times a second, nothing else runs. */
-  if (cfg.pip && document.pictureInPictureEnabled !== false) {
-    const vids = document.getElementsByTagName('video');   // live list: costs nothing to keep
-    let host = null, btn = null, cur = null, hideT = 0, last = 0, mx = -1, my = -1;
-    const L = (a, e) => (cfg.lang === 'en' ? e : a);
-    const make = () => {
-      host = document.createElement('div');
-      host.style.cssText = 'position:fixed;z-index:2147483647;top:0;left:0;width:0;height:0;pointer-events:none';
-      const sh = host.attachShadow({ mode: 'closed' });
-      sh.innerHTML = '<style>button{all:unset;pointer-events:auto;position:fixed;display:flex;align-items:center;gap:6px;padding:6px 11px 6px 9px;border-radius:999px;background:rgba(15,15,20,.78);color:#fff;font:600 12px/1 "Segoe UI",system-ui,sans-serif;cursor:pointer;opacity:0;transform:translateY(-4px);transition:opacity .14s ease,transform .14s ease;backdrop-filter:blur(8px);box-shadow:0 2px 10px rgba(0,0,0,.35)}button.on{opacity:1;transform:none}button:hover{background:rgba(30,30,38,.92)}svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}</style>'
-        + '<button part="b"><svg viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="15" rx="2.5"/><rect x="12" y="11.5" width="7.5" height="6" rx="1.2" fill="currentColor" stroke="none"/></svg><span></span></button>';
-      btn = sh.querySelector('button');
-      btn.addEventListener('mousedown', e => { e.stopPropagation(); e.preventDefault(); }, true);
-      btn.addEventListener('click', async e => {
-        e.stopPropagation(); e.preventDefault();
-        try { if (document.pictureInPictureElement) await document.exitPictureInPicture(); else if (cur) await cur.requestPictureInPicture(); } catch (x) {}
-        hide();
-      }, true);
-      btn.addEventListener('mouseenter', () => clearTimeout(hideT));
-      btn.addEventListener('mouseleave', () => { hideT = setTimeout(hide, 900); });
-      (document.body || document.documentElement).appendChild(host);
-    };
-    const hide = () => { if (btn) btn.classList.remove('on'); cur = null; };
-    const show = v => {
-      if (!host || !host.isConnected) make();
-      const r = v.getBoundingClientRect();
-      btn.querySelector('span').textContent = document.pictureInPictureElement === v ? L('رجّعه للصفحة', 'Back to page') : L('صورة داخل صورة', 'Picture in picture');
-      btn.style.top = Math.max(8, r.top + 12) + 'px';
-      btn.style.left = Math.round(r.left + r.width / 2) + 'px';
-      btn.style.translate = '-50% 0';
-      btn.classList.add('on'); cur = v;
-      clearTimeout(hideT); hideT = setTimeout(hide, 2200);
-    };
-    const check = () => {
-      if (!vids.length || mx < 0) return;
-      let hit = null;
-      for (const v of vids) {
-        if (v.disablePictureInPicture || v.readyState === 0) continue;
-        const r = v.getBoundingClientRect();
-        if (r.width < 240 || r.height < 135) continue;   // ads and thumbnails stay alone
-        if (mx >= r.left && mx <= r.right && my >= r.top && my <= r.bottom) { hit = v; break; }
-      }
-      if (hit) { if (!btn || hit !== cur || !btn.classList.contains('on')) show(hit); else { clearTimeout(hideT); hideT = setTimeout(hide, 2200); } }
-    };
-    document.addEventListener('mousemove', e => {
-      mx = e.clientX; my = e.clientY;
-      if (!vids.length) return;
-      const now = performance.now(); if (now - last < 120) return; last = now;
-      check();
-    }, { passive: true, capture: true });
-    document.addEventListener('scroll', () => { if (btn && btn.classList.contains('on')) hide(); }, { passive: true, capture: true });
   }
 
   /* ================= cookie popups: answered "reject" by DuckDuckGo's Autoconsent (see main.js, AC) =================

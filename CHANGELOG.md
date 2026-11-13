@@ -2,6 +2,31 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.16.0
+
+### Browsing
+- Picture in picture now uses a dedicated window instead of Chromium's built-in one: rounded corners, a thin
+  frame, always on top, movable and resizable from its edges. Its position and size are stored and reused for
+  every video, so the window no longer jumps or resizes between tracks.
+- Picture-in-picture controls: back to tab, close, play/pause and a seek bar. The 10-second skip buttons are
+  gone; on YouTube and YouTube Music previous/next track buttons are shown, always laid out left to right
+  (they were mirrored in the Arabic interface).
+- The picture-in-picture button over videos was removed. `Alt+P` and the video's context menu remain; `Alt+P`
+  also closes the window from the browser or from the window itself.
+- While a tab is in picture in picture, its place in the browser window shows a note with a button to bring
+  the video back. Closing, moving or detaching the tab returns the video first; leaving the page closes the
+  window.
+- TikTok and Instagram play at the highest quality the site provides and the computer can decode (new
+  setting, on by default).
+- Sponsored posts are removed from the TikTok and Instagram feeds when the ad blocker is on (and not
+  turned off for that site).
+- Tab hover cards show only the page preview image; the title/address tooltip on tabs was removed.
+
+### Downloader
+- Fixed: on YouTube the selected range was ignored and the whole video was downloaded when the link contained
+  extra parameters (`&list=`, `&pp=`, `&t=` …). The preview stored the site's normalised address, so the
+  download no longer matched the preview and was started without the range.
+
 ## 0.15.1
 
 ### Downloader
