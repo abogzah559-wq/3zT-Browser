@@ -21,8 +21,10 @@ const GRIP = 14;      // from the window's edge: resizes instead of moving
 
 /* ---------- what runs in the page (its main world: the site's own player is there) ---------- */
 // kept in one string: used for the first pick and again by the small check that follows a video the site replaces
+// the video is rounded itself too: Windows can hand a video that fills the window straight to the graphics card
+// (an overlay), which skips the window's own round corners
 const LIB = String.raw`
-  const CSS = '[data-zpip]{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;transform:none!important;translate:none!important;scale:none!important;rotate:none!important;filter:none!important;clip-path:none!important;mask:none!important;opacity:1!important;visibility:visible!important;display:block!important;object-fit:contain!important;background:#000!important;box-shadow:none!important;outline:0!important;z-index:2147483647!important}'
+  const CSS = '[data-zpip]{position:fixed!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;border-radius:${R}px!important;transform:none!important;translate:none!important;scale:none!important;rotate:none!important;filter:none!important;clip-path:none!important;mask:none!important;opacity:1!important;visibility:visible!important;display:block!important;object-fit:contain!important;background:#000!important;box-shadow:none!important;outline:0!important;z-index:2147483647!important}'
     + '[data-zpip]::backdrop{background:#000!important}'
     + 'html[data-zpip-on],html[data-zpip-on] body{overflow:hidden!important}'
     + 'video[data-zpip]::-webkit-media-controls{display:none!important}';

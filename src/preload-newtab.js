@@ -117,6 +117,26 @@ const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|his
 // the reader view shows text taken from a website: it only gets its own article, nothing else of the browser
 const readerPage = !SUB && location.protocol === 'file:' && /\/newtab\/reader\.html$/i.test(decodeURIComponent(location.pathname));
 
+/* pop-up blocking (main.js, popupCheck): the link a click or Enter was on, if any. A new tab the page opens to
+   another site is let through when it is that link (or the form being sent); one a script opens on a click
+   anywhere else is a pop-under ad. Only real input counts (isTrusted). */
+if (/^https?:$/.test(location.protocol)) {
+  const tell = e => {
+    if (!e.isTrusted) return;
+    let href = '';
+    try {
+      for (const n of e.composedPath()) {
+        if (!n || !n.tagName) continue;
+        if ((n.tagName === 'A' || n.tagName === 'AREA') && typeof n.href === 'string' && n.href) { href = n.href; break; }
+        if ((n.tagName === 'BUTTON' || n.tagName === 'INPUT') && n.form) { href = n.formAction || n.form.action || ''; break; }
+      }
+    } catch (x) {}
+    ipcRenderer.send('pop:gesture', String(href).slice(0, 2048));
+  };
+  addEventListener('pointerdown', tell, true);
+  addEventListener('keydown', e => { if (e.key === 'Enter') tell(e); }, true);
+}
+
 if (SUB) {
   // a sign-in box embedded from another site must not open Windows' passkey window by itself either
   if (/^https?:$/.test(location.protocol)) {
