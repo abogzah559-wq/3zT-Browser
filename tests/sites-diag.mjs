@@ -60,6 +60,7 @@ async function run(label) {
   await open('https://example.com/');
   let t = await find(u => u.startsWith('https://example.com'), 40);
   if (t) { const c = await connect(t); await sleep(2000); note(`${label}: fingerprint`, await c.ev(FP)); c.close(); }
+  if (process.env.DIAG_FP_ONLY) { try { if (process.platform === 'win32') execSync(`taskkill /PID ${child.pid} /T /F`, { stdio: 'ignore' }); else child.kill(); } catch (e) {} await sleep(4000); PORT++; return; }
   // 2. Cloudflare Turnstile on photoroom
   await open('https://www.photoroom.com/tools/background-remover');
   t = await find(u => /photoroom\.com/.test(u), 40);

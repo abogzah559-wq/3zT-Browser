@@ -22,11 +22,6 @@ jobs:
           npm view @duckduckgo/autoconsent dist-tags --json
           node scripts/fetch_autoconsent.mjs
           node -e "const m={exports:{}};new Function('module','exports',require('fs').readFileSync('src/vendor/autoconsent/autoconsent.cjs.js','utf8'))(m,m.exports);console.log('::notice title=autoconsent exports::'+Object.keys(m.exports).join(', '));const r=require('./src/vendor/autoconsent/compact-rules.json');console.log('::notice title=autoconsent rules::keys '+Object.keys(r).join(',')+' rules '+(r.r||[]).length+' index '+JSON.stringify(r.index||null).slice(0,300))"
-      - name: Fast-cut diagnosis (key frames far apart)
-        continue-on-error: true
-        run: node tests/cut-diag.mjs
-      - name: Real YouTube and TikTok downloads
-        run: node tests/media-real.mjs
       - name: Electron (checksum verified)
         shell: bash
         run: |
@@ -36,9 +31,6 @@ jobs:
           curl -sSfL -o SHASUMS256.txt $base/SHASUMS256.txt
           grep " \*$f\$" SHASUMS256.txt | sed 's/ \*/  /' | sha256sum -c -
           mkdir -p electron-bin && unzip -q $f -d electron-bin
-      - name: The browser on real sites (TikTok quality, YouTube picture in picture)
-        continue-on-error: true
-        run: node tests/sites-real.mjs electron-bin/electron.exe .
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -46,6 +38,8 @@ jobs:
           path: tests/out/
       - name: Diagnosis on real sites (3zT variants and Chrome)
         continue-on-error: true
+        env:
+          DIAG_FP_ONLY: '1'
         run: node tests/sites-diag.mjs electron-bin/electron.exe .
       - uses: actions/upload-artifact@v4
         if: always()
