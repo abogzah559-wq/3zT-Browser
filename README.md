@@ -102,6 +102,8 @@ delete it.
   play/pause and a seek bar; on YouTube and YouTube Music also previous/next track. The tab stays in the
   strip and shows a "bring it back" note in its place.
 - Address bar with history, previous searches and Google suggestions; preconnects to likely targets.
+- Page and frame loads carry the engine's User-Agent Client Hints (`Sec-CH-UA`…), which Electron otherwise sends
+  only with subresources; their absence on navigations is what bot checks flag as automated traffic.
 - In-page translation (Google Translate), find in page, per-site zoom, printing, full screen,
   developer tools, private windows.
 - Links, forms and scripts that open new tabs keep the original request (POST data, Referer,
