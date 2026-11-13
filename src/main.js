@@ -347,7 +347,6 @@ class Win {
         closedCount: closedStack.length,
         adblock: settings.data.adblock !== false,
         adSiteOff: !!(url && /^https?:/i.test(url) && settings.data.adAllow.includes(AdBlocker.site(hostOf(url) || ''))),
-        hidden: (url && /^https?:/i.test(url) && ((settings.data.hideRules || {})[siteOfUrl(url)] || []).length) || 0,
         blocked: (t && t.blocked) || 0,
         blockedTotal: settings.data.adBlockedTotal || 0,
         adRules: adblock ? adblock.ruleCount : 0,
@@ -571,7 +570,7 @@ function makeView(tab, fromOpener) {
     const same = e && e.isSameDocument !== undefined ? e.isSameDocument : rest[1];
     if (isMain && !same) { tab.blocked = 0; tab.permDenied = null; cancelPermissionsOf(tab); tab.win.pushState(); }
   });
-  wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); tab.siteFontKey = null; applySiteFont(tab); translateOnLoad(tab); applyHideRules(tab); });
+  wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); tab.siteFontKey = null; applySiteFont(tab); translateOnLoad(tab); });
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) nav(e, url, true); });
   wc.on('audio-state-changed', upd);
   wc.on('context-menu', (e, p) => contextMenu(tab, p));
@@ -878,7 +877,7 @@ function shortcutKey(i) {
    the ad blocker on (and not turned off for the site), a new tab the page opens to ANOTHER site is let through only
    when you clicked a link (or sent a form) going there, as in uBlock Origin's and Brave's pop-up blocking; ad-server
    pages from the lists are never let through. A real small window (sign-in boxes: window.open with a size) keeps
-   working. The first one blocked on a page shows a note with "Open it", in case it was something you wanted. */
+   working. Blocked ones only add to the shield's count. */
 const siteOfUrl = u => siteOf(hostOf(u) || '') || '';
 function popupCheck(tab, d) {
   let opener = '';
@@ -915,12 +914,7 @@ function popupBlocked(tab, url) {
   tab.blocked = (tab.blocked || 0) + 1;
   settings.data.adBlockedTotal = (settings.data.adBlockedTotal || 0) + 1;
   if (process.env.ZEUS_E2E) console.log('[3zT] popup blocked', String(url).slice(0, 160));
-  // the note once per page (sites open one on every click)
-  if (tab.popNoted !== tab.navSeq && tab.id === w.activeId && w.ui && !w.ui.webContents.isDestroyed()) {
-    tab.popNoted = tab.navSeq;
-    w.ui.webContents.send('popup-blocked', { url: /^https?:/i.test(url) ? String(url).slice(0, 2048) : '' });
-  }
-  w.pushState();
+  w.pushState();   // counted on the shield; no note (they come on every click)
 }
 
 /* Picture in picture (src/pip.js): the video under (x, y), else the one playing, else the biggest, in 3zT's own small
@@ -1183,57 +1177,8 @@ function contextMenu(tab, p) {
     items.push({ label: T('طباعة…', 'Print…'), click: () => wc.print({}, () => {}) });
     items.push({ label: T('عرض مصدر الصفحة', 'View page source'), click: () => w.createTab('view-source:' + tab.url, { after: tab.id }) });
   }
-  if (/^https?:/i.test(tab.url)) {
-    const site = siteOfUrl(tab.url), n = ((settings.data.hideRules || {})[site] || []).length;
-    items.push({ label: T('إخفاء هذا الإعلان', 'Hide this ad'), click: () => hideElementAt(tab, p.x, p.y) });
-    if (n) items.push({ label: T(`إظهار اللي أخفيته في هذا الموقع (${n})`, `Show what you hid on this site (${n})`), click: () => { delete settings.data.hideRules[site]; settings.save(); wc.reload(); } });
-  }
   items.push({ label: T('فحص العنصر', 'Inspect'), click: () => wc.inspectElement(p.x, p.y) });
   Menu.buildFromTemplate(items).popup({ window: w.win });
-}
-/* "Hide this ad": what you right-clicked (the box around it, or the frame an ad sits in) is hidden on that site from
-   now on, like uBlock Origin's element picker. Ad networks that change their address every day get past any
-   list, but not this. The rule is a CSS selector kept per site (settings.hideRules) and put in each page of the
-   site when it loads; the same menu shows them again. */
-const PICK_JS = (x, y) => `(() => {
-  let el = document.elementFromPoint(${+x || 0}, ${+y || 0});
-  if (!el || el === document.body || el === document.documentElement) return null;
-  const vw = innerWidth * innerHeight, area = e => { const r = e.getBoundingClientRect(); return r.width * r.height; };
-  // the box of the ad: the outermost parent that is still about the size of what was clicked (and not the page)
-  const a0 = area(el);
-  for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
-    const a = area(p); if (a > a0 * 1.6 || a > vw * 0.5) break; el = p;
-  }
-  if (area(el) > vw * 0.5) return null;   // never a whole page
-  const ok = s => { try { const l = document.querySelectorAll(s); return l.length === 1 && l[0] === el; } catch (e) { return false; } };
-  const plainId = e => e.id && /^[A-Za-z][\w-]{1,40}$/.test(e.id) && !/\d{4,}/.test(e.id);
-  if (plainId(el) && ok('#' + CSS.escape(el.id))) return '#' + CSS.escape(el.id);
-  const parts = [];
-  for (let e = el; e && e !== document.documentElement; e = e.parentElement) {
-    if (plainId(e) && e !== el) { parts.unshift('#' + CSS.escape(e.id)); break; }
-    let i = 1; for (let s = e.previousElementSibling; s; s = s.previousElementSibling) if (s.tagName === e.tagName) i++;
-    parts.unshift(e.tagName.toLowerCase() + ':nth-of-type(' + i + ')');
-    if (e === document.body) break;
-  }
-  const sel = parts.join(' > ');
-  return ok(sel) ? sel : null;
-})()`;
-async function hideElementAt(tab, x, y) {
-  const wc = tab.view && tab.view.webContents; if (!wc || wc.isDestroyed()) return;
-  let sel = null; try { sel = await wc.mainFrame.executeJavaScript(PICK_JS(x, y)); } catch (e) {}
-  if (typeof sel !== 'string' || !sel || sel.length > 600) return;
-  const site = siteOfUrl(wc.getURL()); if (!site) return;
-  const all = settings.data.hideRules || (settings.data.hideRules = {});
-  const list = all[site] || (all[site] = []);
-  if (!list.includes(sel)) { list.push(sel); if (list.length > 100) list.shift(); settings.save(); }
-  applyHideRules(tab);
-  if (tab.win && tab.win.active() === tab) tab.win.pushState();
-}
-function applyHideRules(tab) {
-  const wc = tab.view && tab.view.webContents; if (!wc || wc.isDestroyed() || !/^https?:/i.test(tab.url || '')) return;
-  const list = (settings.data.hideRules || {})[siteOfUrl(tab.url)];
-  if (!list || !list.length) return;
-  wc.insertCSS(list.join(',\n') + ' { display: none !important; }', { cssOrigin: 'user' }).catch(() => {});
 }
 /* pin / unpin: pinned tabs are small, stay at the start and come back after a restart */
 function togglePin(w, t) {
@@ -1441,6 +1386,12 @@ function setupSession(ses) {
     if (!adblock.shouldBlock(d.url, page, d.resourceType)) return cb({});
     const t = d.webContents && tabOfWc(d.webContents);
     if (t) { t.blocked = (t.blocked || 0) + 1; if (t.id === t.win.activeId) t.win.pushState(); }
+    // a blocked picture or frame: the page folds the element away instead of keeping an empty box
+    if (t && (d.resourceType === 'image' || d.resourceType === 'subFrame')) {
+      const f = d.frame || d.webContents.mainFrame, url = d.url.slice(0, 4096);
+      // (for a frame, to the page it sits in)
+      for (const x of d.resourceType === 'subFrame' ? [f.parent, f] : [f]) if (x) try { x.send('ad:blocked', url); } catch (e) {}
+    }
     // the running total: counted in memory, written to disk at most once a minute (not on every blocked request)
     settings.data.adBlockedTotal = (settings.data.adBlockedTotal || 0) + 1;
     if (!adSaveTimer) adSaveTimer = setTimeout(() => { adSaveTimer = null; settings.save(); }, 60000);
@@ -2073,7 +2024,9 @@ function siteCfg(host) {
       const hq = d.hqVideo !== false, ads = adsOn && !d.adAllow.includes(site + '.com');
       return hq || ads ? { site, hq, ads } : null;
     })(),
-    reader: d.reader !== false
+    reader: d.reader !== false,
+    // empty ad slots left behind by the blocker are folded away (see preload-newtab.js)
+    collapse: adsOn && !!host && !d.adAllow.includes(AdBlocker.site(host))
   };
 }
 /* Cookie popups: DuckDuckGo's Autoconsent (src/vendor/autoconsent, fetched at build time) answers them with
@@ -2223,11 +2176,6 @@ function setupIpc() {
   });
   // the link a click was on (src/preload-newtab.js): pop-up blocking
   ipcMain.on('pop:gesture', (e, href) => { const t = tabOfWc(e.sender); if (t) t.gesture = { href: String(href || '').slice(0, 2048), t: Date.now() }; });
-  // "Open it" on the note: the blocked tab, opened by you
-  ipcMain.on('pop:open', (e, url) => {
-    const w = uiWin(e); if (!w || typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
-    const t = w.active(); w.createTab(url, { activate: true, after: t && t.id });
-  });
   ipcMain.on('pip:back', e => { const w = uiWin(e); const t = w && w.active(); if (t && t.pip && pip) pip.exit({ focus: true }); });
   ipcMain.on('ui:expand', (e, on) => { const w = uiWin(e); if (!w) return; w.uiExpanded = typeof on === 'number' ? on : !!on; w.layout(); });
   ipcMain.on('win', (e, cmd) => {
@@ -2262,12 +2210,6 @@ function setupIpc() {
       case 'tasks': openTasks(w); break;
       case 'passwords': { const ex = allTabs().find(x => isPasswords(x.url)); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(PASSWORDS_URL); break; }
       case 'settings': { const ex = allTabs().find(x => isSettings(x.url)); if (ex) { ex.win.activate(ex.id); ex.win.win.focus(); } else w.createTab(SETTINGS_URL); break; }
-      case 'unhide': {   // bring back what "Hide this ad" hid on the current site
-        if (!t || !/^https?:/i.test(t.url)) break;
-        const site = siteOfUrl(t.url);
-        if (settings.data.hideRules && settings.data.hideRules[site]) { delete settings.data.hideRules[site]; settings.save(); if (wc) wc.reload(); }
-        w.pushState(); break;
-      }
       case 'adSite': {   // turn the blocker off / on for the current site, then reload it
         if (!t || !/^https?:/i.test(t.url)) break;
         const site = AdBlocker.site(hostOf(t.url)); const list = settings.data.adAllow;
@@ -2712,6 +2654,7 @@ app.whenReady().then(async () => {
     settings.data.extImported = true; settings.save();
   }
   try { mergeBuiltInExtensions(); } catch (e) { console.warn('merge failed', e.message); }
+  if (settings.data.hideRules) { delete settings.data.hideRules; settings.save(); }   // the manual "Hide this ad" of 0.16.2 (now automatic)
   // all extensions load at the same time (not one after another): the window opens sooner
   await Promise.all([
     ...settings.data.extensions.slice().map(p => loadExtensionDir(p).catch(e => console.warn('extension failed', p, e.message))),

@@ -67,7 +67,11 @@ ui.on('state', st => {
   if (S.pipHere) { $('pipMsg').textContent = L('الفيديو شغّال في صورة داخل صورة', 'This video is playing in picture in picture'); $('pipBack').textContent = L('رجّعه هنا', 'Bring it back'); }
   const shOff = !S.adblock || S.adSiteOff;
   $('shield').classList.toggle('off', shOff);
-  $('shCount').textContent = !shOff && S.blocked ? (S.blocked > 99 ? '99+' : S.blocked) : '';
+  const shN = !shOff && S.blocked ? (S.blocked > 99 ? '99+' : String(S.blocked)) : '';
+  $('shCount').textContent = shN;
+  $('shCount').classList.toggle('s2', shN.length === 2);
+  $('shCount').classList.toggle('s3', shN.length > 2);
+  $('shield').classList.toggle('n', !!shN);
   $('act').title = S.isWeb ? (S.translated ? L('عرض الصفحة الأصلية', 'Show original') : TIPS.translate[en() ? 1 : 0]) : '';
   $('act').disabled = !S.isWeb;
   $('maxIco').innerHTML = S.maximized
@@ -391,8 +395,6 @@ async function renderMenu(kind) {
       <div class="row"><span class="lbl">${esc(host)}</span>
         <button class="chip${S.adblock && !S.adSiteOff ? ' on' : ''}" data-a="adSite" ${S.adblock ? '' : 'disabled'}>${S.adSiteOff ? L('طافي لهذا الموقع', 'Off for this site') : L('شغّال', 'On')}</button></div>
       <div class="note">${L('لو موقع ما اشتغل صح، طفّه لهذا الموقع بس.', 'If a site breaks, turn it off for that site only.')}</div>
-      ${S.hidden ? `<div class="row"><span class="lbl">${L('عناصر أخفيتها هنا:', 'Items you hid here:')} ${S.hidden}</span>
-        <button class="chip" data-a="unhide">${L('إظهارها', 'Show them')}</button></div>` : ''}
       <div class="sep"></div>
       <div class="row"><span class="lbl">${L('المانع لكل المواقع', 'Blocker for all sites')}</span>
         <button class="chip${S.adblock ? ' on' : ''}" data-a="adAll">${S.adblock ? L('شغّال', 'On') : L('طافي', 'Off')}</button></div>
@@ -497,7 +499,6 @@ $('drop').addEventListener('click', async e => {
     case 'zoomReset': ui.send('tab', 'zoomReset'); break;
     case 'relnotes': closeDrop(); go('https://github.com/abogzah559-wq/3zT-Browser/releases/tag/v' + (updateInfo ? updateInfo.to : '')); break;
     case 'adSite': ui.send('tab', 'adSite'); break;
-    case 'unhide': closeDrop(); ui.send('tab', 'unhide'); break;
     case 'permReload': closeDrop(); ui.send('tab', 'reload'); break;
     case 'permAll': closeDrop(); ui.send('tab', 'settings'); break;
     case 'adAll': ui.send('set', 'adblock', !S.adblock); break;
@@ -629,13 +630,6 @@ ui.on('pw-offer', o => {
      { label: L('لا', 'No'), alt: true, fn: () => answer('no') },
      ...(o.update ? [] : [{ label: L('أبداً لهذا الموقع', 'Never for this site'), alt: true, fn: () => answer('never') }])],
     { sub: `${o.username || L('(بدون اسم مستخدم)', '(no username)')} · ${o.host}`, ms: 20000 });
-});
-// a pop-up ad was stopped (once per page): "Open it" in case it was wanted
-ui.on('popup-blocked', o => {
-  const host = (() => { try { return new URL(o.url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } })();
-  toast(L('منعت نافذة إعلانية فتحها الموقع', 'Blocked a pop-up the site opened'),
-    o.url ? [{ label: L('افتحها', 'Open it'), alt: true, fn: () => ui.send('pop:open', o.url) }] : [],
-    host ? { sub: host, ms: 4500 } : { ms: 4500 });
 });
 function hideToast() { $('toast').hidden = true; toastOn = false; if (!openKind) ui.send('ui:expand', permOn ? permHeight() : false); }
 /* after a silent update: a calm green note for 3 seconds, "Details" shows what changed */

@@ -175,15 +175,22 @@ body.loading #load::after{content:"";position:absolute;top:0;bottom:0;left:0;wid
 #toast button{padding:4px 10px;border-radius:8px;border:0;background:#8ab4f8;color:#111;cursor:pointer}
 
 /* ad blocker shield */
-#shield{position:relative;color:#7ee2a8}
-#shield svg{width:17px;height:17px}
+/* a soft blue shield; the number of blocked items sits inside it (a tick when there is none yet) */
+#shield{position:relative;color:#9cc4ff}
+#shield svg{width:21px;height:21px}
+#shBody{fill:#9cc4ff;stroke:#9cc4ff;stroke-width:1.2}
+#shOk{stroke:#0f2140;stroke-width:2.2}
+#shield.n #shOk{display:none}
 body:not(.isweb) #shield{display:none}
 #shield.off{color:rgba(255,255,255,.45)}
+#shield.off #shBody{fill:none;stroke:currentColor;stroke-width:1.8}
 #shield.off #shOk{display:none}
-#shCount{position:absolute;top:-3px;inset-inline-end:-5px;min-width:15px;height:15px;padding:0 3px;border-radius:8px;background:#2f9e63;color:#fff;
-  font-size:9.5px;font-weight:700;line-height:15px;text-align:center;direction:ltr}
+#shCount{position:absolute;inset:0;display:grid;place-items:center;padding-bottom:1.5px;pointer-events:none;
+  color:#0f2140;font-size:9.5px;font-weight:800;letter-spacing:-.2px;direction:ltr;font-variant-numeric:tabular-nums}
+#shCount.s2{font-size:8.3px;letter-spacing:-.4px}
+#shCount.s3{font-size:6.6px;letter-spacing:-.4px}
 #shCount:empty,#shield.off #shCount{display:none}
-.big{font-size:26px;font-weight:600;padding:4px 10px 0;text-align:center;color:#7ee2a8}
+.big{font-size:26px;font-weight:600;padding:4px 10px 0;text-align:center;color:#9cc4ff}
 
 /* pinned extensions */
 #pins{display:flex;align-items:center;gap:1px}

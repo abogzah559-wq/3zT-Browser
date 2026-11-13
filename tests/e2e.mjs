@@ -566,9 +566,9 @@ async function popups() {
     };
     const open = async () => (await targets()).filter(t => /:8797\/(ad|link|same|later|signin)/.test(t.url)).map(t => t.url.replace(/^.*:8797\//, ''));
     await click('ad');
-    const note = await (async () => { const tb = await toolbar(); const v = await tb.ev(`!document.getElementById('toast').hidden && document.getElementById('toast').textContent`); tb.close(); return v; })();
+    const st = await (async () => { const tb = await toolbar(); const v = await tb.ev(`JSON.stringify({ toast: !document.getElementById('toast').hidden, n: document.getElementById('shCount').textContent })`); tb.close(); return JSON.parse(v); })();
     const a1 = await open();
-    ok('pop-up blocking: a script opening another site on a click is stopped, with a note to open it', !a1.includes('ad') && /localhost/.test(note || ''), `${JSON.stringify(a1)} · note ${note}`);
+    ok('pop-up blocking: a script opening another site on a click is stopped, quietly, and counted on the shield', !a1.includes('ad') && !st.toast && +st.n >= 1, `${JSON.stringify(a1)} · ${JSON.stringify(st)}`);
     await click('ln'); await click('same'); await click('win');
     const a2 = await open();
     ok('pop-up blocking: links, the same site and sign-in windows still open', a2.includes('link') && a2.includes('same') && a2.includes('signin'), JSON.stringify(a2));
@@ -576,6 +576,40 @@ async function popups() {
     const a3 = await open();
     ok('pop-up blocking: an empty tab a script sends to another site is closed', !a3.includes('later'), JSON.stringify(a3));
     pc.close();
+  } finally { srv.close(); }
+}
+
+/* empty ad slots: what an ad network's script leaves behind once its picture is blocked is folded away */
+async function adSlots() {
+  const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+  const slot = (img) => `(() => { const s = document.currentScript, f = document.createElement('iframe');
+    f.style.cssText = 'width:300px!important;height:228px!important;border:0;display:block!important';
+    s.parentNode.appendChild(f);
+    const d = f.contentDocument; d.open(); d.write('<body style="margin:0"><div style="width:100%;height:180px;background:#e3e3e3"></div><p>Dream Beyond Reality</p>${img}</body>'); d.close(); })();`;
+  const page = `<!doctype html><title>slots</title><body style="margin:0">
+    <div id=w1 style="margin-bottom:30px"><div><script src="http://localhost:8798/ad.js"></script></div></div>
+    <div id=w2><script src="/own.js"></script></div>
+    <div id=w3><script src="http://localhost:8798/adimg.js"></script></div>
+    <p id=w4>text <a id=bn href="#"><img src="https://doubleclick.net/banner.png" width=300 height=100></a></p>
+    <p id=txt>كلام الصفحة</p></body>`;
+  const srv = http.createServer((q, r) => {
+    if (q.url === '/slots') { r.setHeader('Content-Type', 'text/html; charset=utf-8'); return r.end(page); }
+    if (q.url === '/ad.js' || q.url === '/own.js') { r.setHeader('Content-Type', 'text/javascript'); return r.end(slot('')); }
+    if (q.url === '/adimg.js') { r.setHeader('Content-Type', 'text/javascript'); return r.end(slot('<img src="http://localhost:8798/c.png" style="width:300px;height:100px">')); }
+    if (q.url === '/c.png') { r.setHeader('Content-Type', 'image/png'); return r.end(PNG); }
+    r.writeHead(404); r.end();
+  }).listen(8798);
+  try {
+    await go('http://127.0.0.1:8798/slots', true);
+    const t = await find(u => u.startsWith('http://127.0.0.1:8798/slots'), 30);
+    const c = await connect(t);
+    const vis = id => `getComputedStyle(document.getElementById('${id}')).display !== 'none'`;
+    const r = await poll(async () => { const v = JSON.parse(await c.ev(`JSON.stringify({ w1: ${vis('w1')}, w2: ${vis('w2')}, w3: ${vis('w3')}, bn: ${vis('bn')}, w4: ${vis('w4')}, txt: ${vis('txt')} })`)); return !v.w1 && !v.bn ? v : null; }, 15000)
+      || JSON.parse(await c.ev(`JSON.stringify({ w1: ${vis('w1')}, w2: ${vis('w2')}, w3: ${vis('w3')}, bn: ${vis('bn')}, w4: ${vis('w4')}, txt: ${vis('txt')} })`));
+    ok('empty ad slots: the box another site\'s script made, with nothing showing in it, is folded with its wrappers', !r.w1, JSON.stringify(r));
+    ok('empty ad slots: a blocked picture is folded, the text around it stays', !r.bn && r.w4 && r.txt, JSON.stringify(r));
+    ok('empty ad slots: the site\'s own frame and an ad that shows a picture are left alone', r.w2 && r.w3, JSON.stringify(r));
+    c.close();
   } finally { srv.close(); }
 }
 
@@ -760,12 +794,13 @@ async function main() {
   const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
-  if (only === 'features') { await clientHints(); await popups(); await features(); }
+  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await features(); }
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
   if (process.platform === 'win32') { await mediaTest(); if (process.env.E2E_DIAG) await arablocn(); await passkeys(); }
   await clientHints();
   await popups();
+  await adSlots();
   await features();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);

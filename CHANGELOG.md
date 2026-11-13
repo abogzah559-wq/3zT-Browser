@@ -2,6 +2,19 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.16.3
+
+### Ad blocking
+- Empty ad slots are folded away automatically. A blocked picture or frame is hidden together with the wrappers
+  that held only it, and a frame without an address that a third-party script wrote next to itself is hidden
+  when, a few seconds later, it still shows no picture or video. This replaces the manual "Hide this ad"
+  context-menu item from 0.16.2; rules saved with it are removed.
+- Blocked pop-ups no longer show a note; they are only counted on the shield.
+
+### Interface
+- New shield: soft blue, with the page's blocked count inside it (a tick while there is none), grey outline when
+  the blocker is off for the site.
+
 ## 0.16.2
 
 ### Ad blocking
