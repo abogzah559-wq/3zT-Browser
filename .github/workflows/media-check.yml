@@ -41,3 +41,11 @@ jobs:
         with:
           name: real-sites
           path: tests/out/
+      - name: Diagnosis on real sites (3zT variants and Chrome)
+        continue-on-error: true
+        run: node tests/sites-diag.mjs electron-bin/electron.exe .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-sites-diag
+          path: tests/out/

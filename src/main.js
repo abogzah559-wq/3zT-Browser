@@ -1298,6 +1298,7 @@ function setupSession(ses) {
     const ph = hostOf(page);
     if (ph && settings.data.adAllow.includes(AdBlocker.site(ph))) return cb({});
     if (!adblock.shouldBlock(d.url, page, d.resourceType)) return cb({});
+    if (process.env.ZEUS_LOG_BLOCKED) console.log('[3zT] blocked', d.resourceType, d.url.slice(0, 200), 'on', page.slice(0, 80));
     const t = d.webContents && tabOfWc(d.webContents);
     if (t) { t.blocked = (t.blocked || 0) + 1; if (t.id === t.win.activeId) t.win.pushState(); }
     // the running total: counted in memory, written to disk at most once a minute (not on every blocked request)
