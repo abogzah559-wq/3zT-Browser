@@ -2,7 +2,7 @@ name: Build, test and release
 
 on:
   push:
-    branches: [main, 'diag/**']
+    branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
