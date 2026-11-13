@@ -48,6 +48,7 @@ class AdBlocker {
     this.typed = new Map();           // host -> [{ types: Set|null, tp: bool }] rules limited to some resource types
     this.allow = new Set();           // exceptions from the lists (every type)
     this.allowTyped = new Map();      // host -> [Set of types]
+    this.popup = new Set();           // hosts whose pages are ads when they open as a new tab ("||host^$popup")
     this.ruleCount = SEED.length;
     try { fs.mkdirSync(dir, { recursive: true }); } catch (e) {}
     this.loadCached();
@@ -55,7 +56,7 @@ class AdBlocker {
 
   /* "||host^" rules, with their resource types and third-party option. Site-specific and path rules are skipped. */
   parse(text) {
-    const out = { block: new Set(), block3p: new Set(), typed: new Map(), allow: new Set(), allowTyped: new Map() };
+    const out = { block: new Set(), block3p: new Set(), typed: new Map(), allow: new Set(), allowTyped: new Map(), popup: new Set() };
     const re = /^(@@)?\|\|([a-z0-9][a-z0-9.-]*\.[a-z]{2,})\^(?:\$(.*))?$/i;
     for (const raw of text.split('\n')) {
       const line = raw.trim();
@@ -63,6 +64,11 @@ class AdBlocker {
       const m = re.exec(line); if (!m) continue;
       const host = m[2].toLowerCase();
       const opts = (m[3] || '').toLowerCase().split(',').map(o => o.trim()).filter(Boolean);
+      // "||host^$popup" (maybe with third-party): that host opening as a new tab is an ad. Site-specific ones: skipped.
+      if (!m[1] && opts.includes('popup')) {
+        if (opts.every(o => o === 'popup' || o === 'third-party' || o === '3p' || o === 'important')) out.popup.add(host);
+        continue;
+      }
       let tp = false, skip = false;
       const yes = new Set(), no = new Set();
       for (const o of opts) {
@@ -91,23 +97,23 @@ class AdBlocker {
     return out;
   }
   apply(texts) {
-    const block = new Set(SEED), block3p = new Set(), allow = new Set(), typed = new Map(), allowTyped = new Map();
+    const block = new Set(SEED), block3p = new Set(), allow = new Set(), typed = new Map(), allowTyped = new Map(), popup = new Set();
     const merge = (dst, src) => src.forEach((v, k) => dst.set(k, (dst.get(k) || []).concat(v)));
     for (const t of texts) {
       const r = this.parse(t);
-      r.block.forEach(h => block.add(h)); r.block3p.forEach(h => block3p.add(h)); r.allow.forEach(h => allow.add(h));
+      r.block.forEach(h => block.add(h)); r.block3p.forEach(h => block3p.add(h)); r.allow.forEach(h => allow.add(h)); r.popup.forEach(h => popup.add(h));
       merge(typed, r.typed); merge(allowTyped, r.allowTyped);
     }
-    Object.assign(this, { block, block3p, allow, typed, allowTyped });
+    Object.assign(this, { block, block3p, allow, typed, allowTyped, popup });
     this.ruleCount = block.size + block3p.size + typed.size;
   }
   /* the lists, already parsed (compiled.json): ~10x faster at start than parsing the text lists again */
   stamp() {
-    return LISTS.map(l => { try { const st = fs.statSync(path.join(this.dir, l.name + '.txt')); return `${l.name}:${st.size}:${Math.round(st.mtimeMs)}`; } catch (e) { return l.name + ':-'; } }).join('|') + '|v3|' + SEED.length + ':' + SEED.join(',').length;   // a new SEED or parser = parse again
+    return LISTS.map(l => { try { const st = fs.statSync(path.join(this.dir, l.name + '.txt')); return `${l.name}:${st.size}:${Math.round(st.mtimeMs)}`; } catch (e) { return l.name + ':-'; } }).join('|') + '|v4|' + SEED.length + ':' + SEED.join(',').length;   // a new SEED or parser = parse again
   }
   saveCompiled() {
     try {
-      const data = { stamp: this.stamp(), block: [...this.block], block3p: [...this.block3p], allow: [...this.allow],
+      const data = { stamp: this.stamp(), block: [...this.block], block3p: [...this.block3p], allow: [...this.allow], popup: [...this.popup],
         typed: [...this.typed].map(([h, l]) => [h, l.map(r => [[...r.types], r.tp ? 1 : 0])]),
         allowTyped: [...this.allowTyped].map(([h, l]) => [h, l.map(t => [...t])]) };
       fs.writeFileSync(path.join(this.dir, 'compiled.json.tmp'), JSON.stringify(data));
@@ -118,7 +124,7 @@ class AdBlocker {
     try {
       const d = JSON.parse(fs.readFileSync(path.join(this.dir, 'compiled.json'), 'utf8'));
       if (d.stamp !== this.stamp()) return false;
-      this.block = new Set(SEED.concat(d.block)); this.block3p = new Set(d.block3p); this.allow = new Set(d.allow);
+      this.block = new Set(SEED.concat(d.block)); this.block3p = new Set(d.block3p); this.allow = new Set(d.allow); this.popup = new Set(d.popup || []);
       this.typed = new Map(d.typed.map(([h, l]) => [h, l.map(([t, tp]) => ({ types: new Set(t), tp: !!tp }))]));
       this.allowTyped = new Map(d.allowTyped.map(([h, l]) => [h, l.map(t => new Set(t))]));
       this.ruleCount = this.block.size + this.block3p.size + this.typed.size;
@@ -166,6 +172,14 @@ class AdBlocker {
     }
   }
   inSet(set, host) { return this.find(set, host) !== null; }
+  /* a page that opens as a new tab: is it an ad? (a pop-up host, or an ad server of the lists, from another site) */
+  isAdPage(url, openerUrl) {
+    const host = AdBlocker.hostOf(url); if (!host || !/^https?:/i.test(url)) return false;
+    if (this.inSet(this.allow, host)) return false;
+    const op = AdBlocker.hostOf(openerUrl);
+    if (op && AdBlocker.site(op) === AdBlocker.site(host)) return false;
+    return this.inSet(this.popup, host) || this.inSet(this.block, host) || this.inSet(this.block3p, host);
+  }
   /* should this request be blocked? pageUrl = the page that is loading it, type = Electron resourceType */
   shouldBlock(url, pageUrl, type) {
     const host = AdBlocker.hostOf(url); if (!host) return false;

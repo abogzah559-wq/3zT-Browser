@@ -546,6 +546,39 @@ async function clientHints() {
   } finally { srv.close(); }
 }
 
+/* pop-up ads: a script opening another site on a click is stopped; a link, the same site, and sign-in windows are not */
+async function popups() {
+  const page = `<title>pop</title><style>button,a{display:block;width:300px;height:60px;margin:8px}</style>
+    <button id=ad onclick="window.open('http://localhost:8797/ad')">ad</button>
+    <a id=ln href="http://localhost:8797/link" target=_blank>link</a>
+    <button id=same onclick="window.open('/same')">same</button>
+    <button id=blank onclick="const w = window.open(); w.location = 'http://localhost:8797/later'">blank</button>
+    <button id=win onclick="window.open('http://localhost:8797/signin', 'x', 'width=420,height=500')">signin</button>`;
+  const srv = http.createServer((q, r) => { r.setHeader('Content-Type', 'text/html'); r.end(q.url === '/pop' ? page : '<title>' + q.url.slice(1) + '</title>' + q.url); }).listen(8797);
+  try {
+    await go('http://127.0.0.1:8797/pop', true);
+    const pt = await find(u => u.startsWith('http://127.0.0.1:8797/pop'), 30);
+    const pc = await connect(pt); await sleep(1500);
+    const click = async id => {
+      const box = JSON.parse(await pc.ev(`(() => { const r = document.getElementById('${id}').getBoundingClientRect(); return JSON.stringify({ x: r.left + 20, y: r.top + 20 }); })()`));
+      for (const type of ['mousePressed', 'mouseReleased']) await pc.send('Input.dispatchMouseEvent', { type, x: box.x, y: box.y, button: 'left', clickCount: 1 });
+      await sleep(2500);
+    };
+    const open = async () => (await targets()).filter(t => /:8797\/(ad|link|same|later|signin)/.test(t.url)).map(t => t.url.replace(/^.*:8797\//, ''));
+    await click('ad');
+    const note = await (async () => { const tb = await toolbar(); const v = await tb.ev(`!document.getElementById('toast').hidden && document.getElementById('toast').textContent`); tb.close(); return v; })();
+    const a1 = await open();
+    ok('pop-up blocking: a script opening another site on a click is stopped, with a note to open it', !a1.includes('ad') && /localhost/.test(note || ''), `${JSON.stringify(a1)} · note ${note}`);
+    await click('ln'); await click('same'); await click('win');
+    const a2 = await open();
+    ok('pop-up blocking: links, the same site and sign-in windows still open', a2.includes('link') && a2.includes('same') && a2.includes('signin'), JSON.stringify(a2));
+    await click('blank');
+    const a3 = await open();
+    ok('pop-up blocking: an empty tab a script sends to another site is closed', !a3.includes('later'), JSON.stringify(a3));
+    pc.close();
+  } finally { srv.close(); }
+}
+
 async function features() {
   let hits = {};
   const srv = http.createServer((q, r) => {
@@ -600,6 +633,9 @@ async function features() {
       const [iw, ih, rw, rh] = String(small || '').split(',').map(Number);
       await shot(vc, 'pip-page');
       ok('picture in picture: Alt+P puts the video alone in 3zT\'s own window', !!pt && !!filled && iw > 200 && iw < 700 && ih > 100 && ih < 500 && rw === iw && rh === ih, `window ${!!pt}, video ${filled}, in the small window ${small}`);
+      // the video's own corners are round too: a hardware video overlay (Windows) is not clipped by the window's corners
+      const radius = await vc.ev(`(() => { const v = document.querySelector('video[data-zpip]'); return v ? getComputedStyle(v).borderTopLeftRadius + ' ' + getComputedStyle(v).borderBottomRightRadius : null; })()`);
+      ok('picture in picture: the video itself has round corners', /^1[0-9]px 1[0-9]px$/.test(String(radius)), String(radius));
       const note = await (async () => { const tb = await toolbar(); const v = await tb.ev(`!document.getElementById('pipNote').hidden && S.pipHere`); tb.close(); return v; })();
       ok('picture in picture: the tab shows a note with a way back', note === true);
       if (pt) {
@@ -724,11 +760,12 @@ async function main() {
   const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
-  if (only === 'features') { await clientHints(); await features(); }
+  if (only === 'features') { await clientHints(); await popups(); await features(); }
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
   if (process.platform === 'win32') { await mediaTest(); if (process.env.E2E_DIAG) await arablocn(); await passkeys(); }
   await clientHints();
+  await popups();
   await features();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);

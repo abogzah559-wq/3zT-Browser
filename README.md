@@ -119,6 +119,13 @@ delete it.
 - YouTube and Twitch video ads are blocked. Sponsored posts in the TikTok and Instagram feeds are removed
   from the feed data before the page renders it, so no empty slots are left (follows the ad blocker and
   its per-site switch).
+- **Pop-up ads:** a new tab or window that a page opens to another site is allowed only when it is the link or
+  form that was clicked (or a sign-in window). Scripted pop-unders, including blank tabs that are redirected to an
+  ad afterwards, are closed, and a short note offers to open the address anyway. Hosts marked `$popup` in the
+  lists are always refused.
+- **Hide this ad** (right-click menu): hides the clicked box on that site from then on, for ads served from
+  rotating domains that no list covers. Hidden items can be shown again from the right-click menu or the
+  shield panel.
 - **Cookie popups:** consent dialogs are answered with "reject" / "necessary only" by DuckDuckGo's
   Autoconsent rules, the same way a person would click them, so pages are not left locked behind a
   hidden overlay. The rules are loaded only on pages that show signs of a consent manager. Sites excluded

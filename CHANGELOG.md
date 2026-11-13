@@ -2,6 +2,27 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.16.2
+
+### Ad blocking
+- Pop-up and pop-under ads are blocked. A page may open another site in a new tab only when that is the link or
+  form the user clicked, a sign-in window, or a window opened with explicit window features. A script that opens
+  another site on a click (the usual way video sites trigger ad tabs), or opens a blank tab and redirects it to an
+  ad, is stopped; a note shows the blocked address with an option to open it. `$popup` rules from the filter
+  lists are now read and applied.
+- New "Hide this ad" item in the page's context menu. It hides the clicked element (grown to its surrounding ad
+  box) on that site from then on, using a per-site CSS rule. Meant for ads served from rotating domains that the
+  public lists do not cover. Hidden items can be restored from the context menu or from the shield panel, which
+  also works on sites that disable right-click.
+
+### Picture in picture
+- Rounded corners also on videos that Windows draws as a hardware overlay. Such videos are composited outside
+  the window's clipping, so their corners stayed square on some sites; the video element itself is now rounded.
+
+### Fixes
+- The per-page counters (blocked requests, page state used by reader view and media detection) were not reset on
+  every full navigation.
+
 ## 0.16.1
 
 ### Browsing
