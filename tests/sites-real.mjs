@@ -46,6 +46,25 @@ async function tiktok(label) {
   const c = await connect(t);
   const vids = await poll(async () => { const v = JSON.parse((await c.ev(VIDS)) || '[]'); return v.length ? v : null; }, 40000);
   await shot(c, 'tiktok-' + label);
+  // what the page was given and what its player fetched: which field the player really uses
+  const diag = await c.ev(`(() => { try {
+    const out = {};
+    const el = document.getElementById('__UNIVERSAL_DATA_FOR_REHYDRATION__');
+    if (el) {
+      const d = JSON.parse(el.textContent);
+      const find = (o, depth) => { if (!o || typeof o !== 'object' || depth > 12) return null; if (o.video && o.video.bitrateInfo) return o.video; for (const k in o) { const r = find(o[k], depth + 1); if (r) return r; } return null; };
+      const v = find(d, 0);
+      if (v) out.video = { keys: Object.keys(v).join(','), playAddr: String(v.playAddr || '').slice(0, 140), struct: v.PlayAddrStruct ? Object.keys(v.PlayAddrStruct).join(',') : null,
+        gears: (v.bitrateInfo || []).map(b => (b.GearName || '') + ' ' + (b.CodecType || '') + ' ' + ((b.PlayAddr || {}).Width || '') + 'x' + ((b.PlayAddr || {}).Height || '')).join(' ; '),
+        definition: v.definition, size: v.width + 'x' + v.height };
+      else out.video = 'no video in the page data';
+    } else out.video = 'no __UNIVERSAL_DATA_FOR_REHYDRATION__';
+    out.fetched = performance.getEntriesByType('resource').map(e => e.name).filter(n => /video\/tos|mime_type=video|\.mp4|bytevc|\/video\//.test(n)).slice(0, 8).map(n => n.slice(0, 220));
+    out.workers = performance.getEntriesByType('resource').filter(e => e.initiatorType === 'other' && /\.js/.test(e.name)).length;
+    out.parse = JSON.parse.toString();
+    return JSON.stringify(out);
+  } catch (e) { return 'diag error ' + e.message; } })()`);
+  note('notice', `TikTok ${label} details`, diag);
   const page = await c.ev('location.href + " | " + document.title');
   if (!vids) note('warning', `TikTok ${label}`, 'no video played on this machine: ' + page);
   else note('notice', `TikTok ${label}`, vids.map(v => `${v.w}x${v.h} ${v.src}`).join(' ; '));
