@@ -137,6 +137,94 @@ if (/^https?:$/.test(location.protocol)) {
   addEventListener('keydown', e => { if (e.key === 'Enter') tell(e); }, true);
 }
 
+/* Empty ad slots. When the blocker stops an ad's picture or frame, the page would keep the box it made for it
+   (a grey frame, sometimes with the ad's title under it). Such boxes are folded away, as uBlock Origin does:
+   - a picture or frame the blocker stopped (main.js sends its address) is hidden, with the wrappers that held
+     nothing else;
+   - in the top page, a frame without an address that a script from another site wrote next to itself (how ad
+     networks place their slots), whose inside still shows no picture or video a few seconds later.
+   A user style marks them (attribute data-zt-fold), so the page's own !important styles cannot show them again. */
+const FOLD = (() => {
+  if (!/^https?:$/.test(location.protocol)) return null;
+  let css = false;
+  const SKIP = new Set(['SCRIPT', 'STYLE', 'LINK', 'NOSCRIPT', 'TEMPLATE', 'META']);
+  const area = e => { const r = e.getBoundingClientRect(); return r.width * r.height; };
+  const big = () => innerWidth * innerHeight * 0.5;
+  // nothing else to see in p besides `keep`
+  const onlyHolds = (p, keep) => {
+    if (!p || p === document.body || p === document.documentElement || /^(MAIN|ARTICLE|BODY|HTML)$/.test(p.tagName) || area(p) > big()) return false;
+    for (const n of p.childNodes) if (n.nodeType === 3 && n.textContent.trim()) return false;
+    for (const c of p.children) {
+      if (c === keep || SKIP.has(c.tagName) || c.hasAttribute('data-zt-fold')) continue;
+      if (area(c) < 4 && !c.textContent.trim()) continue;
+      return false;
+    }
+    return true;
+  };
+  const fold = el => {
+    if (!el || el.hasAttribute('data-zt-fold') || area(el) > big()) return;
+    if (!css) { css = true; try { webFrame.insertCSS('[data-zt-fold]{display:none!important}', { cssOrigin: 'user' }); } catch (e) {} }
+    el.setAttribute('data-zt-fold', '');
+    for (let p = el.parentElement, i = 0; i < 3 && onlyHolds(p, el); el = p, p = p.parentElement, i++) p.setAttribute('data-zt-fold', '');
+  };
+  const recent = [];   // stopped addresses whose element may not be in the page yet
+  const abs = u => { try { return new URL(u, location.href).href; } catch (e) { return ''; } };
+  const sweepBlocked = () => {
+    if (!recent.length || !document.body) return;
+    const set = new Set(recent);
+    for (const el of document.querySelectorAll('img[src], iframe[src], embed[src]')) if (!el.hasAttribute('data-zt-fold') && set.has(abs(el.getAttribute('src')))) fold(el);
+  };
+  let FOLD_T = 0;
+  ipcRenderer.on('ad:blocked', (e, url) => {
+    if (typeof url !== 'string') return;
+    recent.push(url); if (recent.length > 200) recent.shift();
+    if (document.readyState === 'loading') return;
+    clearTimeout(FOLD_T); FOLD_T = setTimeout(sweepBlocked, 50);
+  });
+  // the top page: empty slots made by a script from another site
+  const siteOf = h => String(h || '').toLowerCase().split('.').slice(-2).join('.');
+  const mySite = siteOf(location.hostname);
+  const seen = new WeakMap();
+  const madeByOtherSite = f => {
+    for (let p = f.parentElement, i = 0; p && i < 2; p = p.parentElement, i++)
+      for (const s of p.querySelectorAll(':scope > script[src]')) { try { if (siteOf(new URL(s.src).hostname) !== mySite) return true; } catch (e) {} }
+    return false;
+  };
+  const shows = doc => {
+    let n = 0;
+    for (const m of doc.querySelectorAll('img, video, canvas, iframe, svg, picture, embed, object')) {
+      const r = m.getBoundingClientRect(); if (r.width < 60 || r.height < 40) continue;
+      if (m.tagName === 'IMG' && !(m.complete && m.naturalWidth > 0)) continue;
+      return true;
+    }
+    for (const el of doc.body.querySelectorAll('*')) {
+      if (++n > 400) return true;   // a real page, not an ad slot
+      const r = el.getBoundingClientRect(); if (r.width < 60 || r.height < 40) continue;
+      const bg = (doc.defaultView || window).getComputedStyle(el).backgroundImage; if (bg && bg !== 'none' && /url\(/.test(bg)) return true;
+    }
+    return false;
+  };
+  const emptySlot = f => {
+    const src = (f.getAttribute('src') || '').trim();
+    if (src && !/^(about:blank|javascript:)/i.test(src)) return false;
+    const r = f.getBoundingClientRect(); if (r.width < 80 || r.height < 40) return false;
+    if (!madeByOtherSite(f)) return false;
+    let doc = null; try { doc = f.contentDocument; } catch (e) {}
+    if (!doc || !doc.body || doc.designMode === 'on' || doc.body.isContentEditable) return false;
+    return !shows(doc);
+  };
+  const scanSlots = () => {
+    if (!document.body) return;
+    const now = Date.now();
+    for (const f of document.getElementsByTagName('iframe')) {
+      if (f.hasAttribute('data-zt-fold')) continue;
+      if (!seen.has(f)) { seen.set(f, now); continue; }
+      if (now - seen.get(f) >= 3000 && emptySlot(f)) fold(f);
+    }
+  };
+  return { sweepBlocked, scanSlots };
+})();
+
 if (SUB) {
   // a sign-in box embedded from another site must not open Windows' passkey window by itself either
   if (/^https?:$/.test(location.protocol)) {
@@ -370,6 +458,17 @@ if (SUB) {
     try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
     catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
   };
+
+  /* --- empty ad slots (FOLD above): checked a few times while the page settles, then when it changes --- */
+  if (cfg.collapse && FOLD) {
+    let n = 0, t = 0;
+    const tick = () => { FOLD.sweepBlocked(); FOLD.scanSlots(); };
+    const iv = setInterval(() => { tick(); if (++n >= 15) clearInterval(iv); }, 2000);   // the first 30 seconds
+    addEventListener('DOMContentLoaded', () => {
+      tick();
+      try { new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { tick(); setTimeout(tick, 3500); }, 1000); }).observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+    }, { once: true });
+  }
 
   /* --- Twitch ads (TwitchAdSolutions "vaft", runs before Twitch's own player) --- */
   if (cfg.twitch) { let c = ''; try { c = ipcRenderer.sendSync('site:code', 'twitch'); } catch (e) {} if (c) mainWorld(c); }

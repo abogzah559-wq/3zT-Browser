@@ -115,17 +115,19 @@ delete it.
 ### Ad blocking and privacy protection
 
 - Network-level blocker using the public **EasyList** and **EasyPrivacy** lists, refreshed in the
-  background. It can be turned off per site from the shield button, which also shows a counter.
+  background. It can be turned off per site from the shield button, which shows the number of blocked items
+  for the page inside it.
 - YouTube and Twitch video ads are blocked. Sponsored posts in the TikTok and Instagram feeds are removed
   from the feed data before the page renders it, so no empty slots are left (follows the ad blocker and
   its per-site switch).
 - **Pop-up ads:** a new tab or window that a page opens to another site is allowed only when it is the link or
   form that was clicked (or a sign-in window). Scripted pop-unders, including blank tabs that are redirected to an
-  ad afterwards, are closed, and a short note offers to open the address anyway. Hosts marked `$popup` in the
-  lists are always refused.
-- **Hide this ad** (right-click menu): hides the clicked box on that site from then on, for ads served from
-  rotating domains that no list covers. Hidden items can be shown again from the right-click menu or the
-  shield panel.
+  ad afterwards, are closed quietly and counted on the shield. Hosts marked `$popup` in the lists are always
+  refused.
+- **Empty ad slots are folded away**: when an ad's picture or frame is blocked, the box the page made for it
+  is hidden together with wrappers that held nothing else. This also covers slots built by ad scripts served
+  from rotating domains (an empty frame written next to a third-party script, with no picture or video in it
+  after a few seconds).
 - **Cookie popups:** consent dialogs are answered with "reject" / "necessary only" by DuckDuckGo's
   Autoconsent rules, the same way a person would click them, so pages are not left locked behind a
   hidden overlay. The rules are loaded only on pages that show signs of a consent manager. Sites excluded
