@@ -599,8 +599,9 @@ async function features() {
         await altP(); const open3 = await poll(pipPage, 8000);
         { const tb = await toolbar(); await tb.ev(`document.querySelector('.tab[data-id="' + S.activeId + '"] [data-close]').click(), 1`); tb.close(); }
         const closed = await poll(async () => !(await pipPage()) && !(await targets()).some(t => t.url.startsWith(B + '/video')), 8000);
-        const alive = await (async () => { const tb = await toolbar(); const v = await tb.ev('S.tabs.length > 0 && !S.pipHere'); tb.close(); return v; })();
-        ok('picture in picture: closing its tab closes the window too', !!open3 && !!closed && alive === true, `opened ${!!open3}, closed ${!!closed}, browser ${alive}`);
+        const alive = await poll(async () => { const tb = await toolbar(); const v = await tb.ev('S.tabs.length > 0 && !S.pipHere'); tb.close(); return v; }, 6000);
+        const why = alive ? '' : await (async () => { const tb = await toolbar(); const v = await tb.ev('JSON.stringify({ tabs: S.tabs.length, pipHere: S.pipHere, active: S.activeId, note: !document.getElementById("pipNote").hidden })'); tb.close(); return v; })();
+        ok('picture in picture: closing its tab closes the window too', !!open3 && !!closed && alive === true, `opened ${!!open3}, closed ${!!closed}, browser ${alive} ${why}`);
         await go(B + '/video', true); await find(u => u.startsWith(B + '/video'), 30);
       }
       vc.close();
