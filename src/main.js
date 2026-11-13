@@ -107,6 +107,8 @@ const DOWNLOADS_URL = pathToFileURL(DOWNLOADS_FILE).href;
 const READER_URL = pathToFileURL(READER_FILE).href;
 const UI_FILE = path.join(SRC, 'ui', 'toolbar.html');
 const PRELOAD_UI = path.join(SRC, 'preload-ui.js');
+const PIP_FILE = path.join(SRC, 'ui', 'pip.html');
+const PRELOAD_PIP = path.join(SRC, 'preload-pip.js');
 const PRELOAD_TAB = path.join(SRC, 'preload-newtab.js');
 const ICON = path.join(SRC, '..', 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
 const ICON_OPT = fs.existsSync(ICON) ? { icon: ICON } : {};
@@ -236,7 +238,7 @@ class Win {
         if (media) media.forgetPartition(this.partition);
         const mw = mediaWins.get(this.partition); if (mw && !mw.isDestroyed()) mw.close();   // its downloader window ends with the session
       }
-      for (const t of this.tabs) if (t.view) destroyView(t.view);
+      for (const t of this.tabs) { if (t.pip && pip) pip.exit({}); if (t.view) destroyView(t.view); }
       this.tabs = [];
       destroyView(this.ui);   // a closed BaseWindow does not free its views by itself
       const i = wins.indexOf(this); if (i >= 0) wins.splice(i, 1);
@@ -260,13 +262,14 @@ class Win {
     const w = this.win; if (w.isDestroyed() || this.ui.webContents.isDestroyed()) return;
     const { width, height } = w.getContentBounds();
     const t = this.active();
-    if (t && t.view) {
+    if (t && t.view && !t.pip) {
       const flush = this.htmlFs || isNewtab(t.url);
       const top = this.stripH;
       t.view.setBounds(flush ? { x: 0, y: 0, width, height } : { x: 0, y: top, width, height: Math.max(0, height - top) });
     }
     this.ui.setVisible(!this.htmlFs);
-    const uh = this.uiExpanded === true ? height : typeof this.uiExpanded === 'number' ? Math.min(height, this.uiExpanded)
+    // the tab's page is in the picture-in-picture window: the bar covers its place with a note (toolbar.js)
+    const uh = (t && t.pip) || this.uiExpanded === true ? height : typeof this.uiExpanded === 'number' ? Math.min(height, this.uiExpanded)
       : this.stripH;
     this.ui.setBounds({ x: 0, y: 0, width, height: uh });
   }
@@ -277,7 +280,7 @@ class Win {
     const t = this.active();
     const host = t && !isNewtab(t.url) && /^https?:/i.test(t.url) ? hostOf(t.url) : '';
     const col = host ? tintCache.get(host) : null;
-    if (host && !col && !t.loading && !t.tintBusy && t.view) this.sampleTint(t, host);
+    if (host && !col && !t.loading && !t.tintBusy && t.view && !t.pip) this.sampleTint(t, host);
     const key = col ? col.join(',') : '';
     if (key === (this.tint || '')) return;
     this.tint = key;
@@ -324,6 +327,7 @@ class Win {
           audible: !!(x.view && !x.view.webContents.isDestroyed() && x.view.webContents.isCurrentlyAudible())
         })),
         activeId: this.activeId,
+        pipHere: !!(t && t.pip),
         url: shownUrl(url),
         isNewtab: isNewtab(url),
         isWeb: /^https?:/i.test(url),
@@ -395,16 +399,17 @@ class Win {
     this.activeId = id;
     closeExtPopup();
     if (t.discarded || !t.view) { makeView(t); loadInto(t, t.url); }
-    this.win.contentView.addChildView(t.view, 0);   // below the toolbar
+    if (!t.pip) this.win.contentView.addChildView(t.view, 0);   // below the toolbar (not while it is in picture in picture)
     t.lastActive = Date.now();
     this.layout();
-    if (isNewtab(t.url)) this.focusAddress(); else t.view.webContents.focus();
+    if (isNewtab(t.url)) this.focusAddress(); else if (!t.pip) t.view.webContents.focus();
     this.pushState(); saveSessionSoon();
   }
 
   /* take a tab out of this window without destroying it (it is moving to another window) */
   releaseTab(tab) {
     const i = this.tabs.indexOf(tab); if (i < 0) return;
+    if (tab.pip && pip) pip.exit({});   // its page comes back from picture in picture first
     this.tabs.splice(i, 1);
     if (tab.view) { try { this.win.contentView.removeChildView(tab.view); } catch (e) {} }
     if (this.activeId === tab.id) {
@@ -555,7 +560,7 @@ function makeView(tab, fromOpener) {
   wc.on('input-event', (e, i) => { if (extPopup && (i.type === 'mouseDown' || i.type === 'keyDown')) closeExtPopup(); });
   wc.on('before-input-event', (e, input) => { if (handleKey(tab.win, input)) e.preventDefault(); });
   wc.on('found-in-page', (e, r) => { const w = tab.win; if (w.ui && !w.ui.webContents.isDestroyed()) w.ui.webContents.send('found', { active: r.activeMatchOrdinal, matches: r.matches }); });
-  wc.on('enter-html-full-screen', () => { const w = tab.win; w.htmlFs = true; w.win.setFullScreen(true); w.layout(); });
+  wc.on('enter-html-full-screen', () => { if (tab.pip) return; const w = tab.win; w.htmlFs = true; w.win.setFullScreen(true); w.layout(); });
   wc.on('leave-html-full-screen', () => { const w = tab.win; w.htmlFs = false; w.win.setFullScreen(false); w.layout(); });
   wc.on('render-process-gone', (e, d) => { if (d.reason !== 'clean-exit') { tab.title = T('تعطلت الصفحة، حدّثها', 'Page crashed, reload it'); upd(); } });
   wc.on('did-fail-load', (e, code, desc, url, isMain) => {
@@ -582,7 +587,7 @@ function loadInto(tab, url) {
 
 /* memory saver: tabs you haven't looked at for a while go to sleep (their RAM is freed) */
 function discard(t) {
-  if (!t.view || t.id === t.win.activeId) return;
+  if (!t.view || t.id === t.win.activeId || t.pip) return;
   const wc = t.view.webContents;
   if (wc.isCurrentlyAudible() || wc.isDevToolsOpened()) return;
   destroyView(t.view);
@@ -851,35 +856,35 @@ function shortcutKey(i) {
   const map = { Equal: '=', Minus: '-', NumpadAdd: '+', NumpadSubtract: '-', Numpad0: '0' };
   return map[code] || (i.key || '').toLowerCase();
 }
-/* Picture in picture: the video under (x, y), else the one playing, else the biggest; again = back to the page.
-   Run with a user gesture (the shortcut / the menu), in the main page first, then in its frames (embedded players). */
-const PIP_JS = (x, y) => `(async () => {
-  try {
-    if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return 'exit'; }
-    const area = v => { const r = v.getBoundingClientRect(); return r.width * r.height; };
-    const vids = [...document.querySelectorAll('video')].filter(v => v.readyState > 0 && !v.disablePictureInPicture && area(v) > 0);
-    const x = ${+x || -1}, y = ${+y || -1};
-    let v = x >= 0 ? vids.find(v => { const r = v.getBoundingClientRect(); return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom; }) : null;
-    if (!v) v = vids.filter(v => !v.paused).sort((a, b) => area(b) - area(a))[0] || vids.sort((a, b) => area(b) - area(a))[0];
-    if (!v) return 'none';
-    await v.requestPictureInPicture(); return 'on';
-  } catch (e) { return 'error ' + e.name; }
-})()`;
+/* Picture in picture (src/pip.js): the video under (x, y), else the one playing, else the biggest, in 3zT's own small
+   window; again = back to the page. From Alt+P and the video's right-click menu. */
+let pip = null;
+function pipModule() {
+  if (pip) return pip;
+  pip = require('./pip')({
+    settings, icon: ICON_OPT, preload: PRELOAD_PIP, file: PIP_FILE,
+    changed: tab => { const w = tab.win; if (w && !w.win.isDestroyed()) { w.layout(); w.pushState(); } },
+    // the page is back: in its tab's place if that tab is showing (focus: show that tab, the close button doesn't)
+    returned: (tab, { focus }) => {
+      const w = tab.win;
+      if (!w || w.win.isDestroyed() || !w.tabs.includes(tab) || !tab.view || tab.view.webContents.isDestroyed()) return;
+      if (w.activeId === tab.id) w.win.contentView.addChildView(tab.view, 0);
+      w.layout(); w.pushState();
+      if (focus) {
+        if (w.activeId !== tab.id) w.activate(tab.id);
+        if (w.win.isMinimized()) w.win.restore();
+        w.win.show(); w.win.focus(); tab.view.webContents.focus();
+      }
+    }
+  });
+  return pip;
+}
 async function togglePip(wc, x, y) {
-  if (!wc || wc.isDestroyed()) return 'none';
-  const frames = [wc.mainFrame, ...wc.mainFrame.framesInSubtree.filter(f => f !== wc.mainFrame)];
-  // one already playing somewhere on the page (an embedded player too): back to the page, nothing else
-  for (const f of frames) {
-    let r = false; try { r = await f.executeJavaScript('document.pictureInPictureElement ? document.exitPictureInPicture().then(() => true, () => false) : false', true); } catch (e) {}
-    if (r) return 'exit';
-  }
-  for (const f of frames) {
-    let r = 'none';
-    try { r = await f.executeJavaScript(f === wc.mainFrame ? PIP_JS(x, y) : PIP_JS(-1, -1), true); } catch (e) { r = 'error ' + e.message; }
-    if (process.env.ZEUS_TEST) console.log('[3zT] pip', r);
-    if (r !== 'none') return r;
-  }
-  return 'none';
+  const t = wc && !wc.isDestroyed() ? tabOfWc(wc) : null;
+  if (!t || !/^https?:/i.test(t.url || '')) return 'none';
+  const r = await pipModule().toggle(t, x, y);
+  if (process.env.ZEUS_TEST || process.env.ZEUS_E2E) console.log('[3zT] pip', r);
+  return r;
 }
 function handleKey(w, i) {
   if (i.type !== 'keyDown' || !w) return false;
@@ -942,7 +947,7 @@ const forgetReader = tabId => { if (readerDocs) for (const [k, v] of readerDocs)
 const thumbs = new Map();   // tabId -> { url, seq, img (data URL), t }
 async function captureThumb(w) {
   const t = w && w.active();
-  if (!t || !t.view || w.private || t.discarded || !/^https?:/i.test(t.url || '')) return;   // websites only (never the passwords page or other own pages)
+  if (!t || !t.view || t.pip || w.private || t.discarded || !/^https?:/i.test(t.url || '')) return;   // websites only (never the passwords page or other own pages)
   const old = thumbs.get(t.id);
   if (old && old.url === t.url && old.seq === (t.navSeq || 0) && Date.now() - old.t < 60000) return;
   try {
@@ -1920,7 +1925,13 @@ function siteCfg(host) {
       maxQuality: d.ytMaxQuality !== false, dislikes: d.ytDislikes !== false } : null,
     twitch: isTwitch(host) && adsOn && d.twitchAds !== false && !d.adAllow.includes('twitch.tv'),
     cookies: d.cookiePopups !== false && !!host && !d.adAllow.includes(AdBlocker.site(host)) && AC.ready(),
-    pip: d.pipButton !== false && !isYT(host),
+    // TikTok / Instagram: highest quality (its own setting) and no sponsored posts (with the ad blocker, like YouTube's ads)
+    social: (() => {
+      const site = /(^|\.)tiktok\.com$/i.test(host) ? 'tiktok' : /(^|\.)instagram\.com$/i.test(host) ? 'instagram' : null;
+      if (!site) return null;
+      const hq = d.hqVideo !== false, ads = adsOn && !d.adAllow.includes(site + '.com');
+      return hq || ads ? { site, hq, ads } : null;
+    })(),
     reader: d.reader !== false
   };
 }
@@ -2069,6 +2080,7 @@ function setupIpc() {
     x.activate(t.id);   // the page itself is not loaded again
     if (x !== w) { if (x.win.isMinimized()) x.win.restore(); x.win.focus(); }
   });
+  ipcMain.on('pip:back', e => { const w = uiWin(e); const t = w && w.active(); if (t && t.pip && pip) pip.exit({ focus: true }); });
   ipcMain.on('ui:expand', (e, on) => { const w = uiWin(e); if (!w) return; w.uiExpanded = typeof on === 'number' ? on : !!on; w.layout(); });
   ipcMain.on('win', (e, cmd) => {
     const w = uiWin(e); if (!w) return;
@@ -2187,7 +2199,7 @@ function setupIpc() {
     if (key === 'ytMaxQuality') settings.data.ytMaxQuality = !!val;
     if (key === 'ytDislikes') settings.data.ytDislikes = !!val;
     if (key === 'cookiePopups') settings.data.cookiePopups = !!val;
-    if (key === 'pipButton') settings.data.pipButton = !!val;
+    if (key === 'hqVideo') settings.data.hqVideo = !!val;
     if (key === 'reader') { settings.data.reader = !!val; for (const x of wins) x.pushState(); }
     if (key === 'twitchAds') settings.data.twitchAds = !!val;
     if (key === 'ytClean' && val && typeof val === 'object') { const o = {}; for (const k of Object.keys(FEAT.YT_CLEAN)) if (val[k]) o[k] = true; settings.data.ytClean = o; pushSiteCfg(); }
@@ -2204,7 +2216,7 @@ function setupIpc() {
     settings.save(); settings.flush();
     for (const w of wins) w.pushState();
     settingsChanged();
-    if (key === 'lang') { for (const t of allTabs()) if (t.view && isInternal(t.url)) t.view.webContents.send('lang', settings.data.lang); for (const mw of mediaWins.values()) mw.webContents.send('lang', settings.data.lang); }
+    if (key === 'lang') { for (const t of allTabs()) if (t.view && isInternal(t.url)) t.view.webContents.send('lang', settings.data.lang); for (const mw of mediaWins.values()) mw.webContents.send('lang', settings.data.lang); if (pip) pip.lang(); }
   });
 
   ipcMain.handle('ext:list', e => (uiWin(e) ? listExtensions() : []));
@@ -2371,7 +2383,7 @@ function setupSettingsIpc() {
     return {
       lang: d.lang, perfMode: d.perfMode || 'normal', perfActive: FAST ? 'fast' : 'normal',
       memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, darkPages: d.darkPages !== false, darkPagesActive: DARK_PAGES, siteFont: !!d.siteFont, restoreTabs: !!d.restoreTabs,
-      adblock: d.adblock !== false, cookiePopups: d.cookiePopups !== false, pipButton: d.pipButton !== false, reader: d.reader !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
+      adblock: d.adblock !== false, cookiePopups: d.cookiePopups !== false, hqVideo: d.hqVideo !== false, reader: d.reader !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytMaxQuality: d.ytMaxQuality !== false, ytDislikes: d.ytDislikes !== false, ytClean: d.ytClean || {},
       passkeys: !!d.passkeys, dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,

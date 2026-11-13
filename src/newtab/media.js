@@ -191,7 +191,9 @@ async function preview(u) {
   draw();
   const r = await zeus.mediaInfo(u);
   if (my !== infoSeq) return;
-  info = Object.assign({ url: u, loading: false }, r || {});
+  // info.url stays the link you gave: yt-dlp answers with the site's own form of it (YouTube drops &list=, &pp=, &t=...),
+  // and the download is matched to this preview by the link in the box. Using its form here lost the chosen part.
+  info = Object.assign({}, r || {}, { url: u, loading: false });
   $('card').className = 'card';
   if (!r || r.error) {
     $('ptitle').textContent = u; $('pby').textContent = '';

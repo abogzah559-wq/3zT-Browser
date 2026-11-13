@@ -73,12 +73,7 @@ html[dir=rtl] .tab .tt{-webkit-mask-image:linear-gradient(to right,transparent 0
   border:1px solid rgba(255,255,255,.12);box-shadow:0 12px 32px rgba(0,0,0,.5);pointer-events:none;opacity:0;transform:translateY(-4px);transition:opacity .13s ease,transform .13s ease}
 #tprev.on{opacity:1;transform:none}
 #tprev[hidden]{display:none}
-#tprev .img{height:0;background:#0b0b0f center top/cover no-repeat;border-bottom:1px solid rgba(255,255,255,.06)}
-#tprev.pic .img{height:139px}
-#tprev .tx{padding:9px 12px 10px}
-#tprev .t{font-size:13px;font-weight:600;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;unicode-bidi:plaintext}
-#tprev .h{font-size:11.5px;color:rgba(255,255,255,.55);margin-top:3px;direction:ltr;text-align:start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-[dir=rtl] #tprev .h{text-align:right}
+#tprev .img{height:140px;background:#0b0b0f center top/cover no-repeat}
 /* tab search */
 #drop.tabs{width:420px;padding:0}
 #drop .tsq{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;padding:10px 12px;background:rgba(22,22,28,.99);border-bottom:1px solid rgba(255,255,255,.08)}
@@ -303,3 +298,9 @@ html[dir=rtl] #perm .pbar{transform-origin:right}
   .ib,.wb,.mi,.tab .x{transition:background-color .12s ease,color .12s ease,transform .1s ease}
   .ib:active{transform:scale(.9)}
 }
+/* the tab's page is in the picture-in-picture window: its place says so */
+#pipNote{position:fixed;left:0;right:0;bottom:0;top:var(--strip,56px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:#111114;color:rgba(255,255,255,.72);font-size:14px}
+#pipNote[hidden]{display:none}
+#pipNote svg{width:44px;height:44px;fill:none;stroke:rgba(255,255,255,.35);stroke-width:1.4}
+#pipBack{all:unset;cursor:pointer;padding:8px 18px;border-radius:999px;background:rgba(255,255,255,.1);color:#fff;font-size:13px;font-weight:600}
+#pipBack:hover{background:rgba(255,255,255,.18)}

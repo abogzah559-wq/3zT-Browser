@@ -62,6 +62,9 @@ ui.on('state', st => {
   $('mediaBtn').hidden = !S.media;
   $('readerBtn').hidden = !(S.reader || S.readerOn);
   $('readerBtn').classList.toggle('on', !!S.readerOn);
+  // the page of this tab is in the picture-in-picture window: a note in its place, with a way back
+  $('pipNote').hidden = !S.pipHere;
+  if (S.pipHere) { $('pipMsg').textContent = L('الفيديو شغّال في صورة داخل صورة', 'This video is playing in picture in picture'); $('pipBack').textContent = L('رجّعه هنا', 'Bring it back'); }
   const shOff = !S.adblock || S.adSiteOff;
   $('shield').classList.toggle('off', shOff);
   $('shCount').textContent = !shOff && S.blocked ? (S.blocked > 99 ? '99+' : S.blocked) : '';
@@ -131,7 +134,7 @@ function favHtml(t) {
 }
 function renderTabs() {
   const html = S.tabs.map(t => `
-    <div class="tab${t.id === S.activeId ? ' on' : ''}${t.discarded ? ' zz' : ''}${t.pinned ? ' pin' : ''}" data-id="${t.id}" title="${esc(t.title)}${t.url ? '\n' + esc(t.url) : ''}">
+    <div class="tab${t.id === S.activeId ? ' on' : ''}${t.discarded ? ' zz' : ''}${t.pinned ? ' pin' : ''}" data-id="${t.id}">
       <span class="fi">${favHtml(t)}</span>
       <span class="tt">${esc(t.title)}</span>
       ${t.audible || t.muted ? `<button class="snd" data-mute="${t.id}" title="${t.muted ? L('تشغيل الصوت', 'Unmute') : L('كتم الصوت', 'Mute')}">${t.muted ? ICO.mute : ICO.vol}</button>` : ''}
@@ -263,6 +266,7 @@ $('reload').onclick = () => ui.send('tab', S.loading ? 'stop' : 'reload');
 $('star').onclick = () => ui.send('tab', 'bookmark');
 $('mediaBtn').onclick = () => ui.send('media:open');
 $('readerBtn').onclick = () => ui.send('reader:toggle');
+$('pipBack').onclick = () => ui.send('pip:back');
 $('tabSearch').onclick = () => (openKind === 'tabs' ? closeDrop() : openDrop('tabs', $('tabSearch')));
 ui.on('tab-search', () => { if (openKind !== 'tabs') openDrop('tabs', $('tabSearch')); });
 
@@ -276,23 +280,22 @@ function hidePrev() {
   pvShown = false; tprev.classList.remove('on');
   setTimeout(() => { if (!pvShown) { tprev.hidden = true; if (!openKind) expand(false); } }, 140);
 }
+/* only the picture of the tab: no card for the tab you are on, or for one with no picture yet */
 async function showPrev(el) {
   const id = +el.dataset.id, t = S.tabs.find(x => x.id === id); if (!t || dragging || openKind) return;
   pvId = id;
-  tprev.querySelector('.t').textContent = t.title || t.url || L('تبويب جديد', 'New tab');
-  let host = ''; try { host = /^https?:/i.test(t.url) ? new URL(t.url).hostname.replace(/^www\./, '') : t.url; } catch (e) {}
-  tprev.querySelector('.h').textContent = host || '';
-  tprev.classList.remove('pic'); tprev.querySelector('.img').style.backgroundImage = '';
+  if (id === S.activeId) { if (pvShown) hidePrev(); pvId = id; return; }
+  const p = await ui.invoke('tabs:preview', id);
+  if (pvId !== id || dragging || openKind) return;
+  el = list.querySelector(`.tab[data-id="${id}"]`); if (!el) return;   // the strip may have been drawn again meanwhile
+  if (!p || !p.img) { if (pvShown) hidePrev(); pvId = id; return; }
+  tprev.querySelector('.img').style.backgroundImage = `url("${p.img}")`;
   const r = el.getBoundingClientRect();
   tprev.hidden = false;
   const left = Math.max(8, Math.min(innerWidth - 256, en() ? r.left : r.right - 248));
   tprev.style.left = left + 'px';
   if (!permOn && !toastOn) ui.send('ui:expand', stripH + 200);
   requestAnimationFrame(() => { if (pvId === id) { tprev.classList.add('on'); pvShown = true; } });
-  if (id !== S.activeId) {
-    const p = await ui.invoke('tabs:preview', id);
-    if (pvId === id && p && p.img) { tprev.querySelector('.img').style.backgroundImage = `url("${p.img}")`; tprev.classList.add('pic'); }
-  }
 }
 list.addEventListener('mouseover', e => {
   const el = e.target.closest('.tab'); if (!el || +el.dataset.id === pvId) return;

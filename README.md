@@ -87,7 +87,7 @@ delete it.
   site's own dark theme when it has one and Chromium's automatic dark mode otherwise.
 - Tabs above a floating toolbar that takes the colour of the current site. Pinned tabs, drag a tab out
   into a new window or onto another window, and edge snapping while dragging.
-- **Tab hover cards:** hovering a tab shows its full title, site and a small preview image.
+- **Tab hover cards:** hovering a tab shows a small preview image of its page (no text overlay).
 - **Tab search** (`Ctrl+Shift+A` or the arrow next to the tabs): searches the open tabs of every window,
   labelled by window, and recently closed tabs. Selecting a result switches to the tab without
   reloading it. Incognito tabs are only listed from their own incognito window.
@@ -95,8 +95,12 @@ delete it.
   alone, with its images and captions in their original order, in a layout tuned for long Arabic and
   English text (per-paragraph text direction, adjustable size and width, reading progress, estimated
   reading time).
-- **Picture in picture:** a button appears over videos on hover; `Alt+P` or the video's context menu
-  work on any site, including YouTube.
+- **Picture in picture** (`Alt+P` or the video's context menu, on any site including embedded players):
+  the video plays in 3zT's own always-on-top window with rounded corners and a thin frame, instead of
+  Chromium's built-in one. It can be moved and resized from its edges, and it reopens at the last position
+  and size regardless of the video's aspect ratio. Controls appear on hover: back to the tab, close,
+  play/pause and a seek bar; on YouTube and YouTube Music also previous/next track. The tab stays in the
+  strip and shows a "bring it back" note in its place.
 - Address bar with history, previous searches and Google suggestions; preconnects to likely targets.
 - In-page translation (Google Translate), find in page, per-site zoom, printing, full screen,
   developer tools, private windows.
@@ -110,7 +114,9 @@ delete it.
 
 - Network-level blocker using the public **EasyList** and **EasyPrivacy** lists, refreshed in the
   background. It can be turned off per site from the shield button, which also shows a counter.
-- YouTube and Twitch video ads are blocked.
+- YouTube and Twitch video ads are blocked. Sponsored posts in the TikTok and Instagram feeds are removed
+  from the feed data before the page renders it, so no empty slots are left (follows the ad blocker and
+  its per-site switch).
 - **Cookie popups:** consent dialogs are answered with "reject" / "necessary only" by DuckDuckGo's
   Autoconsent rules, the same way a person would click them, so pages are not left locked behind a
   hidden overlay. The rules are loaded only on pages that show signs of a consent manager. Sites excluded
@@ -127,6 +133,14 @@ delete it.
 - **Ambient light**: the glow around the video that follows the picture.
 - **Highest quality automatically**: every video starts at the best available quality instead of
   *Auto*; a quality selected manually is kept for that video.
+
+### TikTok and Instagram
+
+- **Highest quality playback** (on by default, *Settings → General*): both sites send several qualities of
+  each video and let their player pick, usually a low one in a desktop window. The video data is adjusted
+  before the player reads it so only the highest quality this computer can decode is offered (TikTok's
+  stream list, Instagram's DASH manifest and file list). HEVC streams are only chosen when the system can
+  decode them.
 - **Dislike count** from the Return YouTube Dislike project.
 - Twitch ad blocking.
 
@@ -198,9 +212,11 @@ build time with integrity checks.
 ```
 src/
   main.js              main process: windows, tabs, toolbar state, settings, permissions, IPC,
-                       reader view, tab previews and search, picture in picture, cookie-popup wiring
+                       reader view, tab previews and search, cookie-popup wiring
+  pip.js               picture in picture: the tab's page moves into a small framed window showing only
+                       the video (ui/pip.html draws the frame and controls, preload-pip.js its bridge)
   preload-newtab.js    preload for every tab: the internal pages' API, and in websites the isolated-world
-                       features (YouTube, passkey policy, reader detection, picture-in-picture button,
+                       features (YouTube, TikTok/Instagram quality, passkey policy, reader detection,
                        cookie-popup handling)
   preload-ui.js        allow-listed bridge for the toolbar
   features.js          SponsorBlock, Return YouTube Dislike, Clean YouTube, Ambient light, Twitch
@@ -386,14 +402,17 @@ every push the Windows workflow:
    ffprobe), a server without range support, HEVC to H.264 conversion, the window layout, the address-bar
    button, and process cleanup when the window closes;
 7. tests the passkey policy, including blank frames and the `toString` check;
-8. tests the reader view (content, images, captions, sanitizing), picture in picture, tab hover cards,
+8. tests the reader view (content, images, captions, sanitizing), picture in picture (window, controls,
+   restoring the page, remembered position and size), tab hover cards,
    tab search across windows and the cookie-popup handling;
 9. tests silent updating end to end with a locally signed fake release;
 10. uninstalls and verifies removal, then runs the memory, speed and resource benchmarks.
 
 [`tests/media-real.mjs`](tests/media-real.mjs) runs the downloader engine against real YouTube and
-TikTok videos (manually or on `diag/**` branches). YouTube frequently refuses GitHub's datacenter
-addresses, so those results are informational.
+TikTok videos (manually or on `diag/**` branches). [`tests/sites-real.mjs`](tests/sites-real.mjs) runs
+the browser itself there: TikTok's playback resolution with and without the quality setting, and picture in
+picture on a real YouTube page. YouTube frequently refuses GitHub's datacenter addresses, so those results
+are informational.
 
 ## Known limitations
 

@@ -552,20 +552,59 @@ async function features() {
     await go(B + '/plain', true); await find(u => u.startsWith(B + '/plain'), 30); await sleep(3000);
     const noBtn = await (async () => { const tb = await toolbar(); const v = await tb.ev('getComputedStyle(document.getElementById("readerBtn")).display === "none" && getComputedStyle(document.getElementById("mediaBtn")).display === "none"'); tb.close(); return v; })();
     ok('reader view: no book button (and no download button) on a page that is not an article', noBtn === true);
-    // ---- picture in picture ----
+    // ---- picture in picture: Alt+P, 3zT's own window ----
     await go(B + '/video', true);
     const vt = await find(u => u.startsWith(B + '/video'), 30);
     if (vt && fs.existsSync(path.join(OUT, 'clip.mp4'))) {
       const vc = await connect(vt); await sleep(2500);
-      for (const [x, y] of [[300, 200], [330, 220]]) { await vc.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y }); await sleep(250); }
-      await sleep(300);
-      for (const type of ['mouseMoved', 'mousePressed', 'mouseReleased']) await vc.send('Input.dispatchMouseEvent', { type, x: 360, y: 64, button: 'left', clickCount: 1 });
-      const pip = await poll(() => vc.ev('!!document.pictureInPictureElement'), 4000);
-      const why = pip ? '' : await vc.ev(`JSON.stringify({ en: document.pictureInPictureEnabled, rs: document.querySelector('video').readyState, r: (() => { const r = document.querySelector('video').getBoundingClientRect(); return [r.left, r.top, r.width, r.height]; })(), dpr: devicePixelRatio, at: (document.elementFromPoint(360, 64) || {}).tagName })`);
-      ok('picture in picture: the button over a video opens it', !!pip, why);
-      await vc.ev('document.pictureInPictureElement ? document.exitPictureInPicture().then(() => 1) : 1');
+      const altP = async () => { for (const type of ['rawKeyDown', 'keyUp']) await vc.send('Input.dispatchKeyEvent', { type, modifiers: 1, key: 'p', code: 'KeyP', windowsVirtualKeyCode: 80, nativeVirtualKeyCode: 80 }); };
+      const pipPage = async () => (await targets()).find(t => t.type === 'page' && t.url.includes('ui/pip.html'));
+      const noButton = await vc.ev(`[...document.querySelectorAll('body > div')].every(d => !d.shadowRoot && getComputedStyle(d).zIndex !== '2147483647')`);
+      ok('picture in picture: no button over the video (only Alt+P and the right-click menu)', noButton === true);
+      await altP();
+      const filled = await poll(() => vc.ev(`(() => { const v = document.querySelector('video[data-zpip]'); if (!v) return null; const r = v.getBoundingClientRect();
+        return v.matches(':popover-open') && Math.abs(r.width - innerWidth) < 2 && Math.abs(r.height - innerHeight) < 2 ? innerWidth + 'x' + innerHeight : null; })()`), 8000);
+      const pt = await poll(pipPage, 8000);
+      await sleep(1000);
+      const small = await vc.ev(`(() => { const v = document.querySelector('video[data-zpip]'); if (!v) return null; const r = v.getBoundingClientRect(); return [innerWidth, innerHeight, Math.round(r.width), Math.round(r.height)].join(','); })()`);
+      const [iw, ih, rw, rh] = String(small || '').split(',').map(Number);
+      await shot(vc, 'pip-page');
+      ok('picture in picture: Alt+P puts the video alone in 3zT\'s own window', !!pt && !!filled && iw > 200 && iw < 700 && ih > 100 && ih < 500 && rw === iw && rh === ih, `window ${!!pt}, video ${filled}, in the small window ${small}`);
+      const note = await (async () => { const tb = await toolbar(); const v = await tb.ev(`!document.getElementById('pipNote').hidden && S.pipHere`); tb.close(); return v; })();
+      ok('picture in picture: the tab shows a note with a way back', note === true);
+      if (pt) {
+        const pc = await connect(pt);
+        await shot(pc, 'pip-window');
+        const s1 = await poll(() => pc.ev('pip.state()'), 5000);
+        await pc.ev(`document.getElementById('play').click(), 1`); await sleep(800);
+        const s2 = await pc.ev('pip.state()');
+        const ui = await pc.ev(`JSON.stringify({ prev: document.getElementById('prev').hidden, next: document.getElementById('next').hidden, dir: getComputedStyle(document.getElementById('ui')).direction })`);
+        ok('picture in picture: play / pause button; no previous / next on a site without them', !!(s1 && s2 && s1.paused !== s2.paused) && ui === JSON.stringify({ prev: true, next: true, dir: 'ltr' }), JSON.stringify({ s1, s2, ui }));
+        // a new place and size (what a drag ends with) is kept for the next video
+        const want = await pc.ev(`(async () => { const b = await pip.testBounds({ x: 120, y: 140, width: 520, height: 310 }); return JSON.stringify(b); })()`);
+        await pc.ev(`document.getElementById('back').click(), 1`).catch(() => {});
+        pc.close();
+        const back = await poll(async () => !(await pipPage()) && (await vc.ev(`!document.querySelector('[data-zpip]') && !document.documentElement.hasAttribute('data-zpip-on') && !document.querySelector('video').hasAttribute('popover')`)), 8000);
+        ok('picture in picture: "back to tab" puts the video back in the page as it was', !!back);
+        // again with Alt+P, and Alt+P once more brings it back
+        await vc.ev('document.querySelector("video").play().then(() => 1, () => 1)');
+        await altP(); const again = await poll(pipPage, 8000);
+        await sleep(800);
+        const inner = await vc.ev('innerWidth + "x" + innerHeight');
+        ok('picture in picture: it opens again where it was left, with the same size', !!want && JSON.parse(want).width === 520 && JSON.parse(want).height === 310 && inner === (520 - 16) + 'x' + (310 - 16), `set ${want}, page inside ${inner}`);
+        await altP(); const gone = await poll(async () => !(await pipPage()), 8000);
+        ok('picture in picture: Alt+P opens it and Alt+P again closes it', !!again && !!gone, `opened ${!!again}, closed ${!!gone}`);
+        // closing the tab while its video is out: the window goes with it, the browser carries on
+        await vc.ev('document.querySelector("video").play().then(() => 1, () => 1)');
+        await altP(); const open3 = await poll(pipPage, 8000);
+        { const tb = await toolbar(); await tb.ev(`document.querySelector('.tab[data-id="' + S.activeId + '"] [data-close]').click(), 1`); tb.close(); }
+        const closed = await poll(async () => !(await pipPage()) && !(await targets()).some(t => t.url.startsWith(B + '/video')), 8000);
+        const alive = await (async () => { const tb = await toolbar(); const v = await tb.ev('S.tabs.length > 0 && !S.pipHere'); tb.close(); return v; })();
+        ok('picture in picture: closing its tab closes the window too', !!open3 && !!closed && alive === true, `opened ${!!open3}, closed ${!!closed}, browser ${alive}`);
+        await go(B + '/video', true); await find(u => u.startsWith(B + '/video'), 30);
+      }
       vc.close();
-    } else ok('picture in picture: the button over a video opens it', false, 'no video page');
+    } else ok('picture in picture: Alt+P puts the video alone in 3zT\'s own window', false, 'no video page');
     // ---- tab cards and tab search ----
     const tb = await toolbar();
     await tb.ev(`ui.send('tab', 'activate', S.tabs.find(t => t.url.includes('/video')).id), 1`); await sleep(800);
@@ -579,8 +618,8 @@ async function features() {
     await sleep(300);
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 }); await sleep(200);
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y });
-    const card = await poll(async () => { const v = await tb.ev(`(() => { const p = document.getElementById('tprev'); return p.classList.contains('on') && p.classList.contains('pic') ? p.querySelector('.t').textContent : null; })()`); return v; }, 8000);
-    ok('tab hover card: title and a picture of the tab', /video page/.test(card || ''), card || await tb.ev(`JSON.stringify({ cls: document.getElementById('tprev').className, t: document.querySelector('#tprev .t').textContent })`));
+    const card = await poll(async () => { const v = await tb.ev(`(() => { const p = document.getElementById('tprev'); return p.classList.contains('on') && /data:image/.test(p.querySelector('.img').style.backgroundImage) ? p.textContent.trim() + '|' + document.querySelectorAll('.tab[title]').length : null; })()`); return v; }, 8000);
+    ok('tab hover card: only the picture of the tab (no title, no address)', card === '|0', card || await tb.ev(`JSON.stringify({ cls: document.getElementById('tprev').className, img: document.querySelector('#tprev .img').style.backgroundImage.slice(0, 40) })`));
     await shot(tb, 'tab-card');
     await tb.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 900, y: 700 }); await sleep(300);
     const bars = async () => (await targets()).filter(t => t.type === 'page' && t.url.includes('ui/toolbar.html'));

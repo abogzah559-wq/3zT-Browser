@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; script-src 'self'">
+<title>3zT</title>
+<link rel="stylesheet" href="pip.css">
+</head>
+<body>
+<div id="frame"></div>
+<div id="ui" dir="ltr">
+  <div class="top">
+    <button class="ib" id="back"><svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4H11v2H6.5a.5.5 0 0 0-.5.5v11c0 .28.22.5.5.5h11a.5.5 0 0 0 .5-.5V13h2v4.5a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5zM14 4h6v6h-2V7.41l-5.3 5.3-1.4-1.42L16.58 6H14z"/></svg></button>
+    <span class="sp"></span>
+    <button class="ib" id="close"><svg viewBox="0 0 24 24"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></svg></button>
+  </div>
+  <div class="mid">
+    <button class="ib" id="prev" hidden><svg viewBox="0 0 24 24"><path d="M6 5h2v14H6zM19 5.8v12.4a.8.8 0 0 1-1.22.68L9.6 13.7a.8.8 0 0 1 0-1.36l8.18-5.22A.8.8 0 0 1 19 5.8z"/></svg></button>
+    <button class="big" id="play">
+      <svg viewBox="0 0 24 24" id="icoPlay"><path d="M8 5.6v12.8a.8.8 0 0 0 1.22.68l10.1-6.4a.8.8 0 0 0 0-1.36L9.22 4.92A.8.8 0 0 0 8 5.6z"/></svg>
+      <svg viewBox="0 0 24 24" id="icoPause" hidden><rect x="6.5" y="5" width="4" height="14" rx="1"/><rect x="13.5" y="5" width="4" height="14" rx="1"/></svg>
+    </button>
+    <button class="ib" id="next" hidden><svg viewBox="0 0 24 24"><path d="M16 5h2v14h-2zM5 5.8v12.4a.8.8 0 0 0 1.22.68l8.18-5.22a.8.8 0 0 0 0-1.36L6.22 5.12A.8.8 0 0 0 5 5.8z"/></svg></button>
+  </div>
+  <div class="bot" id="bot" hidden>
+    <span id="time"></span>
+    <div id="bar"><i id="fill"></i></div>
+  </div>
+</div>
+<script src="pip.js"></script>
+</body>
+</html>
