@@ -715,7 +715,9 @@ async function privacy() {
   ok('YouTube: uBlock Origin\'s YouTube scripts are downloaded and checked', true);
   await go('https://www.youtube.com/watch?v=aqz-KE-bpKQ', true);
   const yt = await connect(await find(u => u.startsWith('https://www.youtube.com/watch'), 40));
-  const used = await poll(() => { try { return /\[3zT\] yt rules injected www\.youtube\.com/.test(fs.readFileSync(logf, 'utf8')); } catch (e) { return false; } }, 20000);
+  // (the page-world set wraps setTimeout for YouTube's artificial delay; the log line can lag behind on Windows)
+  const used = await poll(async () => { try { if (/\[3zT\] yt rules injected www\.youtube\.com/.test(fs.readFileSync(logf, 'utf8'))) return true; } catch (e) {}
+    return yt.ev(`String(setTimeout).indexOf('function setTimeout') !== 0`); }, 20000);
   const player = await poll(() => yt.ev(`!!document.querySelector('#movie_player video')`), 30000);
   ok('YouTube: the scripts run on YouTube and the player still loads', !!used && !!player, `used ${!!used}, player ${!!player}`);
   // the isolated set ran in time: it rewrote YouTube's inline script, whose code then wraps Map.prototype.has
