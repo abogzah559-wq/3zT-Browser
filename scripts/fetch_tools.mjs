@@ -1,5 +1,5 @@
-// The video downloader's tools, shipped inside the setup (resources/tools) so nothing is fetched on first use:
-//   <out>/yt-dlp.exe, <out>/gallery-dl.exe, <out>/ffmpeg/{ffmpeg.exe, ffprobe.exe, *.dll}
+// The download tools, shipped inside the setup (resources/tools) so nothing is fetched on first use:
+//   <out>/yt-dlp.exe, <out>/gallery-dl.exe, <out>/ffmpeg/{ffmpeg.exe, ffprobe.exe, *.dll}, <out>/aria2c.exe
 // usage: node scripts/fetch_tools.mjs <out dir>   (GH_TOKEN optional, avoids API rate limits)
 // yt-dlp and gallery-dl are checked against the SHA-256 sums their releases publish.
 import fs from 'node:fs';
@@ -71,6 +71,8 @@ async function download(url, dest) {
     console.log(`::warning title=gallery-dl::${j.tag_name}: no published checksum to compare with (sha256 ${got})`);
   }
 }
+// aria2 (the engine for big downloads): a fixed release, checked against its pinned SHA-256
+const ARIA2 = { url: 'https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip', sha256: '67d015301eef0b612191212d564c5bb0a14b5b9c4796b76454276a4d28d9b288' };
 const zip = path.join(BIN, 'ff.zip');
 {
   const url = await asset('yt-dlp/FFmpeg-Builds', 'tags/latest', /^ffmpeg-master-latest-win64-gpl-shared\.zip$/);
@@ -89,4 +91,17 @@ const src = path.join(BIN, top, 'bin');
 for (const f of fs.readdirSync(src)) if (/^(ffmpeg|ffprobe)\.exe$|\.dll$/i.test(f)) fs.copyFileSync(path.join(src, f), path.join(BIN, 'ffmpeg', f));
 fs.rmSync(path.join(BIN, top), { recursive: true, force: true });
 fs.rmSync(zip, { force: true });
+{
+  const az = path.join(BIN, 'aria2.zip');
+  await download(ARIA2.url, az);
+  const got = crypto.createHash('sha256').update(fs.readFileSync(az)).digest('hex');
+  if (got !== ARIA2.sha256) throw new Error(`aria2 zip checksum mismatch ${got} != ${ARIA2.sha256}`);
+  console.log('aria2 1.37.0 zip sha256 ok');
+  execFileSync(TAR, ['-xf', 'aria2.zip'], { stdio: 'inherit', cwd: BIN });
+  const d = fs.readdirSync(BIN).find(x => x.startsWith('aria2-') && fs.statSync(path.join(BIN, x)).isDirectory());
+  fs.copyFileSync(path.join(BIN, d, 'aria2c.exe'), path.join(BIN, 'aria2c.exe'));
+  fs.copyFileSync(path.join(BIN, d, 'COPYING'), path.join(BIN, 'aria2-COPYING.txt'));   // its licence (GPL-2.0) goes with it
+  fs.rmSync(path.join(BIN, d), { recursive: true, force: true });
+  fs.rmSync(az, { force: true });
+}
 console.log('tools ready:', fs.readdirSync(BIN).join(', '), '| ffmpeg:', fs.readdirSync(path.join(BIN, 'ffmpeg')).join(', '));

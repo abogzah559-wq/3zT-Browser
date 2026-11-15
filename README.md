@@ -127,7 +127,8 @@ delete it.
 - **Empty ad slots are folded away**: when an ad's picture or frame is blocked, the box the page made for it
   is hidden together with wrappers that held nothing else. This also covers slots built by ad scripts served
   from rotating domains (an empty frame written next to a third-party script, with no picture or video in it
-  after a few seconds).
+  after a few seconds). Ad networks that move to a new domain every few days are also recognised by the
+  fixed shape of their addresses.
 - **Cookie popups:** consent dialogs are answered with "reject" / "necessary only" by DuckDuckGo's
   Autoconsent rules, the same way a person would click them, so pages are not left locked behind a
   hidden overlay. The rules are loaded only on pages that show signs of a consent manager. Sites excluded
@@ -153,12 +154,20 @@ delete it.
   stream list, Instagram's DASH manifest and file list). HEVC streams are only chosen when the system can
   decode them.
 - **Dislike count** from the Return YouTube Dislike project.
+- **Keeps playing:** YouTube's "Video paused. Continue watching?" is answered when YouTube paused a playing
+  video by itself (never after your own click), so playlists and autoplay continue.
 - Twitch ad blocking.
 
 ### Download manager
 
-- Native "Save as" dialog starting in the last folder used (optional), parallel connections, pause,
-  resume (also across restarts), cancel and retry.
+- Native "Save as" dialog starting in the last folder used (optional), pause, resume (also across
+  restarts), cancel and retry.
+- **Large files (5 MB and up) are downloaded by [aria2](https://github.com/aria2/aria2)** with up to 16
+  connections per file and automatic retries. Chromium starts every download and is only stopped once aria2
+  is receiving the same file (same size), so links aria2 cannot fetch — form posts, one-time links, servers
+  that refuse a second request — simply continue in Chromium. aria2 runs hidden, only while it has work,
+  listens on `127.0.0.1` behind a random secret, and closes with the browser after saving its progress.
+  Smaller files use Chromium's parallel downloading.
 - Toolbar list for the current session and a downloads page (`3zt://downloads`, `Ctrl+J`) with history
   and search.
 - Drag a finished file onto a website, the desktop or a folder.
@@ -232,7 +241,8 @@ src/
   preload-ui.js        allow-listed bridge for the toolbar
   features.js          SponsorBlock, Return YouTube Dislike, Clean YouTube, Ambient light, Twitch
   adblock.js           EasyList / EasyPrivacy host matcher with resource types
-  downloads.js         download manager
+  downloads.js         download manager (hands large files to aria2)
+  aria2.js             the aria2 helper process and its JSON-RPC connection
   media/engine.js      video / audio / photo downloader: yt-dlp, gallery-dl and FFmpeg orchestration
   media/detect.js      which pages show the downloader button
   updater.js           signed silent updates
@@ -384,7 +394,7 @@ Build the Windows app and installer:
 
 ```
 curl -LO https://github.com/electron/electron/releases/download/v45.1.0/electron-v45.1.0-win32-x64.zip
-node scripts/fetch_tools.mjs tools-cache          # yt-dlp, gallery-dl, FFmpeg (checksums verified)
+node scripts/fetch_tools.mjs tools-cache          # yt-dlp, gallery-dl, FFmpeg, aria2 (checksums verified)
 node scripts/fetch_autoconsent.mjs                # cookie-popup rules (pinned, sha512 verified)
 python -m pip install pillow
 python scripts/build_win.py electron-v45.1.0-win32-x64.zip
@@ -476,7 +486,7 @@ full texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 | [Autoconsent](https://github.com/duckduckgo/autoconsent) 18.2.0 | DuckDuckGo | MPL-2.0 | Fetched at build time, cookie popups |
 | [electron-chrome-web-store](https://github.com/samuelmaddock/electron-browser-shell), adm-zip, pbf | Samuel Maddock and others | MIT / BSD-3-Clause | Bundled |
 | [tldts](https://github.com/remusao/tldts) with the [Public Suffix List](https://publicsuffix.org) | Rémi Berson / Mozilla | MIT / MPL-2.0 | Bundled |
-| [yt-dlp](https://github.com/yt-dlp/yt-dlp), [gallery-dl](https://github.com/mikf/gallery-dl), [FFmpeg](https://ffmpeg.org) | their authors | Unlicense / GPL-2.0 / GPL | Shipped unmodified, run as separate programs |
+| [yt-dlp](https://github.com/yt-dlp/yt-dlp), [gallery-dl](https://github.com/mikf/gallery-dl), [FFmpeg](https://ffmpeg.org), [aria2](https://github.com/aria2/aria2) | their authors | Unlicense / GPL-2.0 / GPL / GPL-2.0 | Shipped unmodified, run as separate programs |
 | [SponsorBlock](https://sponsor.ajay.app) data | SponsorBlock community | CC BY-NC-SA 4.0 | Public API |
 | [Return YouTube Dislike](https://returnyoutubedislike.com) | RYD project | — | Public API |
 | [EasyList / EasyPrivacy](https://easylist.to) | EasyList authors | GPL-3.0 / CC BY-SA 3.0 | Downloaded at runtime |

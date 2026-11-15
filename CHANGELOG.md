@@ -2,6 +2,31 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.17.0
+
+### Downloads
+- Large downloads (5 MB and up) now go to aria2 1.37.0, shipped with the setup: up to 16 connections per file,
+  retries, and resuming from its own control file, also after a restart. The hand-over is safe: Chromium starts
+  the download and keeps it paused until aria2 is receiving the same file (same size); if aria2 gets an error,
+  a different file or nothing within 15 seconds, Chromium simply carries on. Downloads that came from a form
+  (POST) always stay in Chromium. Pause, resume, cancel and retry work the same in both engines.
+- On quit, aria2 is shut down cleanly (it saves its progress) before the browser exits, so a pending update can
+  replace its files.
+- This version installs as a full setup (new program files), not a light update.
+
+### Ad blocking
+- Ad networks that move to a new domain every few days are recognised by the fixed shape of their addresses
+  (third-party requests only), so their slots are never created.
+- Empty ad slots are folded sooner (checked every second while the page settles, two seconds after a slot appears).
+
+### YouTube
+- "Video paused. Continue watching?" no longer stops playback. YouTube's idle clock is kept fresh, and if the
+  question still appears after YouTube paused a playing video by itself, it is answered and the video continues.
+  A dialog that follows your own click or key press is left alone.
+
+### Fixes
+- Download controls in the toolbar of an incognito window used the wrong session when its first tab was asleep.
+
 ## 0.16.3
 
 ### Ad blocking
