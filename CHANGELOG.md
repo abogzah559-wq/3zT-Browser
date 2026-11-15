@@ -2,6 +2,26 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.18.0
+
+### YouTube
+- YouTube's ad blocking now runs uBlock Origin's own YouTube scripts, the ones uBlock Origin Lite uses in
+  Chrome, in both of their worlds (page and isolated). They are downloaded from the uBOL repository at runtime,
+  checked (complete files of the same build), kept on disk and refreshed every 12 hours, so fixes for YouTube's
+  frequent detection changes arrive without a 3zT update. The built-in blocking remains as the fallback until
+  they are downloaded.
+- Fixed: the next video of autoplay or a Mix stopping before it started, the "Up next" countdown stalling, and the
+  first video sometimes loading paused. Causes found: YouTube's ad-check script (`ad_status.js`) being blocked,
+  which made the player wait, and the hiding of the player's ad boxes, which YouTube detects. On YouTube that one
+  script now loads, and with uBlock Origin's scripts only feed ad boxes (the EasyList set) are hidden.
+
+### Privacy
+- Link cleaning (on by default, Settings → Ads & privacy): tracking fields are removed before a page opens and
+  tracking redirects go straight to the real address, with ClearURLs' rules (downloaded and checked against the
+  project's SHA-256). "Copy link" copies the clean address.
+- Fingerprinting protection (on by default): hidden canvases and offline audio read back with tiny per-site
+  changes. Canvases on the page and live audio are untouched; off for sites excluded from the ad blocker.
+
 ## 0.17.0
 
 ### Downloads

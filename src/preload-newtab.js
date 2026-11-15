@@ -14,6 +14,12 @@ const inMainWorld = code => {
   try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
   catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
 };
+// a separate world of its own for uBlock Origin's isolated scripts: it sees the page's DOM but not its scripts,
+// and has none of this preload's powers (ipcRenderer...)
+const UBO_WORLD = 1201;
+const inUboWorld = code => { try { webFrame.executeJavaScriptInIsolatedWorld(UBO_WORLD, [{ code }]); } catch (e) {} };
+// uBlock Origin's YouTube scripts (main.js, YTR): the isolated ones first, they rewrite page scripts before those run
+const runYtRules = r => { if (!r || !r.main) return false; if (r.isolated) inUboWorld(r.isolated); inMainWorld(r.main); return true; };
 /* sign-in pages and the "Windows Security" window: see where it is used below.
    mode: 'off'   = passkeys are off (the default): passkey requests are answered "no passkey" at once, so the site
                    carries on with the password. The one exception is a security key used as a second step for an
@@ -111,6 +117,68 @@ const pkCode = (mode, ua) => `(() => {
     } catch (e) {}
   };
   install(window);
+})();`;
+
+/* Fingerprinting protection (light, like Brave's): many trackers recognise a computer by drawing on a hidden
+   canvas or rendering a short sound and reading the result back, which differs slightly between computers. Here
+   what a page reads back from a canvas that is NOT on the page, and from a sound rendered offline, is changed
+   by a few imperceptible values, the same way on the same site and differently on every other site. Canvases on
+   the page (drawings, editors, games) and live sound are never touched. The changed functions look built in. */
+const fpCode = seed => `(() => {
+  'use strict';
+  const S = ${seed >>> 0};
+  const mix = i => { let x = (S ^ Math.imul((i + 0x9e3779b9) | 0, 0x85ebca6b)) >>> 0; x ^= x >>> 16; x = Math.imul(x, 0x7feb352d); x ^= x >>> 15; x = Math.imul(x, 0x846ca68b); x ^= x >>> 16; return x >>> 0; };
+  const fts = Function.prototype.toString, native = new WeakMap();
+  const ts = ({ toString() { return native.has(this) ? native.get(this) : fts.call(this); } }).toString;
+  native.set(ts, fts.call(fts));
+  try { Object.defineProperty(Function.prototype, 'toString', { value: ts, configurable: true, writable: true, enumerable: false }); } catch (e) { return; }
+  const wrap = (proto, key, make) => {
+    const d = proto && Object.getOwnPropertyDescriptor(proto, key); if (!d || typeof d.value !== 'function') return;
+    const f = make(d.value); native.set(f, fts.call(d.value));
+    try { Object.defineProperty(f, 'name', { value: d.value.name, configurable: true }); Object.defineProperty(f, 'length', { value: d.value.length, configurable: true }); } catch (e) {}
+    try { Object.defineProperty(proto, key, { value: f, configurable: true, writable: true, enumerable: d.enumerable }); } catch (e) {}
+  };
+  // a few pixels' lowest bit, chosen by the site's number (a change no eye can see)
+  const touch = (data, w, h) => {
+    const px = (data.length / 4) | 0; if (!px) return;
+    const n = Math.min(12, Math.max(1, px >> 6));
+    for (let k = 0; k < n; k++) { const r = mix(k + w * 7 + h * 13); const p = (r % px) * 4 + ((r >>> 24) % 3); data[p] ^= 1; }
+  };
+  const offPage = c => !!c && (typeof OffscreenCanvas !== 'undefined' && c instanceof OffscreenCanvas || !c.isConnected);
+  const C2D = window.CanvasRenderingContext2D && CanvasRenderingContext2D.prototype;
+  const getImageDataOrig = C2D && C2D.getImageData;   // (before it is wrapped: the copy below is changed only once)
+  wrap(C2D, 'getImageData', orig => ({ getImageData() {
+    const img = orig.apply(this, arguments);
+    try { if (offPage(this.canvas) && img.width * img.height <= 1048576) touch(img.data, img.width, img.height); } catch (e) {}
+    return img;
+  } }).getImageData);
+  // a copy with the change, read back the normal way (the page's own canvas stays as it is)
+  const copyOf = c => {
+    const w = c.width, h = c.height; if (!w || !h || w * h > 1048576 || !getImageDataOrig) return null;
+    const t = document.createElement('canvas'); t.width = w; t.height = h;
+    const x = t.getContext('2d'); x.drawImage(c, 0, 0);
+    const img = getImageDataOrig.call(x, 0, 0, w, h); touch(img.data, w, h); x.putImageData(img, 0, 0);
+    return t;
+  };
+  const HC = window.HTMLCanvasElement && HTMLCanvasElement.prototype;
+  for (const key of ['toDataURL', 'toBlob']) wrap(HC, key, orig => ({ [key]() {
+    try { if (!this.isConnected) { const t = copyOf(this); if (t) return orig.apply(t, arguments); } } catch (e) {}
+    return orig.apply(this, arguments);
+  } })[key]);
+  // sound rendered offline (never heard): a tiny change to a few samples of its result
+  const rendered = new WeakSet(), done = new WeakSet();
+  const OAC = window.OfflineAudioContext && OfflineAudioContext.prototype;
+  wrap(OAC, 'startRendering', orig => ({ startRendering() {
+    const p = orig.apply(this, arguments);
+    return p && typeof p.then === 'function' ? p.then(b => { try { rendered.add(b); } catch (e) {} return b; }) : p;
+  } }).startRendering);
+  const nudge = (buf, ch, data) => {
+    if (!rendered.has(buf) || !data || !data.length) return;
+    if (done.has(data)) return; done.add(data);
+    for (let k = 0; k < 8; k++) { const i = mix(k * 31 + ch) % data.length; data[i] += (mix(k + 99) & 1 ? 1 : -1) * 1e-7; }
+  };
+  const AB = window.AudioBuffer && AudioBuffer.prototype;
+  wrap(AB, 'getChannelData', orig => ({ getChannelData(ch) { const d = orig.apply(this, arguments); try { nudge(this, ch, d); } catch (e) {} return d; } }).getChannelData);
 })();`;
 
 const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media)\.html$/i.test(decodeURIComponent(location.pathname));
@@ -233,6 +301,12 @@ if (SUB) {
     let ua = '';
     if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
     if (mode !== 'nofix' || ua) inMainWorld(pkCode(mode, ua));
+    { let seed = 0; try { seed = ipcRenderer.sendSync('fp:seed'); } catch (e) {} if (seed) inMainWorld(fpCode(seed)); }
+    // a YouTube player embedded in another site: uBlock Origin's YouTube scripts too (see main.js, YTR)
+    if (/(^|\.)youtube(-nocookie)?\.com$/i.test(location.hostname)) {
+      let st = null; try { st = ipcRenderer.sendSync('yt:adblock'); } catch (e) {}
+      if (st && st.on && st.rules) { let r = null; try { r = ipcRenderer.sendSync('yt:rules'); } catch (e) {} runYtRules(r); }
+    }
   }
 } else if (readerPage) {
   contextBridge.exposeInMainWorld('zeus', { readerGet: k => ipcRenderer.invoke('reader:get', String(k || '').slice(0, 64)) });
@@ -384,23 +458,28 @@ if (SUB) {
   })();
   /* ================= YouTube ad blocking ================= */
   if (/(^|\.)youtube\.com$/i.test(location.hostname)) {
-    let on = false;
-    try { on = ipcRenderer.sendSync('yt:adblock'); } catch (e) {}
+    let st = { on: false, rules: false };
+    try { st = ipcRenderer.sendSync('yt:adblock') || st; } catch (e) {}
+    const on = !!st.on;
+    // uBlock Origin's own YouTube scripts (main.js, YTR), kept up to date: they replace the built-in data cleaning below
+    let rules = false;
+    if (on && st.rules) { try { rules = runYtRules(ipcRenderer.sendSync('yt:rules')); } catch (e) {} }
     if (on) {
       const code = `(() => {
+        const RULES = ${rules ? 'true' : 'false'};
         // what we replace must still look built in: YouTube checks Function.prototype.toString to spot blockers
         const native = new WeakMap();
         const fts = Function.prototype.toString;
         const ts = function toString() { return native.has(this) ? native.get(this) : fts.call(this); };
         native.set(ts, fts.call(fts));
-        Function.prototype.toString = ts;
+        if (!RULES) Function.prototype.toString = ts;
         const disguise = (f, orig) => { native.set(f, fts.call(orig)); try { Object.defineProperty(f, 'name', { value: orig.name }); } catch (e) {} return f; };
         // the "Ad blockers are not allowed" popup: YouTube decides with these flags (uBlock Origin sets the same ones)
         const fixed = (obj, key, value) => { try { Object.defineProperty(obj, key, { configurable: true, get() { return value; }, set() {} }); } catch (e) {} };
-        fixed(Object.prototype, 'adBlocksFound', 0);
+        if (!RULES) fixed(Object.prototype, 'adBlocksFound', 0);
         // not 'hasAllowedInstreamAd': forcing it on every object stops YouTube from drawing the suggested videos
         const noPopup = () => { try { const p = window.yt && yt.config_ && yt.config_.openPopupConfig; if (p && p.supportedPopups) p.supportedPopups.adBlockMessageViewModel = false; } catch (e) {} };
-        noPopup(); const np = setInterval(noPopup, 200); setTimeout(() => clearInterval(np), 30000);
+        if (!RULES) { noPopup(); const np = setInterval(noPopup, 200); setTimeout(() => clearInterval(np), 30000); }
         const KEYS = ['adPlacements', 'adSlots', 'playerAds', 'adBreakHeartbeatParams'];
         const clean = o => {
           try {
@@ -411,15 +490,18 @@ if (SUB) {
           } catch (e) {}
           return o;
         };
-        const jp = JSON.parse;
-        JSON.parse = disguise(function parse() { return clean(jp.apply(this, arguments)); }, jp);
-        const rj = Response.prototype.json;
-        Response.prototype.json = disguise(function json() { return rj.apply(this, arguments).then(clean); }, rj);
-        let pr;
-        try { Object.defineProperty(window, 'ytInitialPlayerResponse', { configurable: true, get() { return pr; }, set(v) { pr = clean(v); } }); } catch (e) {}
-        // anything that still slips through: mute, fast-forward, press "skip"
+        if (!RULES) {   // (uBlock Origin's scripts do this their own way, which YouTube does not notice)
+          const jp = JSON.parse;
+          JSON.parse = disguise(function parse() { return clean(jp.apply(this, arguments)); }, jp);
+          const rj = Response.prototype.json;
+          Response.prototype.json = disguise(function json() { return rj.apply(this, arguments).then(clean); }, rj);
+          let pr;
+          try { Object.defineProperty(window, 'ytInitialPlayerResponse', { configurable: true, get() { return pr; }, set(v) { pr = clean(v); } }); } catch (e) {}
+        }
+        // anything that still slips through: mute, fast-forward, press "skip" (not with uBlock Origin's scripts:
+        // they handle it, and jumping a video to its end while YouTube switches to the next one stalls autoplay)
         let muted = null;
-        setInterval(() => {
+        if (!RULES) setInterval(() => {
           // if the popup still opens: close it and keep the video playing
           const enf = document.querySelector('ytd-enforcement-message-view-model');
           if (enf) {
@@ -447,7 +529,15 @@ if (SUB) {
         ytd-rich-item-renderer:has(ytd-ad-slot-renderer), ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
         tp-yt-paper-dialog:has(ytd-enforcement-message-view-model), ytd-enforcement-message-view-model,
         body:has(ytd-enforcement-message-view-model) tp-yt-iron-overlay-backdrop { display: none !important; }`;
-      try { webFrame.insertCSS(css); } catch (e) {}
+      // with uBlock Origin's scripts only the feed's ad boxes are hidden (the ones EasyList hides): YouTube checks
+      // whether the player's ad boxes were hidden, and then pauses the video behind an "ad blockers are not
+      // allowed" message, which the full list above would also hide (a video paused for no visible reason)
+      const feedCss = `ytd-ad-slot-renderer, ytd-in-feed-ad-layout-renderer, ytd-banner-promo-renderer, ytd-promoted-sparkles-web-renderer,
+        ytd-promoted-video-renderer, ytd-display-ad-renderer, ytd-compact-promoted-video-renderer, ytd-search-pyv-renderer,
+        ytd-rich-item-renderer:has(> #content > ytd-ad-slot-renderer), ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
+        ytd-merch-shelf-renderer, #shopping-timely-shelf, yt-overlay-product-sticker, ytd-rich-grid-renderer > #masthead-ad,
+        #shorts-inner-container > .ytd-shorts:has(> .ytd-reel-video-renderer > ytd-ad-slot-renderer) { display: none !important; }`;
+      try { webFrame.insertCSS(rules ? feedCss : css); } catch (e) {}
     }
   }
 
@@ -458,6 +548,9 @@ if (SUB) {
     try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
     catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
   };
+
+  /* --- fingerprinting protection (fpCode above) --- */
+  if (cfg.fp) mainWorld(fpCode(cfg.fp));
 
   /* --- YouTube keeps playing: after a while without mouse or keyboard it pauses ("Video paused. Continue
      watching?"), often right as the next video of a playlist or autoplay starts. Its idle clock (_lact) is kept

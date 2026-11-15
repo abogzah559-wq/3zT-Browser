@@ -117,7 +117,21 @@ delete it.
 - Network-level blocker using the public **EasyList** and **EasyPrivacy** lists, refreshed in the
   background. It can be turned off per site from the shield button, which shows the number of blocked items
   for the page inside it.
-- YouTube and Twitch video ads are blocked. Sponsored posts in the TikTok and Instagram feeds are removed
+- YouTube and Twitch video ads are blocked. On YouTube this uses **uBlock Origin's own YouTube scripts**
+  (compiled by uBlock Origin Lite), downloaded at runtime from the uBOL repository, checked and refreshed every
+  12 hours, so YouTube's frequent changes to its ad-blocker detection (late starts, "Experiencing
+  interruptions?", paused autoplay) are followed by the uBlock Origin team's fixes without a 3zT update. Until
+  they are downloaded, a built-in fallback is used.
+- **Link cleaning** (on by default, *Settings → Ads & privacy*): tracking fields such as `utm_source`, `fbclid`
+  or `gclid` are removed from an address before the page opens, and tracking redirects (for example Google's
+  `/url?q=`) go straight to the real address. "Copy link" copies the clean address. The rules are
+  **ClearURLs'**, downloaded at runtime and verified against the project's published SHA-256; a short built-in
+  list is used until then.
+- **Fingerprinting protection** (on by default, light): what a page reads back from a canvas that is not on the
+  page, or from sound rendered offline, is changed by a few imperceptible values: the same on the same site,
+  different on every other site, so trackers cannot match one computer across sites. Canvases shown on the page
+  and live audio are never touched. Off for sites excluded from the ad blocker.
+- Sponsored posts in the TikTok and Instagram feeds are removed
   from the feed data before the page renders it, so no empty slots are left (follows the ad blocker and
   its per-site switch).
 - **Pop-up ads:** a new tab or window that a page opens to another site is allowed only when it is the link or
@@ -241,6 +255,7 @@ src/
   preload-ui.js        allow-listed bridge for the toolbar
   features.js          SponsorBlock, Return YouTube Dislike, Clean YouTube, Ambient light, Twitch
   adblock.js           EasyList / EasyPrivacy host matcher with resource types
+  cleanlinks.js        link cleaning with ClearURLs' rules
   downloads.js         download manager (hands large files to aria2)
   aria2.js             the aria2 helper process and its JSON-RPC connection
   media/engine.js      video / audio / photo downloader: yt-dlp, gallery-dl and FFmpeg orchestration
@@ -322,6 +337,8 @@ trackers.
 - Network connections made by 3zT itself, apart from the sites you visit:
   - Google, for search suggestions and translation when used;
   - `easylist.to`, for the filter lists;
+  - `raw.githubusercontent.com`, for uBlock Origin Lite's YouTube scripts (every 12 hours);
+  - `rules2.clearurls.xyz`, for the link-cleaning rules (every few days);
   - `sponsor.ajay.app`, on YouTube with SponsorBlock enabled (a 4-character hash prefix of the video ID);
   - `returnyoutubedislikeapi.com`, on YouTube with the dislike count enabled (the video ID);
   - Google's extension servers, when installing or updating a Chrome Web Store extension;
@@ -490,6 +507,8 @@ full texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 | [SponsorBlock](https://sponsor.ajay.app) data | SponsorBlock community | CC BY-NC-SA 4.0 | Public API |
 | [Return YouTube Dislike](https://returnyoutubedislike.com) | RYD project | — | Public API |
 | [EasyList / EasyPrivacy](https://easylist.to) | EasyList authors | GPL-3.0 / CC BY-SA 3.0 | Downloaded at runtime |
+| [uBlock Origin Lite](https://github.com/uBlockOrigin/uBOL-home) YouTube scriptlets | Raymond Hill and uBlock Origin contributors | GPL-3.0 | Downloaded at runtime |
+| [ClearURLs](https://docs.clearurls.xyz) rules | ClearURLs contributors | LGPL-3.0 | Downloaded at runtime |
 | Clean YouTube (Chrome Web Store) | its developer | — | Element list adapted |
 | [Thmanyah](https://thmanyah.com) font | Thmanyah | Free to use | Not redistributed; used when installed |
 

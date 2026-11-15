@@ -678,6 +678,56 @@ async function adSlots() {
   } finally { srv.close(); }
 }
 
+/* link cleaning, fingerprinting protection, uBlock Origin's YouTube scripts */
+async function privacy() {
+  const page = `<!doctype html><title>fp</title><body><canvas id=on width=200 height=60></canvas><script>
+    const draw = c => { const x = c.getContext('2d'); x.fillStyle = '#f60'; x.fillRect(10, 10, 100, 30); x.fillStyle = '#069'; x.font = '18px Arial'; x.fillText('3zT fingerprint', 4, 40); return c; };
+    window.fp = () => { const off = draw(Object.assign(document.createElement('canvas'), { width: 200, height: 60 })); const on = draw(document.getElementById('on'));
+      return JSON.stringify({ off1: off.toDataURL(), off2: off.toDataURL(), on: on.toDataURL(), px: Array.from(on.getContext('2d').getImageData(0, 0, 200, 60).data.slice(0, 64)).join(','),
+        native: /\[native code\]/.test(HTMLCanvasElement.prototype.toDataURL.toString()) && HTMLCanvasElement.prototype.toDataURL.name === 'toDataURL' }); };
+  </script></body>`;
+  const srv = http.createServer((q, r) => { r.setHeader('Content-Type', 'text/html; charset=utf-8'); r.end(page); }).listen(8800);
+  try {
+    // link cleaning: the page opens without its tracking fields (built-in rules until ClearURLs' are downloaded)
+    await go('http://127.0.0.1:8800/p?utm_source=news&id=7&fbclid=abc', true);
+    const t = await find(u => u.startsWith('http://127.0.0.1:8800/p'), 30);
+    const c = await connect(t);
+    const search = await poll(async () => { const s = await c.ev('location.search'); return s === '?id=7' ? s : null; }, 8000) || await c.ev('location.search');
+    ok('link cleaning: tracking fields are taken off the address before the page opens', search === '?id=7', search);
+    // fingerprinting: a hidden canvas reads back slightly changed (the same each time), the one on the page exactly as drawn
+    await poll(() => c.ev('typeof fp === "function"'), 8000);
+    const a = JSON.parse(await c.ev('fp()'));
+    ok('fingerprinting protection: a hidden canvas reads back changed and stable, the page\'s own canvas untouched',
+      a.off1 === a.off2 && a.off1 !== a.on && a.native, `stable ${a.off1 === a.off2}, differs from page canvas ${a.off1 !== a.on}, looks built in ${a.native}`);
+    c.close();
+    // another site: other changes
+    await go('http://localhost:8800/p2', true);
+    const c2 = await connect(await find(u => u.startsWith('http://localhost:8800/p2'), 30));
+    await poll(() => c2.ev('typeof fp === "function"'), 8000);
+    const b = JSON.parse(await c2.ev('fp()'));
+    ok('fingerprinting protection: another site reads a different value', b.off1 !== a.off1 && b.on === a.on, `sites differ ${b.off1 !== a.off1}, page canvases equal ${b.on === a.on}`);
+    c2.close();
+  } finally { srv.close(); }
+  // uBlock Origin's YouTube scripts: downloaded in the background, then used on YouTube (needs the internet)
+  const logf = path.join(OUT, 'app.log');
+  const got = await poll(() => { try { return /\[3zT\] YouTube rules (updated|checked)/.test(fs.readFileSync(logf, 'utf8')); } catch (e) { return false; } }, 40000);
+  if (!got) { ok('YouTube: uBlock Origin\'s YouTube scripts are downloaded and checked', false, 'not downloaded (no internet?)'); return; }
+  ok('YouTube: uBlock Origin\'s YouTube scripts are downloaded and checked', true);
+  await go('https://www.youtube.com/watch?v=aqz-KE-bpKQ', true);
+  const yt = await connect(await find(u => u.startsWith('https://www.youtube.com/watch'), 40));
+  const used = await poll(() => { try { return /\[3zT\] yt rules injected www\.youtube\.com/.test(fs.readFileSync(logf, 'utf8')); } catch (e) { return false; } }, 20000);
+  const player = await poll(() => yt.ev(`!!document.querySelector('#movie_player video')`), 30000);
+  ok('YouTube: the scripts run on YouTube and the player still loads', !!used && !!player, `used ${!!used}, player ${!!player}`);
+  // the isolated set ran in time: it rewrote YouTube's inline script, whose code then wraps Map.prototype.has
+  const iso = await poll(() => yt.ev(`String(Map.prototype.has).indexOf('function has') !== 0`), 15000);
+  ok('YouTube: the isolated scripts rewrite the player\'s page script before it runs', !!iso, String(await yt.ev('String(Map.prototype.has)')));
+  // YouTube's ad check script loads (blocking it makes the player wait), and no "ad blockers are not allowed"
+  const st = await poll(async () => { const v = JSON.parse(await yt.ev(`JSON.stringify({ s: window.google_ad_status, e: document.querySelectorAll('ytd-enforcement-message-view-model').length })`)); return v.s === 1 ? v : null; }, 15000)
+    || JSON.parse(await yt.ev(`JSON.stringify({ s: window.google_ad_status, e: document.querySelectorAll('ytd-enforcement-message-view-model').length })`));
+  ok('YouTube: its ad check passes and no ad-blocker message comes up', st.s === 1 && st.e === 0, JSON.stringify(st));
+  yt.close();
+}
+
 /* YouTube's "Video paused. Continue watching?": answered when YouTube paused by itself, never when you did */
 async function ytIdle() {
   const clip = fs.readFileSync(path.join(OUT, 'clip.mp4'));
@@ -896,7 +946,7 @@ async function main() {
   const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
-  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await ytIdle(); await features(); }
+  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await ytIdle(); await privacy(); await features(); }
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
   if (process.platform === 'win32') { await mediaTest(); if (process.env.E2E_DIAG) await arablocn(); await passkeys(); }
@@ -904,6 +954,7 @@ async function main() {
   await popups();
   await adSlots();
   await ytIdle();
+  await privacy();
   await features();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);
