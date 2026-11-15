@@ -20,6 +20,7 @@ const PW = require('./passwords');
 const FEAT = require('./features');
 const { DownloadManager } = require('./downloads');
 const { Aria2 } = require('./aria2');
+const { LinkCleaner } = require('./cleanlinks');
 const UPD = require('./updater');
 const PERM = require('./permissions');
 const { knownMediaPage } = require('./media/detect');
@@ -146,6 +147,7 @@ function makeStore(name, def) {
 }
 let settings, bookmarks, history, sessionStore, favStore, dl;
 let adblock = null;
+let linkCleaner = null;   // tracking parts off addresses (src/cleanlinks.js)
 let passwords = null;
 const stores = () => [settings, bookmarks, history, sessionStore, favStore].filter(Boolean);
 
@@ -1141,7 +1143,7 @@ function contextMenu(tab, p) {
     items.push({ label: T('فتح الرابط في نافذة جديدة', 'Open link in new window'), click: () => newWindow({ url: p.linkURL }) });
     if (!w.private) items.push({ label: T('فتح الرابط في نافذة متخفية', 'Open link in incognito window'), click: () => newWindow({ url: p.linkURL, private: true }) });
     if (/^https?:/i.test(p.linkURL)) items.push({ label: T('حفظ الرابط باسم…', 'Save link as…'), click: () => { dlAskFor.add(p.linkURL); wc.downloadURL(p.linkURL); } });
-    items.push({ label: T('نسخ الرابط', 'Copy link'), click: () => clipboard.writeText(p.linkURL) });
+    items.push({ label: T('نسخ الرابط', 'Copy link'), click: () => clipboard.writeText(linkCleaner && settings.data.cleanLinks !== false ? linkCleaner.clean(p.linkURL) : p.linkURL) });
     items.push({ type: 'separator' });
   }
   if (p.mediaType === 'image' && p.srcURL) {
@@ -1381,8 +1383,15 @@ function setupSession(ses) {
     CH.fill(h, d.url);
     cb({ requestHeaders: h });
   });
+  const AD_STATUS = /^https?:\/\/([a-z0-9-]+\.)*doubleclick\.net\/instream\/ad_status\.js(\?|$)/i;
   ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (d, cb) => {
     if (d.method && d.method !== 'GET' && d.method !== 'HEAD') noteNonGet(d.url);
+    // a page about to open: without the tracking parts of its address (utm_source, fbclid...), or straight to the
+    // real address of a tracking redirect
+    if (d.resourceType === 'mainFrame' && d.method === 'GET' && linkCleaner && settings.data.cleanLinks !== false) {
+      const c = linkCleaner.clean(d.url);
+      if (c !== d.url) { if (process.env.ZEUS_E2E) console.log('[3zT] link cleaned', d.url.slice(0, 160)); return cb({ redirectURL: c }); }
+    }
     if (!adblock || settings.data.adblock === false || d.resourceType === 'mainFrame') return cb({});
     let page = '';
     try { page = d.frame && d.frame.top ? d.frame.top.url : (d.webContents ? d.webContents.getURL() : ''); } catch (e) {}
@@ -1391,6 +1400,10 @@ function setupSession(ses) {
     const ph = hostOf(page);
     if (ph && settings.data.adAllow.includes(AdBlocker.site(ph))) return cb({});
     if (!adblock.shouldBlock(d.url, page, d.resourceType)) return cb({});
+    // YouTube loads this one-line script (it only sets google_ad_status = 1) to see whether ads can load; when it
+    // is blocked, the player waits (slow start, "Experiencing interruptions?"). Chromium refuses a stand-in from
+    // here (data: redirects are "unsafe"), so on YouTube this one file is let through.
+    if (AD_STATUS.test(d.url) && isYTAny(ph)) return cb({});
     const t = d.webContents && tabOfWc(d.webContents);
     if (t) { t.blocked = (t.blocked || 0) + 1; if (t.id === t.win.activeId) t.win.pushState(); }
     // a blocked picture or frame: the page folds the element away instead of keeping an empty box
@@ -2006,16 +2019,91 @@ function setupPasswordIpc() {
     if (!tabOfWc(e.sender) || !Array.isArray(texts)) return [];
     return trBatch(texts.slice(0, 400).map(x => String(x).slice(0, 5000)), tl === 'en' ? 'en' : 'ar');
   });
+  // YouTube ad blocking: on? and uBlock Origin's own YouTube scripts if they are here (see YTR)
   ipcMain.on('yt:adblock', e => {
     const t = tabOfWc(e.sender);
-    e.returnValue = !!(t && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com'));
+    const on = !!(t && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com'));
+    e.returnValue = { on, rules: on && YTR.ready() };
+  });
+  ipcMain.on('yt:rules', e => {
+    const t = tabOfWc(e.sender);
+    const ok = t && isYTAny(senderHost(e)) && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com');
+    e.returnValue = ok ? { main: YTR.code('main'), isolated: YTR.code('isolated') } : null;
+    if (ok && process.env.ZEUS_E2E && e.returnValue) console.log('[3zT] yt rules injected', senderHost(e));
   });
   setupSiteIpc();
 }
 
+/* ---------- YouTube: uBlock Origin's own YouTube scripts ----------
+   YouTube changes how it detects ad blockers every few days (late starts with "Experiencing interruptions?",
+   paused next videos). The uBlock Origin team answers each change within days in its filter lists; uBlock Origin
+   Lite publishes them compiled as page scripts ("scriptlets"). They are downloaded from uBlock Origin Lite's own
+   repository (GPL-3.0, not part of 3zT), checked, kept on disk and refreshed every 12 hours, and run on YouTube
+   pages only, in the page, before YouTube's own scripts - the way uBlock Origin Lite runs them in Chrome.
+   Until they are downloaded (or if a download is not valid), the built-in YouTube blocking in
+   preload-newtab.js is used instead. */
+const YTR = {
+  BASE: 'https://raw.githubusercontent.com/uBlockOrigin/uBOL-home/main/chromium/rulesets/scripting/scriptlet/',
+  FILES: [['scriptlet-begin.js', 'uBOL_scriptletFrameworkBegin'], ['ublock-filters.js', 'uBOL_scriptlets'], ['scriptlet-end.js', 'uBOL_scriptletFrameworkEnd']],
+  // two sets: scripts that run in the page itself (main) and scripts that run beside it (isolated), e.g. the
+  // one that rewrites YouTube's inline player script before it runs
+  WORLDS: { main: 'scriptlets.js', isolated: 'scriptlets-isolated.js' },
+  EVERY: 12 * 3600 * 1000,
+  _code: {}, busy: null,
+  dir() { return path.join(app.getPath('userData'), 'yt-rules'); },
+  code(world = 'main') {
+    if (this._code[world] === undefined) { try { this._code[world] = fs.readFileSync(path.join(this.dir(), this.WORLDS[world]), 'utf8'); } catch (e) { this._code[world] = ''; } }
+    return this._code[world];
+  },
+  ready() { return !!this.code('main') && !!this.code('isolated'); },
+  // the three files of a set must be complete, of this kind, and belong together (same id)
+  check(texts) {
+    let id = null;
+    for (let i = 0; i < 3; i++) {
+      const t = texts[i], [name, fn] = this.FILES[i];
+      if (typeof t !== 'string' || t.length < 200 || t.length > 8e6 || !t.includes('(function ' + fn + '(')) throw new Error(name + ': not a uBOL scriptlet file');
+      const m = /\}\)\("([0-9a-f-]{36})"\);\s*(?:void 0;)?\s*$/.exec(t);
+      if (!m) throw new Error(name + ': no id');
+      if (id && m[1] !== id) throw new Error(name + ': files of different versions');
+      id = m[1];
+    }
+    return id;
+  },
+  refresh(force) {
+    if (this.busy) return this.busy;
+    this.busy = (async () => {
+      let meta = {}; try { meta = JSON.parse(fs.readFileSync(path.join(this.dir(), 'meta.json'), 'utf8')); } catch (e) {}
+      if (!force && this.ready() && Date.now() - (meta.t || 0) < this.EVERY) return false;
+      // both sets are downloaded and checked before either is written, so the two always match
+      const got = {};
+      for (const world of Object.keys(this.WORLDS)) {
+        const texts = [];
+        for (const [name] of this.FILES) {
+          const r = await net.fetch(this.BASE + world + '/' + name, { headers: { 'Cache-Control': 'no-cache' } });
+          if (!r.ok) throw new Error(world + '/' + name + ': HTTP ' + r.status);
+          texts.push(await r.text());
+        }
+        got[world] = { id: this.check(texts), code: texts.join('\n;\n') };
+      }
+      fs.mkdirSync(this.dir(), { recursive: true });
+      let changed = false, size = 0;
+      for (const world of Object.keys(this.WORLDS)) {
+        const f = path.join(this.dir(), this.WORLDS[world]), code = got[world].code;
+        fs.writeFileSync(f + '.tmp', code); fs.renameSync(f + '.tmp', f);
+        if (code !== this._code[world]) changed = true;
+        this._code[world] = code; size += code.length;
+      }
+      fs.writeFileSync(path.join(this.dir(), 'meta.json'), JSON.stringify({ t: Date.now(), id: got.main.id, size }));
+      console.log('[3zT] YouTube rules', changed ? 'updated' : 'checked', Math.round(size / 1024) + ' KB');
+      return changed;
+    })().catch(e => { console.warn('[3zT] YouTube rules:', e.message); return false; }).finally(() => { this.busy = null; });
+    return this.busy;
+  }
+};
+
 /* ---------- built-in site features (were extensions) ---------- */
 const senderHost = e => { try { return new URL(e.senderFrame.url).hostname; } catch (x) { return ''; } };
-const isYT = h => /(^|\.)youtube\.com$/i.test(h), isTwitch = h => /(^|\.)twitch\.tv$/i.test(h);
+const isYT = h => /(^|\.)youtube\.com$/i.test(h), isYTAny = h => /(^|\.)youtube(-nocookie)?\.com$/i.test(h), isTwitch = h => /(^|\.)twitch\.tv$/i.test(h);
 let ambientStore = null;
 function siteCfg(host) {
   const d = settings.data, adsOn = d.adblock !== false;
@@ -2036,8 +2124,20 @@ function siteCfg(host) {
     reader: d.reader !== false,
     // empty ad slots left behind by the blocker are folded away (see preload-newtab.js)
     collapse: adsOn && !!host && !d.adAllow.includes(AdBlocker.site(host)),
-    ytTest: !!process.env.ZEUS_E2E && host === 'yt.localhost'   // the tests' stand-in for YouTube
+    ytTest: !!process.env.ZEUS_E2E && host === 'yt.localhost',   // the tests' stand-in for YouTube
+    fp: fpSeed(host)
   };
+}
+/* fingerprinting protection: a number per site (and per run of the browser) that decides the tiny changes made to
+   what a page reads back from drawings and sound (preload-newtab.js, fpCode). Same site: the same changes all along,
+   so nothing flickers; another site: other changes, so the two can't match their readings. 0 = off. */
+const FP_KEY = require('crypto').randomBytes(16);
+function fpSeed(host) {
+  const d = settings.data;
+  if (d.fpProtect === false || d.adblock === false || !host) return 0;
+  const site = AdBlocker.site(host) || host;
+  if (d.adAllow.includes(site)) return 0;
+  return require('crypto').createHmac('sha256', FP_KEY).update(site).digest().readUInt32LE(0) || 1;
 }
 /* Cookie popups: DuckDuckGo's Autoconsent (src/vendor/autoconsent, fetched at build time) answers them with
    "reject" / "necessary only" the way a person would, so the page carries on as if you had clicked it (no
@@ -2076,6 +2176,11 @@ function ytCleanAttrs() {
 }
 function setupSiteIpc() {
   ipcMain.on('site:cfg', e => { e.returnValue = tabOfWc(e.sender) ? siteCfg(senderHost(e)) : {}; });
+  // frames inside a page: the protection follows the page you are on (its site decides the changes)
+  ipcMain.on('fp:seed', e => {
+    let top = ''; try { top = new URL(e.senderFrame.top.url).hostname; } catch (x) {}
+    e.returnValue = tabOfWc(e.sender) ? fpSeed(top) : 0;
+  });
   ipcMain.on('site:code', (e, name) => {
     const h = senderHost(e);
     const ok = (name === 'twitch' && isTwitch(h)) || (name === 'ambientContent' && isYT(h));
@@ -2319,6 +2424,8 @@ function setupIpc() {
     if (key === 'ytAds') settings.data.ytAds = !!val;
     if (key === 'dlAsk') settings.data.dlAsk = !!val;
     if (key === 'passkeys') settings.data.passkeys = !!val;
+    if (key === 'cleanLinks') settings.data.cleanLinks = !!val;
+    if (key === 'fpProtect') settings.data.fpProtect = !!val;
     settings.save(); settings.flush();
     for (const w of wins) w.pushState();
     settingsChanged();
@@ -2492,7 +2599,7 @@ function setupSettingsIpc() {
       adblock: d.adblock !== false, cookiePopups: d.cookiePopups !== false, hqVideo: d.hqVideo !== false, reader: d.reader !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytMaxQuality: d.ytMaxQuality !== false, ytDislikes: d.ytDislikes !== false, ytClean: d.ytClean || {},
-      passkeys: !!d.passkeys, dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,
+      passkeys: !!d.passkeys, cleanLinks: d.cleanLinks !== false, fpProtect: d.fpProtect !== false, dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,
       perms: perms ? perms.all() : [],
       extensions: listExtensions(), versions: { app: app.getVersion(), chrome: process.versions.chrome }
     };
@@ -2652,6 +2759,14 @@ app.whenReady().then(async () => {
   const refreshLists = () => adblock.refresh(u => net.fetch(u)).then(() => { for (const w of wins) w.pushState(); }).catch(() => {});
   setTimeout(refreshLists, 4000);
   setInterval(refreshLists, 6 * 3600 * 1000);
+  // uBlock Origin's YouTube scripts: soon after start, then every few hours (each refresh only downloads when due)
+  setTimeout(() => YTR.refresh(), 3000);
+  // ClearURLs' rules for link cleaning (refreshed every few days)
+  linkCleaner = new LinkCleaner(path.join(app.getPath('userData'), 'clean-links'), (...a) => console.log('[3zT]', ...a));
+  const refreshClean = () => linkCleaner.refresh(u => net.fetch(u)).catch(e => console.warn('[3zT] link rules:', e.message));
+  setTimeout(refreshClean, 6000);
+  setInterval(refreshClean, 12 * 3600 * 1000);
+  setInterval(() => YTR.refresh(), 3 * 3600 * 1000);
   perms = new PERM.Permissions({ settings, onChange: () => { for (const w of wins) w.pushState(); } });
   setupSession(session.defaultSession);
   setupIpc();
