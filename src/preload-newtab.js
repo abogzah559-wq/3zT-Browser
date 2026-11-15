@@ -219,7 +219,7 @@ const FOLD = (() => {
     for (const f of document.getElementsByTagName('iframe')) {
       if (f.hasAttribute('data-zt-fold')) continue;
       if (!seen.has(f)) { seen.set(f, now); continue; }
-      if (now - seen.get(f) >= 3000 && emptySlot(f)) fold(f);
+      if (now - seen.get(f) >= 2000 && emptySlot(f)) fold(f);
     }
   };
   return { sweepBlocked, scanSlots };
@@ -459,14 +459,41 @@ if (SUB) {
     catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
   };
 
+  /* --- YouTube keeps playing: after a while without mouse or keyboard it pauses ("Video paused. Continue
+     watching?"), often right as the next video of a playlist or autoplay starts. Its idle clock (_lact) is kept
+     fresh, and if the question still comes up while a video was playing, it is answered and the video goes on.
+     A question that comes after you paused or clicked yourself (e.g. "Remove from playlist?") is left alone. --- */
+  if (/(^|\.)youtube\.com$/i.test(location.hostname) || cfg.ytTest) mainWorld(`(() => {
+    const fresh = () => { try { window._lact = Date.now(); } catch (e) {} };
+    fresh(); setInterval(fresh, 30000);
+    // who paused last: you (a click or key just before) or the page by itself
+    let you = 0, selfPause = false;
+    for (const t of ['pointerdown', 'keydown']) addEventListener(t, e => { if (e.isTrusted) { you = Date.now(); selfPause = false; } }, true);
+    document.addEventListener('pause', () => { selfPause = Date.now() - you > 2000; }, true);
+    document.addEventListener('playing', () => { selfPause = false; }, true);
+    const shown = el => { const b = el && el.closest('tp-yt-paper-dialog, ytmusic-popup-container, ytd-popup-container'); return !!el && el.getClientRects().length > 0 && (!b || getComputedStyle(b).display !== 'none'); };
+    setInterval(() => {
+      const music = document.querySelector('ytmusic-you-there-renderer');
+      const dlg = music || document.querySelector('ytd-popup-container yt-confirm-dialog-renderer');
+      if (!dlg || !shown(dlg)) return;
+      const v = document.querySelector('#movie_player video, ytmusic-player video, video');
+      // only the idle question: it pauses a video that was playing a moment ago, with no click or key from you
+      if (!music && !(v && v.paused && selfPause)) return;
+      const b = dlg.querySelector('#confirm-button button') || dlg.querySelector('#confirm-button') || dlg.querySelector('button');   // (the real button inside, not its wrapper)
+      if (b) b.click();
+      fresh();
+      if (v && v.paused) v.play().catch(() => {});
+    }, 700);
+  })();`);
+
   /* --- empty ad slots (FOLD above): checked a few times while the page settles, then when it changes --- */
   if (cfg.collapse && FOLD) {
     let n = 0, t = 0;
     const tick = () => { FOLD.sweepBlocked(); FOLD.scanSlots(); };
-    const iv = setInterval(() => { tick(); if (++n >= 15) clearInterval(iv); }, 2000);   // the first 30 seconds
+    const iv = setInterval(() => { tick(); if (++n >= 30) clearInterval(iv); }, 1000);   // the first 30 seconds
     addEventListener('DOMContentLoaded', () => {
       tick();
-      try { new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { tick(); setTimeout(tick, 3500); }, 1000); }).observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+      try { new MutationObserver(() => { clearTimeout(t); t = setTimeout(() => { tick(); setTimeout(tick, 2200); }, 500); }).observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
     }, { once: true });
   }
 

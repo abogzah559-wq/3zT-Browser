@@ -19,6 +19,7 @@ const EXT = require('./ext-import');
 const PW = require('./passwords');
 const FEAT = require('./features');
 const { DownloadManager } = require('./downloads');
+const { Aria2 } = require('./aria2');
 const UPD = require('./updater');
 const PERM = require('./permissions');
 const { knownMediaPage } = require('./media/detect');
@@ -1357,6 +1358,11 @@ const CH = {
   }
 };
 let adSaveTimer = null;
+/* addresses just requested with POST (a form): a download from them can't be fetched again by another
+   program, so it stays in Chromium (src/downloads.js) */
+const nonGet = new Map();
+function noteNonGet(u) { nonGet.set(u, Date.now()); if (nonGet.size > 200) nonGet.delete(nonGet.keys().next().value); }
+const wasNonGet = chain => chain.some(u => { const t = nonGet.get(u); return t && Date.now() - t < 10 * 60000; });
 const setUpSessions = new WeakSet();
 function setupSession(ses) {
   if (setUpSessions.has(ses)) return;   // a private window's tabs share one session: set it up once
@@ -1376,6 +1382,7 @@ function setupSession(ses) {
     cb({ requestHeaders: h });
   });
   ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (d, cb) => {
+    if (d.method && d.method !== 'GET' && d.method !== 'HEAD') noteNonGet(d.url);
     if (!adblock || settings.data.adblock === false || d.resourceType === 'mainFrame') return cb({});
     let page = '';
     try { page = d.frame && d.frame.top ? d.frame.top.url : (d.webContents ? d.webContents.getURL() : ''); } catch (e) {}
@@ -1403,7 +1410,8 @@ function setupSession(ses) {
     const t = wc && tabOfWc(wc);
     const hk = (wc ? wc.id : 0) + ' ' + item.getURL(); const hint = dlNames.get(hk); dlNames.delete(hk); if (process.env.ZEUS_DEBUG_DL) console.log('[3zT] will-download', item.getURL(), JSON.stringify(item.getFilename()), !!hint);
     const askNow = dlAskFor.delete(item.getURL());
-    const rec = dl.handle(item, { resumeId, ask: askNow, nameHint: hint && Date.now() - hint.t < 15000 ? hint.name : '', partition: ses !== session.defaultSession ? ((t && t.win.partition) || partitionOfSession(ses) || 'private') : null });
+    let referrer = ''; try { referrer = wc && !wc.isDestroyed() ? wc.getURL() : ''; } catch (e) {}
+    const rec = dl.handle(item, { resumeId, ask: askNow, ses, referrer, posted: wasNonGet(item.getURLChain() || []), nameHint: hint && Date.now() - hint.t < 15000 ? hint.name : '', partition: ses !== session.defaultSession ? ((t && t.win.partition) || partitionOfSession(ses) || 'private') : null });
     rec.winId = (() => { const w = (t && t.win) || focusedWin(); return w ? w.id : null; })();
     // a tab a site opened only to start this download (nothing ever showed in it): closed once the file has a place, like Chrome
     if (t && t.openedByPage && !t.committed) { dlBlankTabs.set(rec.id, t); item.once('done', () => closeBlankTab(rec.id)); }
@@ -1925,7 +1933,8 @@ function setupDownloadIpc() {
     if (cmd === 'open') { if (r.path && r.state === 'completed') shell.openPath(r.path); return; }
     if (cmd === 'show') { if (r.path) shell.showItemInFolder(r.path); return; }
     if (!['pause', 'resume', 'cancel', 'retry'].includes(cmd)) return;
-    const ses = w.private && w.tabs[0] && w.tabs[0].view ? w.tabs[0].view.webContents.session : session.defaultSession;
+    const vt = w.private ? w.tabs.find(x => x.view && !x.view.webContents.isDestroyed()) : null;   // (a sleeping first tab has no page)
+    const ses = vt ? vt.view.webContents.session : w.private ? session.fromPartition(w.partition) : session.defaultSession;
     dl.action(id, cmd, ses); dlNotify(r, 'refresh');
   });
   ipcMain.handle('dl:clear', e => { if (!okPage(e)) return false; dl.clear(); dlNotify({}, 'refresh'); return true; });
@@ -2026,7 +2035,8 @@ function siteCfg(host) {
     })(),
     reader: d.reader !== false,
     // empty ad slots left behind by the blocker are folded away (see preload-newtab.js)
-    collapse: adsOn && !!host && !d.adAllow.includes(AdBlocker.site(host))
+    collapse: adsOn && !!host && !d.adAllow.includes(AdBlocker.site(host)),
+    ytTest: !!process.env.ZEUS_E2E && host === 'yt.localhost'   // the tests' stand-in for YouTube
   };
 }
 /* Cookie popups: DuckDuckGo's Autoconsent (src/vendor/autoconsent, fetched at build time) answers them with
@@ -2599,7 +2609,14 @@ app.on('second-instance', (e, argv) => {
   w.win.focus();
   if (u) w.createTab(u);
 });
-app.on('before-quit', () => { if (!quitting) { quitting = true; saveSession(); } for (const s of stores()) s.flush(); if (media) media.close(); });
+let ariaClosing = false;
+app.on('before-quit', e => {
+  if (!quitting) { quitting = true; saveSession(); }
+  for (const s of stores()) s.flush();
+  if (media) media.close();
+  // aria2 first closes cleanly (a few hundred ms), then the browser quits
+  if (dl && dl.ariaRunning() && !ariaClosing) { ariaClosing = true; e.preventDefault(); dl.stopAll().finally(() => app.quit()); }
+});
 // a downloaded update is installed silently once the browser has closed
 app.on('will-quit', () => { if (gotLock) { try { UPD.installOnQuit(); } catch (e) {} } });   // never from a second copy that is only handing over a link
 
@@ -2619,7 +2636,10 @@ app.whenReady().then(async () => {
   history = makeStore('history.json', []);
   sessionStore = makeStore('session.json', { windows: [] });
   favStore = makeStore('favicons.json', {});
-  dl = new DownloadManager({ app, store: makeStore('downloads.json', []), settings, notify: dlNotify });
+  // big downloads go to aria2, shipped next to the video tools (resources/tools)
+  const toolsDir = app.isPackaged ? path.join(process.resourcesPath, 'tools') : path.join(SRC, '..', 'tools-cache');
+  const aria = new Aria2({ exe: path.join(toolsDir, process.platform === 'win32' ? 'aria2c.exe' : 'aria2c'), log: (...a) => console.log('[3zT downloads]', ...a) });
+  dl = new DownloadManager({ app, store: makeStore('downloads.json', []), settings, notify: dlNotify, aria, log: (...a) => console.log('[3zT downloads]', ...a) });
 
   // first run (or first run of this version): bring things over from Chrome
   if (!settings.data.bookmarksImported) { try { importChromeBookmarks(); } catch (e) {} settings.data.bookmarksImported = true; settings.data.favImported = true; }

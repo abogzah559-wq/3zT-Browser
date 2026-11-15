@@ -198,6 +198,21 @@ async function permissions() {
 /* ================= downloads: the ways real sites start them ================= */
 const AR_NAME = 'ملف عربي.zip';
 const BIG = Buffer.alloc(3 * 1024 * 1024, 7);
+// big files (aria2): different bytes everywhere, so a part written in the wrong place shows
+const HUGE = Buffer.alloc(12 * 1024 * 1024); for (let i = 0; i < HUGE.length; i += 4) HUGE.writeUInt32LE(i, i);
+const SLOWBIG = Buffer.alloc(24 * 1024 * 1024); for (let i = 0; i < SLOWBIG.length; i += 4) SLOWBIG.writeUInt32LE(i ^ 0x5a5a5a5a, i);
+// sends `buf` (from `from`) in pieces, `rate` bytes a second, honouring Range
+function trickle(q, r, buf, name, rate) {
+  const m = /bytes=(\d+)-(\d*)/.exec(q.headers.range || '');
+  const from = m ? +m[1] : 0, to = m && m[2] ? Math.min(+m[2], buf.length - 1) : buf.length - 1;
+  const head = { 'Content-Type': 'application/octet-stream', 'Content-Disposition': `attachment; filename="${name}"`, 'Accept-Ranges': 'bytes', ETag: '"' + name + '"', 'Content-Length': to - from + 1 };
+  if (m) head['Content-Range'] = `bytes ${from}-${to}/${buf.length}`;
+  r.writeHead(m ? 206 : 200, head);
+  let at = from; const step = Math.max(16384, Math.round(rate / 50));
+  const t = setInterval(() => { if (at > to) { clearInterval(t); return r.end(); } const n = Math.min(step, to - at + 1); r.write(buf.subarray(at, at + n)); at += n; }, 20);
+  r.on('close', () => clearInterval(t));
+}
+const dlHits = {};
 function dlServer() {
   let cut = true;
   const att = n => `attachment; filename="file.bin"; filename*=UTF-8''${encodeURIComponent(n)}`;
@@ -218,6 +233,8 @@ window.blobDl = () => { const a = document.createElement('a'); a.href = URL.crea
 window.manyDl = () => { for (let i = 1; i <= 3; i++) { const a = document.createElement('a'); a.href = '/many?i=' + i; a.download = ''; document.body.appendChild(a); a.click(); } };
 window.cutDl = () => { location.href = '/cut'; };
 window.slowDl = () => { location.href = '/slow'; };
+window.bigDl = p => { location.href = p; };
+window.bigPost = () => { const f = document.createElement('form'); f.method = 'post'; f.action = '/bigpost'; f.innerHTML = '<input name=a value=1>'; document.body.appendChild(f); f.submit(); };
 </script>`);
       }
       // a form POST in a new tab: only the real POST with its data and Referer gets the file
@@ -236,6 +253,17 @@ window.slowDl = () => { location.href = '/slow'; };
         r.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': att('resume.bin'), 'Content-Length': BIG.length, 'Accept-Ranges': 'bytes', ETag: '"v1"' });
         if (cut) { cut = false; r.write(BIG.subarray(0, 1024 * 1024)); return setTimeout(() => r.destroy(), 300); }
         return r.end(BIG);
+      }
+      dlHits[u.pathname] = (dlHits[u.pathname] || 0) + 1;
+      if (u.pathname === '/big') return trickle(q, r, HUGE, 'big.bin', 3 * 1024 * 1024);
+      if (u.pathname === '/bigslow') return trickle(q, r, SLOWBIG, 'bigslow.bin', 1024 * 1024);
+      if (u.pathname === '/bigpost') return q.method === 'POST' ? trickle(q, r, HUGE, 'bigpost.bin', 3 * 1024 * 1024) : (r.writeHead(405), r.end());
+      // a one-time link: the first request gets the file, any other is refused (no Range support either)
+      if (u.pathname === '/once') {
+        if (dlHits['/once'] > 1) { r.writeHead(403); return r.end(); }
+        r.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': 'attachment; filename="once.bin"', 'Content-Length': HUGE.length });
+        let at = 0; const t = setInterval(() => { if (at >= HUGE.length) { clearInterval(t); return r.end(); } r.write(HUGE.subarray(at, at + 65536)); at += 65536; }, 20);
+        r.on('close', () => clearInterval(t)); return;
       }
       if (u.pathname === '/slow') { r.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': att('slow.bin'), 'Content-Length': 50 * 1024 * 1024 }); const t = setInterval(() => r.write(Buffer.alloc(16 * 1024)), 200); r.on('close', () => clearInterval(t)); return; }
       r.writeHead(404); r.end();
@@ -279,6 +307,39 @@ async function downloads() {
     const res = cut && await done('resume.bin');
     const okBytes = res && fs.existsSync(res.path) && fs.statSync(res.path).size === BIG.length && fs.readFileSync(res.path).equals(BIG);
     ok('a connection that breaks half way: the file is finished intact (Range resume)', !!okBytes, cut ? `${cut.state === 'interrupted' ? 'stopped, resumed by hand' : 'picked up again by itself'}` : 'no download');
+    /* big files: aria2 (several connections); what it can't fetch stays in Chromium */
+    const sameFile = (x, buf) => x && fs.existsSync(x.path) && fs.statSync(x.path).size === buf.length && fs.readFileSync(x.path).equals(buf);
+    const noParts = x => x && !fs.existsSync(x.path + '.part') && !fs.existsSync(x.path + '.part.aria2');
+    await page.ev(`bigDl('/big'), 1`, true);
+    const big = await poll(async () => (await list()).find(x => x.name === 'big.bin' && x.state === 'completed'), 40000);
+    const bigFull = big && (await dp.ev(`zeus.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(big.id)}))`));
+    ok('a big download goes to aria2 and the file is intact', !!big && bigFull.engine === 'aria2' && sameFile(big, HUGE) && noParts(big), big ? `engine ${bigFull.engine}, ${fs.existsSync(big.path) ? fs.statSync(big.path).size : 'no file'} bytes` : JSON.stringify((await list()).map(x => x.name + ':' + x.state)));
+    await page.ev('bigPost(), 1', true);
+    const bp = await poll(async () => (await list()).find(x => x.name === 'bigpost.bin' && x.state === 'completed'), 40000);
+    const bpFull = bp && (await dp.ev(`zeus.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(bp.id)}))`));
+    ok('a big download from a form (POST) stays in Chromium and is intact', !!bp && bpFull.engine !== 'aria2' && sameFile(bp, HUGE), bp ? `engine ${bpFull.engine}` : 'no download');
+    await page.ev(`bigDl('/once'), 1`, true);
+    const once = await poll(async () => (await list()).find(x => x.name === 'once.bin' && x.state === 'completed'), 60000);
+    const onceFull = once && (await dp.ev(`zeus.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(once.id)}))`));
+    ok('a one-time link aria2 is refused: Chromium carries on, file intact', !!once && onceFull.engine !== 'aria2' && sameFile(once, HUGE) && noParts(once), once ? `engine ${onceFull.engine}, hits ${dlHits['/once']}` : JSON.stringify((await list()).map(x => x.name + ':' + x.state)));
+    // pause, resume, cancel while aria2 has it
+    await page.ev(`bigDl('/bigslow'), 1`, true);
+    const full = id => dp.ev(`zeus.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(id)}))`);
+    const bs = await poll(async () => { const x = (await list()).find(y => y.name === 'bigslow.bin'); if (!x) return null; const f = await full(x.id); return f.engine === 'aria2' && f.received > 0 ? f : null; }, 30000);
+    let pr = 'no aria2 download';
+    if (bs) {
+      await dp.ev(`zeus.dlAct(${JSON.stringify(bs.id)}, 'pause')`);
+      await sleep(1500);
+      const a1 = (await full(bs.id)).received; await sleep(1500); const a2 = await full(bs.id);
+      await dp.ev(`zeus.dlAct(${JSON.stringify(bs.id)}, 'resume')`);
+      const more = await poll(async () => { const f = await full(bs.id); return f.received > a2.received + 200000 ? f : null; }, 15000);
+      pr = `paused ${a2.paused} (${a1} -> ${a2.received}), went on ${!!more}`;
+      ok('pausing and resuming an aria2 download', a2.paused && a1 === a2.received && !!more, pr);
+      await dp.ev(`zeus.dlAct(${JSON.stringify(bs.id)}, 'cancel')`);
+      const c = await poll(async () => { const f = await full(bs.id); return f.state === 'cancelled' ? f : null; }, 10000);
+      await sleep(800);
+      ok('cancelling an aria2 download removes its partial files', !!c && !fs.existsSync(c.part) && !fs.existsSync(c.part + '.aria2'), c ? c.part : 'not cancelled');
+    } else { ok('pausing and resuming an aria2 download', false, pr); ok('cancelling an aria2 download removes its partial files', false, pr); }
     await page.ev('slowDl(), 1', true);
     const slow = await poll(async () => (await list()).find(x => x.name === 'slow.bin' && x.state === 'progressing'), 15000);
     if (slow) await dp.ev(`zeus.dlAct(${JSON.stringify(slow.id)}, 'cancel')`);
@@ -591,9 +652,11 @@ async function adSlots() {
     <div id=w2><script src="/own.js"></script></div>
     <div id=w3><script src="http://localhost:8798/adimg.js"></script></div>
     <p id=w4>text <a id=bn href="#"><img src="https://doubleclick.net/banner.png" width=300 height=100></a></p>
+    <div id=w5><script src="http://localhost:8798/taUwXay04girK/156759"></script></div>
     <p id=txt>كلام الصفحة</p></body>`;
   const srv = http.createServer((q, r) => {
     if (q.url === '/slots') { r.setHeader('Content-Type', 'text/html; charset=utf-8'); return r.end(page); }
+    if (q.url === '/taUwXay04girK/156759') { r.setHeader('Content-Type', 'text/javascript'); return r.end('document.title = "rotating ad ran"; ' + slot('')); }
     if (q.url === '/ad.js' || q.url === '/own.js') { r.setHeader('Content-Type', 'text/javascript'); return r.end(slot('')); }
     if (q.url === '/adimg.js') { r.setHeader('Content-Type', 'text/javascript'); return r.end(slot('<img src="http://localhost:8798/c.png" style="width:300px;height:100px">')); }
     if (q.url === '/c.png') { r.setHeader('Content-Type', 'image/png'); return r.end(PNG); }
@@ -609,6 +672,45 @@ async function adSlots() {
     ok('empty ad slots: the box another site\'s script made, with nothing showing in it, is folded with its wrappers', !r.w1, JSON.stringify(r));
     ok('empty ad slots: a blocked picture is folded, the text around it stays', !r.bn && r.w4 && r.txt, JSON.stringify(r));
     ok('empty ad slots: the site\'s own frame and an ad that shows a picture are left alone', r.w2 && r.w3, JSON.stringify(r));
+    const rot = await c.ev(`JSON.stringify({ ran: document.title === 'rotating ad ran', frame: !!document.querySelector('#w5 iframe') })`);
+    ok('ad networks on rotating domains are stopped by the shape of their addresses', rot === JSON.stringify({ ran: false, frame: false }), rot);
+    c.close();
+  } finally { srv.close(); }
+}
+
+/* YouTube's "Video paused. Continue watching?": answered when YouTube paused by itself, never when you did */
+async function ytIdle() {
+  const clip = fs.readFileSync(path.join(OUT, 'clip.mp4'));
+  const page = `<!doctype html><title>yt</title><body>
+    <div id=movie_player><video id=v src="/clip.mp4" muted playsinline style="width:320px"></video></div>
+    <button id=mine onclick="v.pause(); ask()">pause and ask</button>
+    <ytd-popup-container></ytd-popup-container>
+    <script>
+      window.answered = 0;
+      window.ask = () => { const c = document.querySelector('ytd-popup-container'); c.innerHTML = '<tp-yt-paper-dialog><yt-confirm-dialog-renderer><p>Video paused. Continue watching?</p><yt-button-renderer id=confirm-button><button>Yes</button></yt-button-renderer></yt-confirm-dialog-renderer></tp-yt-paper-dialog>';
+        c.querySelector('button').onclick = () => { answered++; c.innerHTML = ''; }; };
+      window.idle = () => { v.pause(); ask(); };
+    </script></body>`;
+  const srv = http.createServer((q, r) => {
+    if (q.url === '/clip.mp4') { r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': clip.length }); return r.end(clip); }
+    r.setHeader('Content-Type', 'text/html; charset=utf-8'); r.end(page);
+  }).listen(8799);
+  try {
+    await go('http://yt.localhost:8799/watch', true);
+    const c = await connect(await find(u => u.startsWith('http://yt.localhost:8799/'), 30));
+    await poll(() => c.ev(`location.host === 'yt.localhost:8799' && typeof ask === 'function'`), 20000);
+    await poll(() => c.ev(`v.play().then(() => true, () => false)`, true), 15000);
+    await sleep(1500);
+    await c.ev('idle(), 1');
+    const r1 = await poll(async () => { const j = JSON.parse(await c.ev(`JSON.stringify({ a: answered, playing: !v.paused })`)); return j.a === 1 && j.playing ? j : null; }, 8000);
+    ok('YouTube: "Continue watching?" after it paused by itself is answered and the video goes on', !!r1, await c.ev(`JSON.stringify({ a: answered, playing: !v.paused })`));
+    // your own click that pauses and opens a question: left for you
+    const b = JSON.parse(await c.ev(`JSON.stringify((r => ({ x: r.x + r.width / 2, y: r.y + r.height / 2 }))(mine.getBoundingClientRect()))`));
+    await c.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+    await c.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: b.x, y: b.y, button: 'left', clickCount: 1 });
+    await sleep(3000);
+    const r2 = JSON.parse(await c.ev(`JSON.stringify({ a: answered, paused: v.paused, open: !!document.querySelector('yt-confirm-dialog-renderer') })`));
+    ok('YouTube: a question after your own click is left alone', r2.a === 1 && r2.paused && r2.open, JSON.stringify(r2));
     c.close();
   } finally { srv.close(); }
 }
@@ -794,13 +896,14 @@ async function main() {
   const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
-  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await features(); }
+  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await ytIdle(); await features(); }
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
   if (process.platform === 'win32') { await mediaTest(); if (process.env.E2E_DIAG) await arablocn(); await passkeys(); }
   await clientHints();
   await popups();
   await adSlots();
+  await ytIdle();
   await features();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);

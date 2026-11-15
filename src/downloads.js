@@ -2,7 +2,10 @@
 /*
  * Built-in download manager (replaces Free Download Manager):
  *  - asks where to save every file (Windows "Save as" window, starts in the last folder used)
- *  - several connections per file (Chromium parallel downloading, switched on in main.js)
+ *  - big files (5 MB and more) go to aria2 (src/aria2.js): up to 16 connections per file. Chromium starts every
+ *    download and is only stopped once aria2 is really receiving the file, so a link aria2 can't fetch (a form
+ *    sent with POST, a one-time link, a site that refuses it) simply carries on in Chromium, nothing lost.
+ *    Smaller files, and the fallback: Chromium (parallel downloading, switched on in main.js)
  *  - pause / resume / cancel / retry, resume after a restart, speed and time left
  *  - a list that survives restarts (downloads.json)
  */
@@ -10,8 +13,12 @@ const fs = require('fs');
 const path = require('path');
 
 class DownloadManager {
-  constructor({ app, store, settings, notify }) {
+  constructor({ app, store, settings, notify, aria = null, log = () => {} }) {
     this.app = app;
+    this.aria = aria;                 // Aria2 (src/aria2.js), or null
+    this.log = log;
+    this.ariaLive = new Map();        // id -> { gid, rec } of a download aria2 is doing (rec kept: a private window's list may be gone)
+    this.ariaTimer = null;
     this.store = store;               // makeStore('downloads.json', [])
     this.settings = settings;
     this.notify = notify;             // (rec, event) => void   event: 'start' | 'update' | 'done'
@@ -21,13 +28,16 @@ class DownloadManager {
     this.session = [];                // ids downloaded since the browser opened (the bar's download list)
     // anything that was running when the browser closed can be resumed
     this.store.data = this.store.data.filter(Boolean);   // (private downloads are saved as null)
-    for (const r of this.store.data) if (r.state === 'progressing' || r.state === 'paused') r.state = 'interrupted';
+    for (const r of this.store.data) { if (r.state === 'progressing' || r.state === 'paused') r.state = 'interrupted'; delete r.handing; }
   }
 
   list() { return this.store.data; }
   sessionList() { return this.session.map(id => this.get(id)).filter(Boolean); }
   get(id) { return this.store.data.find(r => r.id === id) || null; }
-  activeCount() { return [...this.live.values()].filter(i => i.getState() === 'progressing').length; }
+  activeCount() {
+    return [...this.live.values()].filter(i => i.getState() === 'progressing').length
+      + [...this.ariaLive.values()].filter(x => !x.rec.paused).length;
+  }
 
   // called from session 'will-download'
   handle(item, opts = {}) {
@@ -58,6 +68,7 @@ class DownloadManager {
 
     let announced = false, lastSave = 0;
     item.on('updated', (e, state) => {
+      if (rec.engine === 'aria2') return;     // aria2 took it over
       const sp = item.getSavePath();
       if (sp && sp !== rec.path) {
         rec.path = sp; rec.name = path.basename(sp);
@@ -75,8 +86,10 @@ class DownloadManager {
       if (!announced) { announced = true; this.notify(rec, 'start'); }
       this.notify(rec, 'update');
       if (now - lastSave > 3000) { lastSave = now; this.store.save(); }
+      if (!rec.handing && this.wantsAria(item, rec, opts)) this.handOff(item, rec, opts);
     });
     item.once('done', (e, state) => {
+      if (rec.engine === 'aria2') return;     // the Chromium copy that was stopped after the hand-over
       this.live.delete(rec.id); this.speed.delete(rec.id);
       rec.received = item.getReceivedBytes(); rec.total = item.getTotalBytes() || rec.received;
       rec.speed = 0; rec.paused = false; rec.end = Date.now();
@@ -89,6 +102,150 @@ class DownloadManager {
     return rec;
   }
 
+  /* ---------- aria2 ---------- */
+  wantsAria(item, rec, opts) {
+    if (!this.aria || rec.noAria || opts.posted || !opts.ses || this.settings.data.dlEngine === 'chromium') return false;
+    if (item.getState() !== 'progressing' || item.isPaused()) return false;
+    const chain = item.getURLChain() || [];
+    if (!chain.length || !chain.every(u => /^https?:\/\//i.test(u))) return false;
+    const total = item.getTotalBytes();
+    if (!total || total < 5 * 1024 * 1024) return false;      // small or unknown size (a stream): Chromium
+    if (total - item.getReceivedBytes() < 2 * 1024 * 1024) return false;   // almost done anyway
+    return this.aria.available();
+  }
+  ariaOptions(rec, cookie) {
+    const header = [];
+    if (cookie) header.push('Cookie: ' + cookie);
+    if (rec.referrer) header.push('Referer: ' + rec.referrer);
+    return {
+      dir: path.dirname(rec.part), out: path.basename(rec.part), header, 'user-agent': rec.ua || '',
+      split: '16', 'max-connection-per-server': '16', 'min-split-size': '1M',
+      'allow-overwrite': 'true', 'auto-file-renaming': 'false', 'max-tries': '5', 'retry-wait': '2',
+      'connect-timeout': '15', timeout: '30', 'max-file-not-found': '2'
+    };
+  }
+  async cookieFor(ses, url) {
+    try { const l = await ses.cookies.get({ url }); return l.map(c => c.name + '=' + c.value).join('; '); } catch (e) { return ''; }
+  }
+  // Chromium keeps the download (paused) until aria2 proves it gets the same file
+  async handOff(item, rec, opts) {
+    rec.handing = true;
+    const chain = item.getURLChain(), uri = chain[chain.length - 1] || item.getURL(), total = item.getTotalBytes();
+    const back = why => {   // aria2 can't: Chromium carries on
+      this.log('download stays in Chromium:', why);
+      rec.noAria = true; rec.handing = false;
+      try { if (item.getState() === 'progressing' && item.isPaused()) item.resume(); } catch (e) {}
+    };
+    let gid = null;
+    try {
+      item.pause();
+      await this.aria.start();
+      Object.assign(rec, { part: rec.path + '.part', ariaUrl: uri, referrer: /^https?:/i.test(opts.referrer || '') ? opts.referrer : '', ua: opts.ses.getUserAgent() });
+      for (const f of [rec.part, rec.part + '.aria2']) { try { fs.unlinkSync(f); } catch (e) {} }   // leftovers of an earlier try
+      gid = await this.aria.call('addUri', [uri], this.ariaOptions(rec, await this.cookieFor(opts.ses, uri)));
+      for (let i = 0; i < 60; i++) {   // up to 15 s for the first bytes
+        await new Promise(r => setTimeout(r, 250));
+        if (item.getState() !== 'progressing') { await this.ariaDrop(gid, rec); return back('the Chromium download ended meanwhile'); }
+        const s = await this.aria.call('tellStatus', gid, ['status', 'totalLength', 'completedLength', 'errorMessage']);
+        if (s.status === 'error' || s.status === 'removed') { await this.ariaDrop(gid, rec); return back('aria2: ' + (s.errorMessage || s.status)); }
+        if (+s.totalLength && +s.totalLength !== total) { await this.ariaDrop(gid, rec); return back(`a different file (${s.totalLength} != ${total})`); }
+        if (+s.completedLength > 0 || s.status === 'complete') {
+          // it works: Chromium's copy goes, aria2 goes on
+          rec.engine = 'aria2'; rec.handing = false; rec.canResume = true;
+          this.live.delete(rec.id); this.speed.delete(rec.id);
+          this.ariaLive.set(rec.id, { gid, rec });
+          try { item.cancel(); } catch (e) {}
+          this.store.save();
+          this.ariaWatch();
+          return;
+        }
+      }
+      await this.ariaDrop(gid, rec); back('no data from aria2 in 15 s');
+    } catch (e) {
+      if (gid) await this.ariaDrop(gid, rec);
+      back(e.message);
+    }
+  }
+  async ariaDrop(gid, rec) {
+    try { await this.aria.call('forceRemove', gid); } catch (e) {}
+    await new Promise(r => setTimeout(r, 300));
+    try { await this.aria.call('removeDownloadResult', gid); } catch (e) {}
+    if (rec && rec.part) for (const f of [rec.part, rec.part + '.aria2']) { try { fs.unlinkSync(f); } catch (e) {} }
+  }
+  // continue an aria2 download (paused by a restart or a broken connection): its .aria2 file says what is left
+  async ariaRestart(rec, ses) {
+    try {
+      await this.aria.start();
+      const gid = await this.aria.call('addUri', [rec.ariaUrl || rec.url], { ...this.ariaOptions(rec, await this.cookieFor(ses, rec.ariaUrl || rec.url)), 'allow-overwrite': 'false', continue: 'true' });
+      Object.assign(rec, { state: 'progressing', paused: false, error: '' });
+      this.ariaLive.set(rec.id, { gid, rec });
+      this.notify(rec, 'update');
+      this.ariaWatch();
+    } catch (e) { rec.state = 'interrupted'; rec.error = e.message; this.notify(rec, 'done'); }
+  }
+  ariaWatch() {
+    if (this.ariaTimer) return;
+    let lastSave = 0;
+    this.ariaTimer = setInterval(async () => {
+      if (this.ariaBusy) return;
+      if (!this.ariaLive.size) { clearInterval(this.ariaTimer); this.ariaTimer = null; return; }
+      this.ariaBusy = true;
+      try {
+        for (const [id, { gid, rec }] of [...this.ariaLive]) {
+          let s;
+          try { s = await this.aria.call('tellStatus', gid, ['status', 'totalLength', 'completedLength', 'downloadSpeed', 'errorMessage']); }
+          catch (e) {   // aria2 is gone (crashed or killed): what it had stays on disk and can be continued
+            if (!this.aria.running()) { this.ariaLive.delete(id); Object.assign(rec, { state: 'interrupted', speed: 0, paused: false, end: Date.now() }); this.notify(rec, 'done'); }
+            continue;
+          }
+          rec.total = +s.totalLength || rec.total; rec.received = +s.completedLength;
+          rec.paused = s.status === 'paused'; rec.speed = rec.paused ? 0 : +s.downloadSpeed;
+          if (s.status === 'complete') {
+            this.ariaLive.delete(id);
+            try { await this.aria.call('removeDownloadResult', gid); } catch (e) {}
+            try { fs.renameSync(rec.part, rec.path); rec.state = 'completed'; }
+            catch (e) { rec.state = 'interrupted'; rec.error = e.message; }
+            try { fs.unlinkSync(rec.part + '.aria2'); } catch (e) {}
+            Object.assign(rec, { speed: 0, paused: false, end: Date.now() });
+            this.store.save(); this.notify(rec, 'done');
+          } else if (s.status === 'error' || s.status === 'removed') {
+            this.ariaLive.delete(id);
+            try { await this.aria.call('removeDownloadResult', gid); } catch (e) {}
+            if (s.status === 'error') { Object.assign(rec, { state: 'interrupted', canResume: true, error: s.errorMessage || '', speed: 0, paused: false, end: Date.now() }); this.store.save(); this.notify(rec, 'done'); }
+          } else this.notify(rec, 'update');
+        }
+        if (Date.now() - lastSave > 3000) { lastSave = Date.now(); this.store.save(); }
+      } finally { this.ariaBusy = false; }
+      if (!this.ariaLive.size && this.aria) { clearInterval(this.ariaTimer); this.ariaTimer = null; }
+    }, 700);
+  }
+  async ariaAction(rec, cmd, ses) {
+    const gid = (this.ariaLive.get(rec.id) || {}).gid;
+    const dropFiles = () => { for (const f of [rec.part, rec.part + '.aria2']) { try { fs.unlinkSync(f); } catch (e) {} } };
+    switch (cmd) {
+      case 'pause': if (gid) { try { await this.aria.call('forcePause', gid); rec.paused = true; rec.speed = 0; } catch (e) {} } break;
+      case 'resume':
+        if (gid) { try { await this.aria.call('unpause', gid); rec.paused = false; } catch (e) {} }
+        else if (rec.state === 'interrupted') await this.ariaRestart(rec, ses);
+        break;
+      case 'cancel': case 'remove': case 'delete':
+        if (gid) { this.ariaLive.delete(rec.id); await this.ariaDrop(gid, rec); }
+        if (rec.state !== 'completed') dropFiles();
+        if (cmd === 'cancel') { if (rec.state !== 'completed') Object.assign(rec, { state: 'cancelled', speed: 0, paused: false, end: Date.now() }); }
+        else {
+          if (cmd === 'delete' && rec.path && rec.state === 'completed') { try { require('electron').shell.trashItem(rec.path); } catch (e) {} }
+          this.remove(rec.id);
+        }
+        break;
+      case 'retry': if (!gid) { dropFiles(); this.remove(rec.id); ses.downloadURL(rec.url); } break;
+    }
+    this.store.save();
+    this.notify(rec, 'refresh');
+    return true;
+  }
+  ariaRunning() { return !!(this.aria && this.aria.running()); }
+  stopAll() { return this.aria ? this.aria.shutdown() : Promise.resolve(); }
+
   folder() {
     const d = this.settings.data.dlDir;
     try { if (d && fs.statSync(d).isDirectory()) return d; } catch (e) {}
@@ -97,6 +254,7 @@ class DownloadManager {
 
   action(id, cmd, ses) {
     const rec = this.get(id); if (!rec) return false;
+    if (rec.engine === 'aria2' && this.aria) { this.ariaAction(rec, cmd, ses); return true; }
     const item = this.live.get(id);
     switch (cmd) {
       case 'pause': if (item && !item.isPaused()) item.pause(); break;

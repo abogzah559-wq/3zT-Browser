@@ -180,6 +180,17 @@ class AdBlocker {
     if (op && AdBlocker.site(op) === AdBlocker.site(host)) return false;
     return this.inSet(this.popup, host) || this.inSet(this.block, host) || this.inSet(this.block3p, host);
   }
+  /* Ad networks that move to a new domain every few days, so no host list keeps up with them; their
+     addresses keep the same shape. Checked only for requests from another site. */
+  static isRotatingAd(url, type) {
+    const i = url.indexOf('/', url.indexOf('//') + 2); if (i < 0) return false;
+    const p = url.slice(i);
+    if (type === 'script' && /^\/[A-Za-z0-9]{10,16}\/\d{5,7}$/.test(p) && /[a-z]/.test(p) && /[A-Z0-9]/.test(p.slice(1, p.lastIndexOf('/')))) return true;   // the slot script: /<key>/<zone>
+    if (/^\/tsf\/\d{4,8}\?md=/.test(p)) return true;    // its ad request
+    if (/^\/tsk\/[A-Za-z0-9*_-]{40,}/.test(p)) return true;   // its pictures and click counter
+    return false;
+  }
+
   /* should this request be blocked? pageUrl = the page that is loading it, type = Electron resourceType */
   shouldBlock(url, pageUrl, type) {
     const host = AdBlocker.hostOf(url); if (!host) return false;
@@ -195,6 +206,7 @@ class AdBlocker {
     // never block a site's own resources (e.g. visiting doubleclick.net itself)
     if (this.inSet(this.block, host)) return !page || thirdParty;
     if (this.block3p.size && this.inSet(this.block3p, host)) return thirdParty;
+    if (thirdParty && AdBlocker.isRotatingAd(url, type)) return true;
     if (type && this.typed.size) {
       for (let h = host; h;) {
         const l = this.typed.get(h);
