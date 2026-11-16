@@ -14,11 +14,12 @@ const inMainWorld = code => {
   try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
   catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
 };
-// a separate world of its own for uBlock Origin's isolated scripts: it sees the page's DOM but not its scripts,
-// and has none of this preload's powers (ipcRenderer...)
+// a separate world of its own for YouTube rules that must run beside the page (main.js, YTR, can send them as
+// 'isolated'; AdGuard's rules do not use it): it sees the page's DOM but not its scripts, and has none of this
+// preload's powers (ipcRenderer...)
 const UBO_WORLD = 1201;
 const inUboWorld = code => { try { webFrame.executeJavaScriptInIsolatedWorld(UBO_WORLD, [{ code }]); } catch (e) {} };
-// uBlock Origin's YouTube scripts (main.js, YTR): the isolated ones first, they rewrite page scripts before those run
+// AdGuard's YouTube rules (main.js, YTR): any isolated ones first, then the ones that run in the page itself
 const runYtRules = r => { if (!r || !r.main) return false; if (r.isolated) inUboWorld(r.isolated); inMainWorld(r.main); return true; };
 /* sign-in pages and the "Windows Security" window: see where it is used below.
    mode: 'off'   = passkeys are off (the default): passkey requests are answered "no passkey" at once, so the site
@@ -302,7 +303,7 @@ if (SUB) {
     if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
     if (mode !== 'nofix' || ua) inMainWorld(pkCode(mode, ua));
     { let seed = 0; try { seed = ipcRenderer.sendSync('fp:seed'); } catch (e) {} if (seed) inMainWorld(fpCode(seed)); }
-    // a YouTube player embedded in another site: uBlock Origin's YouTube scripts too (see main.js, YTR)
+    // a YouTube player embedded in another site: AdGuard's YouTube rules too (see main.js, YTR)
     if (/(^|\.)youtube(-nocookie)?\.com$/i.test(location.hostname)) {
       let st = null; try { st = ipcRenderer.sendSync('yt:adblock'); } catch (e) {}
       if (st && st.on && st.rules) { let r = null; try { r = ipcRenderer.sendSync('yt:rules'); } catch (e) {} runYtRules(r); }
@@ -461,7 +462,7 @@ if (SUB) {
     let st = { on: false, rules: false };
     try { st = ipcRenderer.sendSync('yt:adblock') || st; } catch (e) {}
     const on = !!st.on;
-    // uBlock Origin's own YouTube scripts (main.js, YTR), kept up to date: they replace the built-in data cleaning below
+    // AdGuard's YouTube rules (main.js, YTR), kept up to date: they replace the built-in data cleaning below
     let rules = false;
     if (on && st.rules) { try { rules = runYtRules(ipcRenderer.sendSync('yt:rules')); } catch (e) {} }
     if (on) {
@@ -490,7 +491,7 @@ if (SUB) {
           } catch (e) {}
           return o;
         };
-        if (!RULES) {   // (uBlock Origin's scripts do this their own way, which YouTube does not notice)
+        if (!RULES) {   // (AdGuard's rules do this their own way, which YouTube does not notice)
           const jp = JSON.parse;
           JSON.parse = disguise(function parse() { return clean(jp.apply(this, arguments)); }, jp);
           const rj = Response.prototype.json;
@@ -498,7 +499,7 @@ if (SUB) {
           let pr;
           try { Object.defineProperty(window, 'ytInitialPlayerResponse', { configurable: true, get() { return pr; }, set(v) { pr = clean(v); } }); } catch (e) {}
         }
-        // anything that still slips through: mute, fast-forward, press "skip" (not with uBlock Origin's scripts:
+        // anything that still slips through: mute, fast-forward, press "skip" (not with AdGuard's rules:
         // they handle it, and jumping a video to its end while YouTube switches to the next one stalls autoplay)
         let muted = null;
         if (!RULES) setInterval(() => {
@@ -529,7 +530,7 @@ if (SUB) {
         ytd-rich-item-renderer:has(ytd-ad-slot-renderer), ytd-rich-section-renderer:has(ytd-statement-banner-renderer),
         tp-yt-paper-dialog:has(ytd-enforcement-message-view-model), ytd-enforcement-message-view-model,
         body:has(ytd-enforcement-message-view-model) tp-yt-iron-overlay-backdrop { display: none !important; }`;
-      // with uBlock Origin's scripts only the feed's ad boxes are hidden (the ones EasyList hides): YouTube checks
+      // with AdGuard's rules only the feed's ad boxes are hidden (the ones EasyList hides): YouTube checks
       // whether the player's ad boxes were hidden, and then pauses the video behind an "ad blockers are not
       // allowed" message, which the full list above would also hide (a video paused for no visible reason)
       const feedCss = `ytd-ad-slot-renderer, ytd-in-feed-ad-layout-renderer, ytd-banner-promo-renderer, ytd-promoted-sparkles-web-renderer,

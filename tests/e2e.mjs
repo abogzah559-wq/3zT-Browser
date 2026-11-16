@@ -13,6 +13,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
+import { ytrulesUnit } from './ytrules.mjs';
 
 const argv = process.argv.slice(2);
 const exe = argv.find(a => !a.startsWith('--'));
@@ -678,7 +679,7 @@ async function adSlots() {
   } finally { srv.close(); }
 }
 
-/* link cleaning, fingerprinting protection, uBlock Origin's YouTube scripts */
+/* link cleaning, fingerprinting protection, AdGuard's YouTube rules (and an offline check of how they are read) */
 async function privacy() {
   const page = `<!doctype html><title>fp</title><body><canvas id=on width=200 height=60></canvas><script>
     const draw = c => { const x = c.getContext('2d'); x.fillStyle = '#f60'; x.fillRect(10, 10, 100, 30); x.fillStyle = '#069'; x.font = '18px Arial'; x.fillText('3zT fingerprint', 4, 40); return c; };
@@ -708,26 +709,55 @@ async function privacy() {
     ok('fingerprinting protection: another site reads a different value', b.off1 !== a.off1 && b.on === a.on, `sites differ ${b.off1 !== a.off1}, page canvases equal ${b.on === a.on}`);
     c2.close();
   } finally { srv.close(); }
-  // uBlock Origin's YouTube scripts: downloaded in the background, then used on YouTube (needs the internet)
+  ytrulesUnit(ok);
+  // AdGuard's YouTube rules: downloaded in the background, then used on YouTube (needs the internet)
   const logf = path.join(OUT, 'app.log');
   const got = await poll(() => { try { return /\[3zT\] YouTube rules (updated|checked)/.test(fs.readFileSync(logf, 'utf8')); } catch (e) { return false; } }, 40000);
-  if (!got) { ok('YouTube: uBlock Origin\'s YouTube scripts are downloaded and checked', false, 'not downloaded (no internet?)'); return; }
-  ok('YouTube: uBlock Origin\'s YouTube scripts are downloaded and checked', true);
+  if (!got) { ok('YouTube: AdGuard\'s YouTube rules are downloaded and checked', false, 'not downloaded (no internet?)'); return; }
+  ok('YouTube: AdGuard\'s YouTube rules are downloaded and checked', true);
   await go('https://www.youtube.com/watch?v=aqz-KE-bpKQ', true);
   const yt = await connect(await find(u => u.startsWith('https://www.youtube.com/watch'), 40));
-  // (the page-world set wraps setTimeout for YouTube's artificial delay; the log line can lag behind on Windows)
+  // (the rules wrap setTimeout for YouTube's artificial delay; the log line can lag behind on Windows)
   const used = await poll(async () => { try { if (/\[3zT\] yt rules injected www\.youtube\.com/.test(fs.readFileSync(logf, 'utf8'))) return true; } catch (e) {}
     return yt.ev(`String(setTimeout).indexOf('function setTimeout') !== 0`); }, 20000);
   const player = await poll(() => yt.ev(`!!document.querySelector('#movie_player video')`), 30000);
   ok('YouTube: the scripts run on YouTube and the player still loads', !!used && !!player, `used ${!!used}, player ${!!player}`);
-  // the isolated set ran in time: it rewrote YouTube's inline script, whose code then wraps Map.prototype.has
-  const iso = await poll(() => yt.ev(`String(Map.prototype.has).indexOf('function has') !== 0`), 15000);
-  ok('YouTube: the isolated scripts rewrite the player\'s page script before it runs', !!iso, String(await yt.ev('String(Map.prototype.has)')));
   // YouTube's ad check script loads (blocking it makes the player wait), and no "ad blockers are not allowed"
   const st = await poll(async () => { const v = JSON.parse(await yt.ev(`JSON.stringify({ s: window.google_ad_status, e: document.querySelectorAll('ytd-enforcement-message-view-model').length })`)); return v.s === 1 ? v : null; }, 15000)
     || JSON.parse(await yt.ev(`JSON.stringify({ s: window.google_ad_status, e: document.querySelectorAll('ytd-enforcement-message-view-model').length })`));
   ok('YouTube: its ad check passes and no ad-blocker message comes up', st.s === 1 && st.e === 0, JSON.stringify(st));
+  // for information only (does not fail the build): did "Experiencing interruptions?" show up 20 s after the player
+  if (player) {
+    await sleep(20000);
+    const toast = await yt.ev(`[...document.querySelectorAll('yt-formatted-string, tp-yt-paper-toast, .ytp-toast')].some(e => /Experiencing interruptions/i.test(e.textContent || ''))`);
+    console.log(`::notice title=youtube interruptions toast::${toast === true}`);
+  }
   yt.close();
+}
+
+/* the bar takes the site's colour: read once, soon after the page appears (not after everything has loaded),
+   from under the top edge (a loading line there is ignored), the theme colour when the header has no one colour */
+async function tint() {
+  const head = '<!doctype html><meta name="color-scheme" content="dark"><style>body{margin:0;background:#111}</style>';
+  const pages = {
+    '/solid': head + '<meta name="theme-color" content="#ff00ff"><div style="height:3px;background:#e00"></div><header style="height:90px;background:rgb(20,120,200)"></header><img src="/slow">',
+    '/mixed': head + '<meta name="theme-color" content="#336699"><header style="height:90px;background:linear-gradient(90deg,#000,#fff 25%,#f00 50%,#0f0 75%,#00f)"></header>'
+  };
+  const srv = http.createServer((q, r) => {
+    if (q.url === '/slow') return;   // never answers: the page keeps loading
+    r.setHeader('Content-Type', 'text/html; charset=utf-8'); r.end(pages[q.url] || head);
+  }).listen(8801);
+  const barTint = async () => { const tb = await toolbar(); const v = await tb.ev(`document.body.classList.contains('tinted') ? getComputedStyle(document.documentElement).getPropertyValue('--tint').trim() : ''`); tb.close(); return v; };
+  const near = (v, rgb) => { const m = /rgb\((\d+),\s*(\d+),\s*(\d+)\)/.exec(v || ''); return !!m && rgb.every((x, i) => Math.abs(x - +m[i + 1]) <= 8); };
+  try {
+    await go('http://tint-a.localhost:8801/solid', true);
+    const t0 = Date.now();
+    const a = await poll(async () => { const v = await barTint(); return near(v, [20, 120, 200]) ? v : null; }, 6000, 150);
+    ok('top bar: takes the header colour soon after the page appears, while it is still loading', !!a, `${a || await barTint()} after ${Date.now() - t0} ms`);
+    await go('http://tint-b.localhost:8801/mixed', true);
+    const b = await poll(async () => { const v = await barTint(); return near(v, [0x33, 0x66, 0x99]) ? v : null; }, 6000, 150);
+    ok('top bar: a header with no single colour uses the site\'s theme colour', !!b, b || await barTint());
+  } finally { srv.close(); }
 }
 
 /* YouTube's "Video paused. Continue watching?": answered when YouTube paused by itself, never when you did */
@@ -948,13 +978,14 @@ async function main() {
   const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
-  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await ytIdle(); await privacy(); await features(); }
+  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await tint(); await ytIdle(); await privacy(); await features(); }
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
   if (process.platform === 'win32') { await mediaTest(); if (process.env.E2E_DIAG) await arablocn(); await passkeys(); }
   await clientHints();
   await popups();
   await adSlots();
+  await tint();
   await ytIdle();
   await privacy();
   await features();

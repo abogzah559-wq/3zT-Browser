@@ -25,6 +25,7 @@ const UPD = require('./updater');
 const PERM = require('./permissions');
 const { knownMediaPage } = require('./media/detect');
 const { site: siteOf } = require('./domains');
+const YTRULES = require('./ytrules');
 
 // the app is called "3zT"; its profile folder keeps the older name so nothing is lost after updating
 app.setPath('userData', path.join(app.getPath('appData'), '3zT Browser'));
@@ -165,7 +166,26 @@ const tabOfWc = wc => allTabs().find(t => t.view && t.view.webContents === wc);
 const focusedWin = () => wins.find(w => !w.win.isDestroyed() && w.win.isFocused()) || lastFocused || wins[0];
 
 /* the strip behind the bar wears the colour of the site's top edge, sampled once per site and then kept */
-const tintCache = new Map();   // host -> [r,g,b]
+const tintCache = new Map();   // host -> [r,g,b], or 'none' (the site has no single colour there)
+const TINT_WORLD = 1998;
+// run in the page's own isolated world: waits (at most 1.5 s) for the first content on screen and two frames
+// after it, then gives the site's theme colour if it declares one
+const TINT_JS = `new Promise(done => {
+  const theme = () => { try {
+    const m = document.querySelector('meta[name="theme-color"]:not([media])') || document.querySelector('meta[name="theme-color"]');
+    if (!m || !m.content) return null;
+    // the browser reads the colour (any CSS form) on a canvas of its own; nothing is added to the page
+    const x = new OffscreenCanvas(1, 1).getContext('2d'); x.fillStyle = '#010203'; x.fillStyle = m.content.trim();
+    const v = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(x.fillStyle);
+    return v && x.fillStyle !== '#010203' ? [v[1], v[2], v[3]].map(h => parseInt(h, 16)) : null; } catch (e) { return null; } };
+  let left = false;
+  const finish = () => { if (left) return; left = true; requestAnimationFrame(() => requestAnimationFrame(() => done({ theme: theme() }))); };
+  try {
+    if (performance.getEntriesByName('first-contentful-paint').length) finish();
+    else { new PerformanceObserver((l, o) => { if (l.getEntriesByName('first-contentful-paint').length) { o.disconnect(); finish(); } }).observe({ type: 'paint', buffered: true }); }
+  } catch (e) { finish(); }
+  setTimeout(finish, 1500);
+})`;
 
 class Win {
   constructor(opts = {}) {
@@ -277,35 +297,56 @@ class Win {
     this.ui.setBounds({ x: 0, y: 0, width, height: uh });
   }
 
-  /* colour behind the bar: from the cache, or read once from the page's top edge after it loads */
+  /* colour behind the bar: from the cache, or read once per site from the page's own top edge (see sampleTint) */
   applyTint() {
     if (this.ui.webContents.isDestroyed()) return;
     const t = this.active();
     const host = t && !isNewtab(t.url) && /^https?:/i.test(t.url) ? hostOf(t.url) : '';
-    const col = host ? tintCache.get(host) : null;
-    if (host && !col && !t.loading && !t.tintBusy && t.view && !t.pip) this.sampleTint(t, host);
+    const got = host ? tintCache.get(host) : undefined;
+    // sampled as soon as the page's document is ready (not after every image and ad has loaded)
+    if (host && got === undefined && t.tintReady && !t.tintBusy && t.view && !t.pip) {
+      if (t.tintSeq !== t.navSeq) { t.tintSeq = t.navSeq; t.tintTries = 0; }
+      if (t.tintTries++ < 3) this.sampleTint(t, host);   // a page that cannot be read is not retried forever
+    }
+    const col = Array.isArray(got) ? got : null;
     const key = col ? col.join(',') : '';
     if (key === (this.tint || '')) return;
     this.tint = key;
     this.ui.webContents.send('tint', col || null);
   }
+  /* Once per site. The page itself says when its first content is on screen (no fixed wait, no guessing from a
+     blank page); then a thin band just under the top edge is read - below the first few pixels, where loading
+     bars and borders sit - and its main colour is used only if it really covers the band. A header that is a
+     picture or a gradient has no such colour: then the site's own theme colour (<meta name="theme-color">), or
+     the bar keeps its own look. The answer, colour or none, is kept for the site, so this never runs twice. */
   async sampleTint(t, host) {
     t.tintBusy = true;
+    const seq = t.navSeq;
     try {
-      await new Promise(r => setTimeout(r, 300));          // let the first paint land
-      if (!t.view || t.view.webContents.isDestroyed() || hostOf(t.url) !== host) return;
-      const { width } = t.view.getBounds(); if (width < 20) return;
-      const img = await t.view.webContents.capturePage({ x: 0, y: 0, width, height: 3 });
+      const wc = t.view.webContents;
+      const info = await Promise.race([wc.executeJavaScriptInIsolatedWorld(TINT_WORLD, [{ code: TINT_JS }]), new Promise(r => setTimeout(() => r(null), 2500))]).catch(() => null);
+      if (!t.view || wc.isDestroyed() || t.navSeq !== seq || hostOf(t.url) !== host || tintCache.has(host)) return;
+      if (t.id !== this.activeId) return;                  // read again when the tab is shown (only what is on screen can be read)
+      const { width } = t.view.getBounds(); if (width < 40) return;
+      const img = await wc.capturePage({ x: 0, y: 0, width, height: 12 });
+      if (t.navSeq !== seq || tintCache.has(host)) return;
       const sz = img.getSize(), bmp = img.toBitmap();      // BGRA
-      if (!sz.width || bmp.length < sz.width * 4) return;
-      // most common colour along the top row (ignores logos and buttons)
-      const cnt = new Map(), row = Math.min(1, sz.height - 1) * sz.width * 4;
-      for (let x = 0; x < sz.width; x += 2) {
-        const i = row + x * 4, k = ((bmp[i + 2] >> 3) << 10) | ((bmp[i + 1] >> 3) << 5) | (bmp[i] >> 3);
-        const c = cnt.get(k); if (c) { c.n++; c.r += bmp[i + 2]; c.g += bmp[i + 1]; c.b += bmp[i]; } else cnt.set(k, { n: 1, r: bmp[i + 2], g: bmp[i + 1], b: bmp[i] });
+      if (sz.width < 20 || sz.height < 8 || bmp.length < sz.width * sz.height * 4) return;
+      const cnt = new Map(); let total = 0;
+      const x0 = Math.round(sz.width * 0.02), x1 = sz.width - x0, step = Math.max(1, Math.round(sz.width / 400));
+      for (let y = Math.round(sz.height / 3); y < sz.height; y++) {
+        for (let x = x0; x < x1; x += step) {
+          const i = (y * sz.width + x) * 4, k = ((bmp[i + 2] >> 3) << 10) | ((bmp[i + 1] >> 3) << 5) | (bmp[i] >> 3);
+          const c = cnt.get(k); total++;
+          if (c) { c.n++; c.r += bmp[i + 2]; c.g += bmp[i + 1]; c.b += bmp[i]; } else cnt.set(k, { n: 1, r: bmp[i + 2], g: bmp[i + 1], b: bmp[i] });
+        }
       }
       let best = null; for (const c of cnt.values()) if (!best || c.n > best.n) best = c;
-      if (best && !tintCache.has(host)) tintCache.set(host, [best.r, best.g, best.b].map(v => Math.round(v / best.n)));
+      let col = null;
+      if (best && best.n >= total * 0.4) col = [best.r, best.g, best.b].map(v => Math.round(v / best.n));
+      // (with dark pages on, Chromium darkens light sites, but not their declared theme colour: a light one is left out)
+      else if (info && Array.isArray(info.theme) && !(DARK_PAGES && (0.299 * info.theme[0] + 0.587 * info.theme[1] + 0.114 * info.theme[2]) / 255 > 0.5)) col = info.theme;
+      tintCache.set(host, col || 'none');
     } catch (e) {} finally { t.tintBusy = false; }
     if (!this.win.isDestroyed()) this.applyTint();
   }
@@ -532,6 +573,13 @@ function makeView(tab, fromOpener) {
 
   const upd = () => tab.win.pushState();
   wc.on('did-start-loading', () => { tab.loading = true; upd(); });
+  // the bar's colour is read from a page only once its document is there (see Win.sampleTint)
+  wc.on('did-start-navigation', (e, ...rest) => {
+    const isMain = e && e.isMainFrame !== undefined ? e.isMainFrame : rest[2];
+    const same = e && e.isSameDocument !== undefined ? e.isSameDocument : rest[1];
+    if (isMain && !same) tab.tintReady = false;
+  });
+  wc.on('dom-ready', () => { tab.tintReady = true; upd(); });
   wc.on('did-stop-loading', () => { tab.loading = false; upd(); });
   wc.on('page-title-updated', (e, title) => {
     tab.title = title; upd();
@@ -2019,7 +2067,7 @@ function setupPasswordIpc() {
     if (!tabOfWc(e.sender) || !Array.isArray(texts)) return [];
     return trBatch(texts.slice(0, 400).map(x => String(x).slice(0, 5000)), tl === 'en' ? 'en' : 'ar');
   });
-  // YouTube ad blocking: on? and uBlock Origin's own YouTube scripts if they are here (see YTR)
+  // YouTube ad blocking: on? and AdGuard's YouTube rules if they are here (see YTR)
   ipcMain.on('yt:adblock', e => {
     const t = tabOfWc(e.sender);
     const on = !!(t && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com'));
@@ -2028,72 +2076,107 @@ function setupPasswordIpc() {
   ipcMain.on('yt:rules', e => {
     const t = tabOfWc(e.sender);
     const ok = t && isYTAny(senderHost(e)) && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com');
-    e.returnValue = ok ? { main: YTR.code('main'), isolated: YTR.code('isolated') } : null;
+    e.returnValue = ok ? { main: YTR.code('main', senderHost(e)) } : null;
     if (ok && process.env.ZEUS_E2E && e.returnValue) console.log('[3zT] yt rules injected', senderHost(e));
   });
   setupSiteIpc();
 }
 
-/* ---------- YouTube: uBlock Origin's own YouTube scripts ----------
+/* ---------- YouTube: AdGuard's YouTube rules ----------
    YouTube changes how it detects ad blockers every few days (late starts with "Experiencing interruptions?",
-   paused next videos). The uBlock Origin team answers each change within days in its filter lists; uBlock Origin
-   Lite publishes them compiled as page scripts ("scriptlets"). They are downloaded from uBlock Origin Lite's own
-   repository (GPL-3.0, not part of 3zT), checked, kept on disk and refreshed every 12 hours, and run on YouTube
-   pages only, in the page, before YouTube's own scripts - the way uBlock Origin Lite runs them in Chrome.
+   ads coming back in long videos). AdGuard answers each change within days in AdGuard Base filter, and its YouTube
+   rules work on the player's own data before the player reads it (no ad is ever handed to the player), instead of
+   removing the ad after it arrives. The list (AdGuard Base filter) and AdGuard's scriptlet library (both GPL-3.0,
+   not part of 3zT) are downloaded at run time, checked (the list's own checksum, enough rules, and the rules that
+   answer YouTube's current checks), turned into one page script per YouTube host (see ytrules.js), kept on disk
+   and refreshed every 12 hours. They run on YouTube pages only, in the page, before YouTube's own scripts.
    Until they are downloaded (or if a download is not valid), the built-in YouTube blocking in
    preload-newtab.js is used instead. */
 const YTR = {
-  BASE: 'https://raw.githubusercontent.com/uBlockOrigin/uBOL-home/main/chromium/rulesets/scripting/scriptlet/',
-  FILES: [['scriptlet-begin.js', 'uBOL_scriptletFrameworkBegin'], ['ublock-filters.js', 'uBOL_scriptlets'], ['scriptlet-end.js', 'uBOL_scriptletFrameworkEnd']],
-  // two sets: scripts that run in the page itself (main) and scripts that run beside it (isolated), e.g. the
-  // one that rewrites YouTube's inline player script before it runs
-  WORLDS: { main: 'scriptlets.js', isolated: 'scriptlets-isolated.js' },
+  // the second address is tried only when the first gives a list without the YouTube rules we need
+  FILTERS: ['https://filters.adtidy.org/extension/chromium/filters/2.txt', 'https://filters.adtidy.org/extension/chromium-mv3/filters/2.txt'],
+  LIB: 'https://cdn.jsdelivr.net/npm/@adguard/scriptlets@2/dist/scriptlets.corelibs.json',
+  HOSTS: ['www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'www.youtube-nocookie.com', 'youtube.com'],
+  OLD: ['scriptlets.js', 'scriptlets-isolated.js'],   // uBlock Origin Lite's files from 0.18.0
   EVERY: 12 * 3600 * 1000,
   _code: {}, busy: null,
   dir() { return path.join(app.getPath('userData'), 'yt-rules'); },
-  code(world = 'main') {
-    if (this._code[world] === undefined) { try { this._code[world] = fs.readFileSync(path.join(this.dir(), this.WORLDS[world]), 'utf8'); } catch (e) { this._code[world] = ''; } }
-    return this._code[world];
+  file(host) { return path.join(this.dir(), 'adg-' + host + '.js'); },
+  // the five hosts have their own script; any other YouTube host uses the closest one
+  hostFor(h) {
+    h = String(h || '').toLowerCase();
+    if (this.HOSTS.includes(h)) return h;
+    return YTRULES.match(h, 'youtube-nocookie.com') ? 'www.youtube-nocookie.com' : 'youtube.com';
   },
-  ready() { return !!this.code('main') && !!this.code('isolated'); },
-  // the three files of a set must be complete, of this kind, and belong together (same id)
-  check(texts) {
-    let id = null;
-    for (let i = 0; i < 3; i++) {
-      const t = texts[i], [name, fn] = this.FILES[i];
-      if (typeof t !== 'string' || t.length < 200 || t.length > 8e6 || !t.includes('(function ' + fn + '(')) throw new Error(name + ': not a uBOL scriptlet file');
-      const m = /\}\)\("([0-9a-f-]{36})"\);\s*(?:void 0;)?\s*$/.exec(t);
-      if (!m) throw new Error(name + ': no id');
-      if (id && m[1] !== id) throw new Error(name + ': files of different versions');
-      id = m[1];
+  // AdGuard's rules all run in the page itself; there is nothing to run beside it (the isolated world)
+  code(world = 'main', host = 'www.youtube.com') {
+    if (world !== 'main') return '';
+    const k = this.hostFor(host);
+    if (this._code[k] === undefined) { try { this._code[k] = fs.readFileSync(this.file(k), 'utf8'); } catch (e) { this._code[k] = ''; } }
+    return this._code[k];
+  },
+  ready() { return !!this.code('main', 'www.youtube.com'); },
+  meta() { try { return JSON.parse(fs.readFileSync(path.join(this.dir(), 'meta.json'), 'utf8')); } catch (e) { return {}; } },
+  writeMeta(m) { const f = path.join(this.dir(), 'meta.json'); fs.writeFileSync(f + '.tmp', JSON.stringify(m)); fs.renameSync(f + '.tmp', f); },
+  size() { let n = 0; for (const h of this.HOSTS) n += this.code('main', h).length; return n; },
+  // a list is used only if its checksum is right and www.youtube.com has enough rules, including the three
+  // that answer YouTube's current ad-blocker checks
+  // (null: a valid list, but without those rules - then the other address is tried)
+  checkList(text) {
+    if (!YTRULES.checksum(text).ok) throw new Error('filter list: checksum does not match');
+    const parsed = YTRULES.parse(text), www = YTRULES.pick(parsed, 'www.youtube.com'), mk = YTRULES.markers(www);
+    if (www.length < 15 || !mk.adStatus || !mk.timeout || !mk.abnormality) {
+      console.warn('[3zT] YouTube rules: ' + www.length + ' rules for www.youtube.com, needed rules ' + JSON.stringify(mk));
+      return null;
     }
-    return id;
+    return parsed;
   },
   refresh(force) {
     if (this.busy) return this.busy;
     this.busy = (async () => {
-      let meta = {}; try { meta = JSON.parse(fs.readFileSync(path.join(this.dir(), 'meta.json'), 'utf8')); } catch (e) {}
+      const meta = this.meta();
       if (!force && this.ready() && Date.now() - (meta.t || 0) < this.EVERY) return false;
-      // both sets are downloaded and checked before either is written, so the two always match
-      const got = {};
-      for (const world of Object.keys(this.WORLDS)) {
-        const texts = [];
-        for (const [name] of this.FILES) {
-          const r = await net.fetch(this.BASE + world + '/' + name, { headers: { 'Cache-Control': 'no-cache' } });
-          if (!r.ok) throw new Error(world + '/' + name + ': HTTP ' + r.status);
-          texts.push(await r.text());
+      const get = (url, headers = {}) => net.fetch(url, { cache: 'no-store', headers: Object.assign({ 'Cache-Control': 'no-cache' }, headers) });
+      // the list: nothing new since last time (304) -> only the time of this check is kept
+      let parsed = null, res = null;
+      for (let i = 0; i < this.FILTERS.length && !parsed; i++) {
+        const etag = i === 0 && this.ready() && meta.filterEtag;
+        const r = await get(this.FILTERS[i], etag ? { 'If-None-Match': meta.filterEtag } : {});
+        if (r.status === 304) {
+          fs.mkdirSync(this.dir(), { recursive: true });
+          this.writeMeta(Object.assign({}, meta, { t: Date.now() }));
+          console.log('[3zT] YouTube rules', 'checked', Math.round(this.size() / 1024) + ' KB');
+          return false;
         }
-        got[world] = { id: this.check(texts), code: texts.join('\n;\n') };
+        if (!r.ok) throw new Error('filter list: HTTP ' + r.status);
+        const text = await r.text();
+        parsed = this.checkList(text);
+        res = { etag: r.headers.get('etag') || '', version: (/^! Version: *(\S+)/m.exec(text) || [])[1] || '' };
       }
+      if (!parsed) throw new Error('filter list: no list with the YouTube rules needed');
+      // the scriptlet library, downloaded together with every new list
+      const lr = await get(this.LIB);
+      if (!lr.ok) throw new Error('scriptlet library: HTTP ' + lr.status);
+      const lib = await lr.json();
+      if (!lib || typeof lib.version !== 'string' || !Array.isArray(lib.scriptlets)) throw new Error('scriptlet library: unexpected format');
+      const out = {}, counts = {}, skipped = new Set();
+      for (const h of this.HOSTS) {
+        const b = YTRULES.build(YTRULES.pick(parsed, h), lib, { engine: '3zT', version: app.getVersion(), verbose: false, domainName: h });
+        out[h] = b.code; counts[h] = { ok: b.ok, failed: b.failed.length };
+        for (const f of b.failed) skipped.add(f);
+      }
+      if (counts['www.youtube.com'].ok < 15 || counts['www.youtube.com'].failed > 3) throw new Error('rules for www.youtube.com: ' + JSON.stringify(counts['www.youtube.com']));
+      for (const f of skipped) console.warn('[3zT] YouTube rule skipped: ' + f.slice(0, 80));
       fs.mkdirSync(this.dir(), { recursive: true });
       let changed = false, size = 0;
-      for (const world of Object.keys(this.WORLDS)) {
-        const f = path.join(this.dir(), this.WORLDS[world]), code = got[world].code;
+      for (const h of this.HOSTS) {
+        const f = this.file(h), code = out[h];
+        if (code !== this.code('main', h)) changed = true;   // (read before the file is replaced)
         fs.writeFileSync(f + '.tmp', code); fs.renameSync(f + '.tmp', f);
-        if (code !== this._code[world]) changed = true;
-        this._code[world] = code; size += code.length;
+        this._code[h] = code; size += code.length;
       }
-      fs.writeFileSync(path.join(this.dir(), 'meta.json'), JSON.stringify({ t: Date.now(), id: got.main.id, size }));
+      this.writeMeta({ t: Date.now(), filterVersion: res.version, filterEtag: res.etag, libVersion: lib.version, counts });
+      for (const f of this.OLD) { try { fs.unlinkSync(path.join(this.dir(), f)); } catch (e) {} }
       console.log('[3zT] YouTube rules', changed ? 'updated' : 'checked', Math.round(size / 1024) + ' KB');
       return changed;
     })().catch(e => { console.warn('[3zT] YouTube rules:', e.message); return false; }).finally(() => { this.busy = null; });
@@ -2759,7 +2842,7 @@ app.whenReady().then(async () => {
   const refreshLists = () => adblock.refresh(u => net.fetch(u)).then(() => { for (const w of wins) w.pushState(); }).catch(() => {});
   setTimeout(refreshLists, 4000);
   setInterval(refreshLists, 6 * 3600 * 1000);
-  // uBlock Origin's YouTube scripts: soon after start, then every few hours (each refresh only downloads when due)
+  // AdGuard's YouTube rules: soon after start, then every few hours (each refresh only downloads when due)
   setTimeout(() => YTR.refresh(), 3000);
   // ClearURLs' rules for link cleaning (refreshed every few days)
   linkCleaner = new LinkCleaner(path.join(app.getPath('userData'), 'clean-links'), (...a) => console.log('[3zT]', ...a));
