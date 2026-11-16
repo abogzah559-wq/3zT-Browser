@@ -500,7 +500,7 @@ full texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 |---|---|---|---|
 | [Electron](https://github.com/electron/electron), [Chromium](https://www.chromium.org) | Electron / Chromium authors | MIT / BSD-style | Runtime |
 | [Ambient light for YouTube](https://github.com/WesselKroos/youtube-ambilight) 2.38.17 | Wessel Kroos | MIT | Bundled (`src/inject/ambient/`) |
-| [TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions) `vaft` | pixeltris | MIT | Bundled |
+| [TwitchAdSolutions](https://github.com/ryanbr/TwitchAdSolutions) `vaft` (maintained fork of [pixeltris/TwitchAdSolutions](https://github.com/pixeltris/TwitchAdSolutions)) | pixeltris, ryanbr and contributors | MIT | Bundled |
 | [Mozilla Readability](https://github.com/mozilla/readability) 0.6.0 | Mozilla | Apache-2.0 | Bundled, reader view |
 | [Autoconsent](https://github.com/duckduckgo/autoconsent) 18.2.0 | DuckDuckGo | MPL-2.0 | Fetched at build time, cookie popups |
 | [electron-chrome-web-store](https://github.com/samuelmaddock/electron-browser-shell), adm-zip, pbf | Samuel Maddock and others | MIT / BSD-3-Clause | Bundled |

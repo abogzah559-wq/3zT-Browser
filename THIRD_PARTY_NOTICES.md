@@ -32,9 +32,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-## TwitchAdSolutions - vaft (v58)
+## TwitchAdSolutions - vaft (v68.5.7)
 
-By pixeltris and contributors - <https://github.com/pixeltris/TwitchAdSolutions>
+By pixeltris, ryanbr and contributors - <https://github.com/ryanbr/TwitchAdSolutions> (maintained fork of
+<https://github.com/pixeltris/TwitchAdSolutions>)
 
 `src/inject/twitch-vaft.js` - unmodified.
 
