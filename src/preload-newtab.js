@@ -592,7 +592,11 @@ if (SUB) {
   }
 
   /* --- Twitch ads (TwitchAdSolutions "vaft", runs before Twitch's own player) --- */
-  if (cfg.twitch) { let c = ''; try { c = ipcRenderer.sendSync('site:code', 'twitch'); } catch (e) {} if (c) mainWorld(c); }
+  if (cfg.twitch) {
+    let c = ''; try { c = ipcRenderer.sendSync('site:code', 'twitch'); } catch (e) {} if (c) mainWorld(c);
+    // the video ad tile Twitch puts among the live channels of its browse pages
+    try { webFrame.insertCSS('#directory-rectangle{display:none!important}'); } catch (e) {}
+  }
 
   /* --- TikTok / Instagram: the highest quality the site sends, and no sponsored posts ---
      Both sites send every quality of a video with its details and let their player pick one, usually a low one
