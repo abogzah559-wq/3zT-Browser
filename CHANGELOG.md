@@ -16,6 +16,14 @@ All notable changes to 3zT, newest first. Release notes are generated from this 
   has not changed is not downloaded again). A rule that cannot be used is skipped on its own and logged. Until the
   rules are downloaded, the built-in blocking remains the fallback.
 
+### Twitch
+- The bundled Twitch ad blocker (TwitchAdSolutions `vaft`) is updated from script version 58 to 93 (release
+  68.5.7 of the maintained fork, ryanbr/TwitchAdSolutions; the original repository is archived). Twitch now
+  delivers ads on every stream type it offers, so during an ad break the script plays Twitch's clean 360p stream
+  until the break ends, then reloads the player at Source quality. Among the changes since version 58: from the
+  second break on, that clean stream is taken at once (no ~2 s search first), and the reload back to Source
+  quality no longer makes an audible click.
+
 ### Top bar
 - The bar takes the site's colour sooner: as soon as the page's first content is on screen, instead of after the
   whole page (every image and ad) has loaded, so sites that never finish loading now get their colour too.
