@@ -2,6 +2,28 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.19.0
+
+### YouTube
+- YouTube's ad blocking now uses AdGuard's YouTube rules from **AdGuard Base filter**, with AdGuard's scriptlet
+  library, in place of uBlock Origin Lite's scripts. Tested side by side in Chrome, AdGuard alone showed no ads (also
+  in long videos skipped ahead five times), no "Experiencing interruptions?" message and no black screen before a
+  video starts. AdGuard's rules work on the player's own data before the player reads it, while the scripts used in
+  0.18.0 removed ads after they arrived, which YouTube noticed: the message came up and ads came back in long videos.
+- The list and the library are downloaded at runtime (both GPL-3.0, not part of 3zT or its setup), checked (the list's
+  own checksum, at least 15 usable rules for `www.youtube.com`, and the three rules that answer YouTube's current
+  checks), turned into one page script for each YouTube host, kept on disk and refreshed every 12 hours (a list that
+  has not changed is not downloaded again). A rule that cannot be used is skipped on its own and logged. Until the
+  rules are downloaded, the built-in blocking remains the fallback.
+
+### Top bar
+- The bar takes the site's colour sooner: as soon as the page's first content is on screen, instead of after the
+  whole page (every image and ad) has loaded, so sites that never finish loading now get their colour too.
+- More reliable colour: it is read from a band just under the top edge, so a loading line or border at the very top
+  no longer becomes the bar's colour, and a blank page is never read. A header without one main colour (a picture or a
+  gradient) uses the site's declared theme colour, or the bar keeps its own look. It is still read once per site,
+  then kept.
+
 ## 0.18.0
 
 ### YouTube
