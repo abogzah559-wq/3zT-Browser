@@ -26,6 +26,7 @@ const PERM = require('./permissions');
 const { knownMediaPage } = require('./media/detect');
 const { site: siteOf } = require('./domains');
 const YTRULES = require('./ytrules');
+const SONGID = require('./songid');
 
 // the app is called "3zT"; its profile folder keeps the older name so nothing is lost after updating
 app.setPath('userData', path.join(app.getPath('appData'), '3zT Browser'));
@@ -1534,6 +1535,7 @@ function setupPermissions(ses) {
   // 1. a site asks (camera, microphone, location, notifications...)
   ses.setPermissionRequestHandler((wc, permission, cb, details) => {
     if (PERM.ALWAYS.has(permission)) return cb(true);
+    if (wc && songRec.has(wc.id)) return cb(permission === 'media');   // the music button's own listener (sound of one tab)
     const kinds = PERM.kindsOf(permission, details);
     if (!kinds.length) return cb(false);                    // anything else sensitive: no
     const origin = PERM.originOf((details && details.requestingUrl) || (wc && wc.getURL()));
@@ -1555,6 +1557,7 @@ function setupPermissions(ses) {
   // 2. a site checks what it may use (navigator.permissions, device labels...)
   ses.setPermissionCheckHandler((wc, permission, requestingOrigin, details) => {
     if (PERM.ALWAYS.has(permission)) return true;
+    if (wc && songRec.has(wc.id)) return permission === 'media';
     const origin = PERM.originOf(requestingOrigin || (details && (details.requestingUrl || details.securityOrigin)) || '');
     const part = partOf(tabOf(wc));
     if (permission === 'media') {
@@ -1589,6 +1592,12 @@ function setupPermissions(ses) {
     // refusing: Electron wants no stream at all here (an empty object throws)
     const deny = () => { try { cb(null); } catch (e) { try { cb({}); } catch (x) {} } };
     let wc = null; try { wc = req.frame ? webContents.fromFrame(req.frame) : null; } catch (e) {}
+    // the music button's listener: the sound of the one tab it was started for, which keeps playing as usual
+    const songTarget = wc && songRec.get(wc.id);
+    if (songTarget) {
+      if (songTarget.isDestroyed()) return deny();
+      try { return cb({ video: songTarget.mainFrame, audio: songTarget.mainFrame, enableLocalEcho: true }); } catch (e) { return deny(); }
+    }
     const tab = tabOf(wc); const origin = PERM.originOf(req.securityOrigin || (req.frame && req.frame.url) || '');
     if (!tab || !origin || perms.get(origin, 'screen', partOf(tab)) === 'block') return deny();
     let sources = [];
@@ -2341,6 +2350,97 @@ function mergeBuiltInExtensions() {
   settings.data.mergedExt = true; settings.save();
 }
 
+/* ---------- the music button: what song is playing (src/songid.js) ---------- */
+// Music sites say it themselves (their player's media session). Anywhere else a hidden page listens to the tab
+// for up to 11 seconds (src/ui/songid.html); at 4, 7.5 and 11 seconds what it heard so far is fingerprinted and
+// the fingerprint sent to Shazam, until a song is found. Nothing runs before the button is pressed.
+const SONG_FILE = path.join(SRC, 'ui', 'songid.html');
+const SONG_WORLD = 1997;
+const SONG_TRIES = [4, 7.5, 11];      // seconds heard when a fingerprint is sent
+const songRec = new Map();            // hidden listener webContents id -> the tab webContents it may hear
+let songId = null, songBusy = false;
+const songLib = () => songId || (songId = new SONGID.SongId(path.join(app.getPath('userData'), 'songid'), (...a) => console.log('[3zT]', ...a)));
+const audibleTab = t => !!(t && t.view && !t.view.webContents.isDestroyed() && t.view.webContents.isCurrentlyAudible());
+// the tab to listen to: this one if it plays sound, else another playing tab of this window, else of another
+// window of the same kind (a private window only looks at its own tabs)
+function songTab(w) {
+  const a = w.active(); if (audibleTab(a)) return a;
+  return w.tabs.find(audibleTab) || (w.private ? null : allTabs().find(t => !t.win.private && audibleTab(t))) || null;
+}
+async function songFromPage(t) {
+  if (!SONGID.musicSite(hostOf(t.url))) return null;
+  try {
+    const m = await t.view.webContents.executeJavaScriptInIsolatedWorld(SONG_WORLD, [{ code: `(() => { const m = navigator.mediaSession && navigator.mediaSession.metadata; return m && m.title ? { title: String(m.title), artist: String(m.artist || '') } : null; })()` }]);
+    if (m && typeof m.title === 'string' && m.title.trim()) return { title: m.title.trim().slice(0, 300), artist: String(m.artist || '').trim().slice(0, 300) };
+  } catch (e) {}
+  return null;
+}
+async function songListen(t) {
+  const target = t.view.webContents;
+  const sid = songLib();
+  // the library (first use only: downloaded and checked) while the listener starts
+  const lib = sid.ensure(u => net.fetch(u, { cache: 'no-store' }));
+  lib.catch(() => {});
+  const rec = new BrowserWindow({
+    show: false, width: 200, height: 100, skipTaskbar: true, focusable: false, paintWhenInitiallyHidden: false,
+    webPreferences: { session: target.session, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' }
+  });
+  const rid = rec.webContents.id;
+  songRec.set(rid, target);
+  rec.webContents.on('will-navigate', e => e.preventDefault());
+  rec.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const run = code => rec.webContents.executeJavaScript(code, true);
+  try {
+    await rec.loadFile(SONG_FILE);
+    const st = await run('rec.start()');
+    if (st !== 'ok') throw new Error('listening: ' + st);
+    await lib;
+    const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch (e) { return 'UTC'; } })();
+    const started = Date.now();
+    for (const sec of SONG_TRIES) {
+      // wait until that much was heard (a tab that stopped or closed: at most a little longer)
+      while (!rec.isDestroyed() && Date.now() - started < (sec + 2) * 1000 && (await run('rec.seconds()')) < sec) await new Promise(r => setTimeout(r, 200));
+      if (rec.isDestroyed()) throw new Error('listener closed');
+      const pcm = new Int16Array(new Uint8Array(Buffer.from(await run('rec.take()'), 'base64')).buffer);
+      if (pcm.length < SONGID.RATE * 2) { if (target.isDestroyed()) return { status: 'silent' }; continue; }
+      if (SONGID.peak(pcm) < 0.004) return { status: 'silent' };
+      const req = await sid.request(pcm, tz);
+      const headers = {};
+      for (const [k, v] of Object.entries(req.headers || {})) if (!/^(accept-encoding|content-length|host)$/i.test(k)) headers[k] = String(v);
+      const r = await target.session.fetch(req.url, { method: 'POST', headers, body: req.body, cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(10000) });
+      if (!r.ok) throw new Error('recognition: HTTP ' + r.status);
+      const found = SONGID.parseAnswer(await r.json());
+      if (found) return Object.assign({ status: 'found', secs: sec }, found);
+    }
+    return { status: 'none' };
+  } finally {
+    songRec.delete(rid);
+    try { await run('rec.stop()'); } catch (e) {}
+    if (!rec.isDestroyed()) rec.destroy();
+  }
+}
+function setupSongIpc() {
+  ipcMain.handle('song:id', async e => {
+    const w = uiWin(e); if (!w) return null;
+    if (songBusy) return { status: 'busy' };
+    const t = songTab(w);
+    if (!t) return { status: 'silent' };
+    songBusy = true;
+    const t0 = Date.now();
+    try {
+      const fromPage = await songFromPage(t);
+      if (fromPage) return Object.assign({ status: 'found', from: 'page' }, fromPage);
+      const r = await songListen(t);
+      console.log('[3zT] song recognition:', r.status, Math.round((Date.now() - t0) / 100) / 10 + ' s');
+      return r;
+    } catch (x) {
+      logError('song recognition', x);
+      return { status: 'error' };
+    } finally { songBusy = false; }
+  });
+  ipcMain.on('song:copy', (e, text) => { if (uiWin(e) && typeof text === 'string' && text.length < 700) clipboard.writeText(text); });
+}
+
 /* ---------- IPC ---------- */
 const uiWin = e => winOfUi(e.sender);
 const internalPage = e => { try { return isInternal(e.senderFrame.url); } catch (x) { return false; } };
@@ -2854,6 +2954,7 @@ app.whenReady().then(async () => {
   setupSession(session.defaultSession);
   setupIpc();
   setupPermissionIpc();
+  setupSongIpc();
   passwords = new PW.PasswordStore(path.join(app.getPath('userData'), 'passwords.json'), safeStorage);
   setupPasswordIpc();
   // re-patch the copies already on disk when the patcher improves (also refreshes the shim)

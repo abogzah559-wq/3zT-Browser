@@ -90,6 +90,9 @@ jobs:
           echo "::notice title=install::exe $(Test-Path $app), desktop shortcut $(Test-Path $lnk), start menu $(Test-Path $start), browser registration $([bool]$reg)"
           if (-not $ok -or -not $reg) { $t = (Get-Content dist\install.log -Tail 15) -join '%0A'; echo "::error title=install::$t"; exit 1 }
 
+      - name: Song recognition (library download and checksums, fingerprint, Shazam's answer)
+        run: node tests/songid.mjs
+
       - name: End-to-end test of the installed app (pages + real Chrome Web Store installs)
         shell: pwsh
         run: node tests/e2e.mjs "$env:LOCALAPPDATA\Programs\3zT\3zT.exe" --store

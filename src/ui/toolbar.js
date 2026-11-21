@@ -10,7 +10,7 @@ const TIPS = {
   back: ['رجوع (Alt+←)', 'Back (Alt+←)'], forward: ['للأمام (Alt+→)', 'Forward (Alt+→)'], reload: ['تحديث (F5)', 'Reload (F5)'],
   star: ['حفظ في المفضلة (Ctrl+D)', 'Bookmark (Ctrl+D)'], ext: ['الإضافات', 'Extensions'], menu: ['القائمة', 'Menu'], downloads: ['التنزيلات', 'Downloads'],
   newtab: ['تبويب جديد (Ctrl+T)', 'New tab (Ctrl+T)'], translate: ['ترجمة الصفحة', 'Translate page'],
-  shield: ['مانع الإعلانات', 'Ad blocker'], reader: ['وضع القراءة', 'Reader view'], tabsearch: ['البحث في التبويبات (Ctrl+Shift+A)', 'Search tabs (Ctrl+Shift+A)'], media: ['تحميل الفيديو أو الصور من هذي الصفحة', 'Download the video or photos on this page']
+  song: ['وش الأغنية الشغالة؟', 'What song is playing?'], reader: ['وضع القراءة', 'Reader view'], tabsearch: ['البحث في التبويبات (Ctrl+Shift+A)', 'Search tabs (Ctrl+Shift+A)'], media: ['تحميل الفيديو أو الصور من هذي الصفحة', 'Download the video or photos on this page']
 };
 const ICO = {
   x: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -41,7 +41,10 @@ const ICO = {
   pause: '<svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></svg>',
   play: '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z"/></svg>',
   retry: '<svg viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4.5v4h-4"/></svg>',
-  mute: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>'
+  mute: '<svg viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 6v12l-4.5-3.5H4z"/><path d="M16 9.5l5 5M21 9.5l-5 5"/></svg>',
+  shield: '<svg viewBox="0 0 24 24"><path d="M12 3l7 2.8v5.3c0 4.6-3 8.3-7 9.9-4-1.6-7-5.3-7-9.9V5.8z"/><path d="M9 12l2.1 2.1L15.2 10"/></svg>',
+  copy: '<svg viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="2"/><path d="M15.5 8.5V6a1.5 1.5 0 0 0-1.5-1.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></svg>',
+  check: '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
 };
 
 /* ---------- state from the main process ---------- */
@@ -65,13 +68,6 @@ ui.on('state', st => {
   // the page of this tab is in the picture-in-picture window: a note in its place, with a way back
   $('pipNote').hidden = !S.pipHere;
   if (S.pipHere) { $('pipMsg').textContent = L('الفيديو شغّال في صورة داخل صورة', 'This video is playing in picture in picture'); $('pipBack').textContent = L('رجّعه هنا', 'Bring it back'); }
-  const shOff = !S.adblock || S.adSiteOff;
-  $('shield').classList.toggle('off', shOff);
-  const shN = !shOff && S.blocked ? (S.blocked > 99 ? '99+' : String(S.blocked)) : '';
-  $('shCount').textContent = shN;
-  $('shCount').classList.toggle('s2', shN.length === 2);
-  $('shCount').classList.toggle('s3', shN.length > 2);
-  $('shield').classList.toggle('n', !!shN);
   $('act').title = S.isWeb ? (S.translated ? L('عرض الصفحة الأصلية', 'Show original') : TIPS.translate[en() ? 1 : 0]) : '';
   $('act').disabled = !S.isWeb;
   $('maxIco').innerHTML = S.maximized
@@ -379,14 +375,38 @@ function closeDrop() {
 ui.on('close-menus', closeDrop);
 $('backdrop').addEventListener('mousedown', e => { e.preventDefault(); closeDrop(); if (document.activeElement === $('addr')) $('addr').blur(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && openKind && openKind !== 'sug') closeDrop(); });
-$('shield').onclick = () => (openKind === 'shield' ? closeDrop() : openDrop('shield', $('shield')));
+/* the music button: one press listens to the tab that plays sound; the answer drops down with a copy button */
+let songRes = null, songOn = false;
+$('songBtn').onclick = async () => {
+  if (songOn) return;                                   // already listening
+  if (openKind === 'song') { closeDrop(); return; }
+  songOn = true; songRes = null;
+  $('songBtn').classList.add('listening');
+  $('songBtn').title = L('يسمع…', 'Listening…');
+  let r = null;
+  try { r = await ui.invoke('song:id'); } catch (e) {}
+  songOn = false;
+  $('songBtn').classList.remove('listening');
+  applyTips();
+  songRes = r || { status: 'error' };
+  if (songRes.status === 'busy') return;
+  closeDrop(); openDrop('song', $('songBtn'));
+};
 $('ext').onclick = () => (openKind === 'ext' ? closeDrop() : openDrop('ext', $('ext')));
 $('menuBtn').onclick = () => (openKind === 'menu' ? closeDrop() : openDrop('menu', $('menuBtn')));
 
 async function renderMenu(kind) {
   const d = $('drop');
   if (kind === 'tabs') return renderTabSearch(d);
-  if (kind === 'shield') {
+  if (kind === 'song') {
+    const r = songRes || { status: 'error' };
+    if (r.status === 'found') {
+      d.innerHTML = `<div class="song"><div class="st" dir="auto">${esc(r.title)}</div>${r.artist ? `<div class="sa" dir="auto">${esc(r.artist)}</div>` : ''}</div>
+        <button class="mi" data-a="songCopy">${ICO.copy}<span class="t">${L('نسخ', 'Copy')}</span></button>`;
+    } else {
+      d.innerHTML = `<div class="note song-msg">${r.status === 'silent' ? L('ما فيه صوت شغال.', 'Nothing is playing.') : r.status === 'none' ? L('ما لقيت الأغنية.', 'Could not find the song.') : L('ما قدرت أتعرّف عليها الحين. جرّب مرة ثانية.', 'Could not check right now. Try again.')}</div>`;
+    }
+  } else if (kind === 'shield') {
     const host = (() => { try { return new URL(S.url).hostname.replace(/^www\./, ''); } catch (e) { return ''; } })();
     d.innerHTML = `
       <div class="hd">${L('مانع الإعلانات والمتتبعات', 'Ad and tracker blocker')}</div>
@@ -459,6 +479,7 @@ async function renderMenu(kind) {
       <button class="mi" data-a="history">${ICO.hist}<span class="t">${L('السجل', 'History')}</span><span class="sub">Ctrl+H</span></button>
       <button class="mi" data-a="downloads">${ICO.down}<span class="t">${L('التنزيلات', 'Downloads')}</span></button>
       <button class="mi" data-a="passwords">${ICO.key}<span class="t">${L('كلمات السر', 'Passwords')}</span></button>
+      <button class="mi" data-a="shield">${ICO.shield}<span class="t">${L('مانع الإعلانات', 'Ad blocker')}</span><span class="sub" id="shSub">${S.adblock && !S.adSiteOff ? Number(S.blocked || 0).toLocaleString('en') : L('طافي', 'Off')}</span></button>
       ${S.closedCount ? `<button class="mi" data-a="reopen">${ICO.clock}<span class="t">${L('إرجاع آخر تبويب مغلق', 'Reopen closed tab')}</span><span class="sub">Ctrl+Shift+T</span></button>` : ''}
       <div class="sep"></div>
       <button class="mi" data-a="find">${ICO.find}<span class="t">${L('بحث في الصفحة', 'Find in page')}</span><span class="sub">Ctrl+F</span></button>
@@ -472,7 +493,7 @@ async function renderMenu(kind) {
       <button class="mi" data-a="devtools">${ICO.code}<span class="t">${L('أدوات المطور', 'Developer tools')}</span><span class="sub">F12</span></button>
       <button class="mi" data-a="settings">${ICO.gear}<span class="t">${L('الإعدادات', 'Settings')}</span></button>`;
   }
-  if (openKind && openKind !== 'sug') place($(kind === 'ext' ? 'ext' : kind === 'shield' ? 'shield' : 'menuBtn'));
+  if (openKind && openKind !== 'sug') place($(kind === 'ext' ? 'ext' : kind === 'song' ? 'songBtn' : 'menuBtn'));
 }
 
 $('drop').addEventListener('mousedown', e => { if (openKind === 'sug') e.preventDefault(); });
@@ -499,6 +520,14 @@ $('drop').addEventListener('click', async e => {
     case 'zoomReset': ui.send('tab', 'zoomReset'); break;
     case 'relnotes': closeDrop(); go('https://github.com/abogzah559-wq/3zT-Browser/releases/tag/v' + (updateInfo ? updateInfo.to : '')); break;
     case 'adSite': ui.send('tab', 'adSite'); break;
+    case 'shield': closeDrop(); setTimeout(() => openDrop('shield', $('menuBtn')), 30); break;
+    case 'songCopy': {
+      const r = songRes; if (!r || r.status !== 'found') break;
+      ui.send('song:copy', r.artist ? `${r.title} - ${r.artist}` : r.title);
+      a.innerHTML = `${ICO.check}<span class="t">${L('انتسخ', 'Copied')}</span>`; a.classList.add('done');
+      setTimeout(() => { if (openKind === 'song') closeDrop(); }, 900);
+      break;
+    }
     case 'permReload': closeDrop(); ui.send('tab', 'reload'); break;
     case 'permAll': closeDrop(); ui.send('tab', 'settings'); break;
     case 'adAll': ui.send('set', 'adblock', !S.adblock); break;
@@ -738,7 +767,7 @@ function drawPermChip() {
   $('permChipIco').innerHTML = (PK[d[0]] ? PK[d[0]][2] : '') + '<path d="M4 4l16 16"/>';
   b.title = L('انرفض: ', 'Blocked: ') + d.map(pName).join(L('، ', ', ')) + L(' — اضغط عشان تغيّر', ' — click to change');
 }
-$('permChip').onclick = () => (openKind === 'shield' ? closeDrop() : openDrop('shield', $('shield')));
+$('permChip').onclick = () => (openKind === 'shield' ? closeDrop() : (closeDrop(), openDrop('shield', $('menuBtn'))));
 ui.on('state', drawPermChip);
 
 /* the site's permissions inside the shield panel */

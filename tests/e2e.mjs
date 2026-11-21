@@ -177,7 +177,7 @@ async function permissions() {
     const chip = await (async () => { const tb = await pageBar(); const v = await tb.ev(`!document.getElementById('permChip').hidden`); tb.close(); return v; })();
     ok('an ignored question closes by itself and leaves an icon in the address bar', !!b3 && !!gone && chip === true, `chip ${chip}`);
     // 4. the site panel lists them and can change one
-    let tb = await pageBar(); await tb.ev(`document.getElementById('shield').click(), 1`); await sleep(600);
+    let tb = await pageBar(); await tb.ev(`document.getElementById('menuBtn').click(), 1`); await sleep(300); await tb.ev(`document.querySelector('#drop [data-a=shield]').click(), 1`); await sleep(600);
     const panel = await tb.ev(`document.getElementById('drop').innerText`);
     ok('the site panel lists this site\'s permissions', /الإشعارات|Notifications/.test(panel) && /موقعك|location/i.test(panel), String(panel).slice(-200));
     await tb.ev(`document.querySelector('[data-perm="geolocation"][data-v="allow"]').click(), 1`); await sleep(500);
@@ -628,7 +628,7 @@ async function popups() {
     };
     const open = async () => (await targets()).filter(t => /:8797\/(ad|link|same|later|signin)/.test(t.url)).map(t => t.url.replace(/^.*:8797\//, ''));
     await click('ad');
-    const st = await (async () => { const tb = await toolbar(); const v = await tb.ev(`JSON.stringify({ toast: !document.getElementById('toast').hidden, n: document.getElementById('shCount').textContent })`); tb.close(); return JSON.parse(v); })();
+    const st = await (async () => { const tb = await toolbar(); const v = await tb.ev(`JSON.stringify({ toast: !document.getElementById('toast').hidden, n: S.blocked })`); tb.close(); return JSON.parse(v); })();
     const a1 = await open();
     ok('pop-up blocking: a script opening another site on a click is stopped, quietly, and counted on the shield', !a1.includes('ad') && !st.toast && +st.n >= 1, `${JSON.stringify(a1)} · ${JSON.stringify(st)}`);
     await click('ln'); await click('same'); await click('win');
@@ -794,6 +794,69 @@ async function ytIdle() {
     const r2 = JSON.parse(await c.ev(`JSON.stringify({ a: answered, paused: v.paused, open: !!document.querySelector('yt-confirm-dialog-renderer') })`));
     ok('YouTube: a question after your own click is left alone', r2.a === 1 && r2.paused && r2.open, JSON.stringify(r2));
     c.close();
+  } finally { srv.close(); }
+}
+
+/* the music button (src/songid.js): the shield went into the menu; a tab that plays nothing gives "nothing is
+   playing"; a tab playing a tone is heard (only that tab), fingerprinted and sent to Shazam - a tone is no song */
+function toneWav(sec) {
+  const rate = 44100, n = rate * sec, b = Buffer.alloc(44 + n * 2);
+  b.write('RIFF', 0); b.writeUInt32LE(36 + n * 2, 4); b.write('WAVEfmt ', 8); b.writeUInt32LE(16, 16); b.writeUInt16LE(1, 20); b.writeUInt16LE(1, 22);
+  b.writeUInt32LE(rate, 24); b.writeUInt32LE(rate * 2, 28); b.writeUInt16LE(2, 32); b.writeUInt16LE(16, 34); b.write('data', 36); b.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(9000 * Math.sin(2 * Math.PI * (300 + (i % (rate * 3)) / 200) * i / rate) + 3000 * Math.sin(2 * Math.PI * 1250 * i / rate)), 44 + i * 2);
+  return b;
+}
+async function song() {
+  // the bar: a music button instead of the shield; the ad blocker is in the menu and opens the same panel
+  let tb = await toolbar();
+  const bar = await tb.ev(`JSON.stringify({ song: !!document.getElementById('songBtn'), shield: !!document.getElementById('shield') })`);
+  await tb.ev(`document.getElementById('menuBtn').click(), 1`); await sleep(300);
+  const item = await tb.ev(`!!document.querySelector('#drop [data-a=shield]')`);
+  if (item) { await tb.ev(`document.querySelector('#drop [data-a=shield]').click(), 1`); await sleep(500); }
+  const panel = await tb.ev(`openKind + '|' + document.getElementById('drop').innerText.slice(0, 80)`);
+  await tb.ev('closeDrop(), 1'); tb.close();
+  ok('music button in the bar; the ad blocker moved into the menu and opens its panel', bar === '{"song":true,"shield":false}' && item && /^shield\|/.test(panel) && /مانع|blocker/i.test(panel), `${bar} ${panel}`);
+  const result = async (ms = 40000) => poll(async () => { const t = await toolbar(); const v = await t.ev(`openKind === 'song' ? (songRes && songRes.status) + '|' + document.getElementById('drop').innerText.replace(/\n/g, ' ') : ''`); t.close(); return v; }, ms, 300);
+  const press = async () => { const t = await toolbar(); await t.ev(`closeDrop(), document.getElementById('songBtn').click(), 1`); t.close(); };
+  // nothing playing (close every tab that could be making sound first: a fresh tab is active)
+  await go('about:blank', true); await sleep(800);
+  const quiet = await poll(async () => { const t = await toolbar(); const v = await t.ev(`!S.tabs.some(x => x.audible)`); t.close(); return v; }, 10000);
+  const t1 = Date.now(); await press(); const r1 = await result(10000);
+  ok('music button: with nothing playing it says so at once', quiet && /^silent\|/.test(r1 || '') && Date.now() - t1 < 6000, `${r1} after ${Date.now() - t1} ms`);
+  // a tab playing a tone
+  const wav = toneWav(30);
+  const srv = http.createServer((q, r) => {
+    if (q.url === '/tone.wav') { r.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': wav.length }); return r.end(wav); }
+    r.setHeader('Content-Type', 'text/html; charset=utf-8'); r.end('<!doctype html><title>tone</title><body><audio id=a src="/tone.wav" loop></audio><script>window.go = () => a.play().then(() => "ok", e => String(e))</script></body>');
+  }).listen(8802, '127.0.0.1');
+  try {
+    await go('http://127.0.0.1:8802/', true);
+    const pc = await connect(await find(u => u.startsWith('http://127.0.0.1:8802/'), 30));
+    await poll(() => pc.ev('typeof go === "function"'), 8000);
+    const played = await pc.ev('go()', true);
+    const audible = await poll(async () => { const t = await toolbar(); const v = await t.ev(`S.tabs.some(x => x.audible)`); t.close(); return v; }, 10000);
+    if (!audible) {
+      console.log(`::notice title=music button::the test tone is not "audible" here (no sound device on this machine?): play ${played}`);
+      ok('music button: a playing tab is heard (skipped: no sound device)', true, `play ${played}`);
+    } else {
+      // another tab is active: the button still finds the playing one
+      await go('about:blank', true); await sleep(600);
+      const t2 = Date.now(); await press();
+      const listening = await poll(async () => { const t = await toolbar(); const v = await t.ev(`document.getElementById('songBtn').classList.contains('listening')`); t.close(); return v; }, 3000, 100);
+      const hidden = await poll(async () => (await targets()).some(x => x.url.includes('ui/songid.html')), 4000, 200);
+      const r2 = await result(45000);
+      const ms = Date.now() - t2;
+      const logf = path.join(OUT, 'app.log');
+      const line = (() => { try { return (fs.readFileSync(logf, 'utf8').match(/\[3zT\] song recognition[^\n]*/g) || []).slice(-2).join(' / '); } catch (e) { return ''; } })();
+      console.log(`::notice title=music button::${r2} in ${ms} ms; ${line}`);
+      ok('music button: listens to the playing tab (also from another tab), fingerprints it and asks Shazam (a tone: no song)', !!listening && !!hidden && /^none\|/.test(r2 || ''), `${r2} in ${ms} ms, listening ${listening}, listener ${hidden}; ${line}`);
+      const gone = await poll(async () => !(await targets()).some(x => x.url.includes('ui/songid.html')), 5000, 300);
+      const still = await pc.ev('!a.paused && a.currentTime > 3');
+      ok('music button: the listener goes away afterwards and the tab kept playing', !!gone && still === true, `listener gone ${gone}, still playing ${still}`);
+      const lib = fs.existsSync(path.join(process.env.APPDATA || '', '3zT Browser', 'songid', 'node_modules', 'shazam-api', 'dist', 'algorithm.js'));
+      if (process.platform === 'win32') ok('music button: the fingerprint library was downloaded into userData\\songid', lib);
+    }
+    await pc.ev('a.pause(), 1'); pc.close();
   } finally { srv.close(); }
 }
 
@@ -978,7 +1041,8 @@ async function main() {
   const only = process.env.E2E_ONLY;   // run one part while debugging (e.g. E2E_ONLY=downloads)
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
-  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await tint(); await ytIdle(); await privacy(); await features(); }
+  if (only === 'features') { await clientHints(); await popups(); await adSlots(); await tint(); await song(); await ytIdle(); await privacy(); await features(); }
+  if (only === 'song') await song();
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
   if (process.platform === 'win32') { await mediaTest(); if (process.env.E2E_DIAG) await arablocn(); await passkeys(); }
@@ -986,6 +1050,7 @@ async function main() {
   await popups();
   await adSlots();
   await tint();
+  await song();
   await ytIdle();
   await privacy();
   await features();

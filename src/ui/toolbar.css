@@ -174,22 +174,18 @@ body.loading #load::after{content:"";position:absolute;top:0;bottom:0;left:0;wid
   background:rgba(22,22,28,.97);border:1px solid rgba(255,255,255,.12);box-shadow:0 10px 30px rgba(0,0,0,.5);font-size:13px;white-space:nowrap}
 #toast button{padding:4px 10px;border-radius:8px;border:0;background:#8ab4f8;color:#111;cursor:pointer}
 
-/* ad blocker shield */
-/* a soft blue shield; the number of blocked items sits inside it (a tick when there is none yet) */
-#shield{position:relative;color:#9cc4ff}
-#shield svg{width:21px;height:21px}
-#shBody{fill:#9cc4ff;stroke:#9cc4ff;stroke-width:1.2}
-#shOk{stroke:#0f2140;stroke-width:2.2}
-#shield.n #shOk{display:none}
-body:not(.isweb) #shield{display:none}
-#shield.off{color:rgba(255,255,255,.45)}
-#shield.off #shBody{fill:none;stroke:currentColor;stroke-width:1.8}
-#shield.off #shOk{display:none}
-#shCount{position:absolute;inset:0;display:grid;place-items:center;padding-bottom:1.5px;pointer-events:none;
-  color:#0f2140;font-size:9.5px;font-weight:800;letter-spacing:-.2px;direction:ltr;font-variant-numeric:tabular-nums}
-#shCount.s2{font-size:8.3px;letter-spacing:-.4px}
-#shCount.s3{font-size:6.6px;letter-spacing:-.4px}
-#shCount:empty,#shield.off #shCount{display:none}
+/* the music button: while it listens the note breathes gently */
+#songBtn svg{width:19px;height:19px}
+#songBtn.listening{color:#9cc4ff}
+@media (prefers-reduced-motion: no-preference) {
+  #songBtn.listening svg{animation:songPulse 1.1s ease-in-out infinite}
+  @keyframes songPulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(.86);opacity:.6}}
+}
+#drop .song{padding:10px 12px 8px}
+#drop .song .st{font-size:15px;font-weight:600;line-height:1.45;color:#fff;overflow-wrap:anywhere}
+#drop .song .sa{margin-top:2px;font-size:12.5px;opacity:.62;overflow-wrap:anywhere}
+#drop .mi.done>svg{color:#8fd19e;opacity:1}
+#drop .song-msg{padding:10px 12px;font-size:13px;opacity:.8}
 .big{font-size:26px;font-weight:600;padding:4px 10px 0;text-align:center;color:#9cc4ff}
 
 /* pinned extensions */
