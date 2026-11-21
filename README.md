@@ -182,6 +182,16 @@ delete it.
 
 ### TikTok and Instagram
 
+- **Video-first layout** (on by default, *Settings → General*): the action buttons (like, comment, save, share) and
+  the caption move inside the playing video, at its right edge and bottom-right corner, and stay hidden until the
+  eye button on the video's edge is pressed; the feed arrows sit on the video's left edge. On TikTok the parts are
+  found by the names listed in [`src/social-layout.json`](src/social-layout.json), newest first, then by what they
+  contain (TikTok's own test ids for the like / comment / share buttons, the author link, the arrow buttons), and
+  the playing video by its position on screen. The styles apply only to the browser's own marks on those parts, and
+  only while the video was found; a part that does not land where it was put returns to TikTok's own place. A
+  TikTok redesign can therefore only bring back TikTok's own layout, never a broken one. The same JSON file is
+  downloaded from this repository's main branch every few hours and checked (selectors only, size and character
+  limits) before use, so a TikTok rename is fixed for every installed copy by updating that file.
 - **Highest quality playback** (on by default, *Settings → General*): both sites send several qualities of
   each video and let their player pick, usually a low one in a desktop window. The video data is adjusted
   before the player reads it so only the highest quality this computer can decode is offered (TikTok's
@@ -276,6 +286,8 @@ src/
   features.js          SponsorBlock, Return YouTube Dislike, Clean YouTube, Ambient light, Twitch
   adblock.js           EasyList / EasyPrivacy host matcher with resource types
   cleanlinks.js        link cleaning with ClearURLs' rules
+  sociallayout.js      names of TikTok's page parts for the TikTok / Instagram layout (inject/social-view.*),
+                       kept up to date from social-layout.json on GitHub
   songid.js            song recognition: the fingerprint library (downloaded, checksums pinned), the worker
                        thread that runs it, Shazam's answer (ui/songid.html is the hidden page that hears a tab)
   downloads.js         download manager (hands large files to aria2)
@@ -291,7 +303,7 @@ src/
   inject/              third-party scripts injected into YouTube / Twitch
   vendor/              Readability, tldts, Chrome Web Store support; Autoconsent (added at build time)
 scripts/               build_win.py, fetch_tools.mjs, fetch_autoconsent.mjs, sign-update.mjs
-tests/                 e2e.mjs, songid.mjs, update-test.mjs, media-real.mjs, bench.ps1, speed.mjs, resources.mjs
+tests/                 e2e.mjs, songid.mjs, social.mjs, update-test.mjs, media-real.mjs, bench.ps1, speed.mjs, resources.mjs
 installer/             Inno Setup script, wizard images, in-app release notes (Arabic)
 ```
 
@@ -362,6 +374,8 @@ trackers.
   - `filters.adtidy.org`, for AdGuard Base filter's YouTube rules (checked every 12 hours, downloaded only when changed);
   - `cdn.jsdelivr.net`, for AdGuard's scriptlet library (with each new filter list);
   - `rules2.clearurls.xyz`, for the link-cleaning rules (every few days);
+  - `raw.githubusercontent.com`, for the names of TikTok's page parts used by the TikTok layout (every few hours,
+    downloaded only when changed);
   - when the music button is pressed: `amp.shazam.com` (an audio fingerprint of a few seconds, the time zone and
     a random request ID; no recording, page address or account), and `cdn.jsdelivr.net` once for the fingerprint
     library;
@@ -416,6 +430,7 @@ Everything is stored locally in `%APPDATA%\3zT Browser`:
 | `extensions\`, `webstore\` | Installed extensions |
 | `adblock\` | Downloaded filter lists and a parsed cache |
 | `songid\` | The song recognition library (downloaded on first use, checksums pinned) |
+| `social-layout\` | The latest names of TikTok's page parts for the TikTok layout |
 | `media\tools\` | The downloader's self-updating copies of yt-dlp and gallery-dl |
 | `logs\3zt.log` | Error log (capped at 1 MB), useful for bug reports |
 | other files | Chromium's cookies, cache and site storage |
@@ -474,8 +489,11 @@ every push the Windows workflow:
    heard from another tab, fingerprinted and sent to Shazam, with the listener gone and the tab still playing
    afterwards ([`tests/songid.mjs`](tests/songid.mjs) checks the library's download, checksums and Shazam's answer
    on its own);
-10. tests silent updating end to end with a locally signed fake release;
-11. uninstalls and verifies removal, then runs the memory, speed and resource benchmarks.
+10. tests the TikTok layout on a local page built like TikTok's feed: parts placed on the video and hidden, the eye
+    button, finding the parts again after TikTok's names change, nothing moved without a video, and the setting
+    ([`tests/social.mjs`](tests/social.mjs) checks the names file, its limits and the copy on GitHub);
+11. tests silent updating end to end with a locally signed fake release;
+12. uninstalls and verifies removal, then runs the memory, speed and resource benchmarks.
 
 [`tests/media-real.mjs`](tests/media-real.mjs) runs the downloader engine against real YouTube and
 TikTok videos (manually or on `diag/**` branches). [`tests/sites-real.mjs`](tests/sites-real.mjs) runs

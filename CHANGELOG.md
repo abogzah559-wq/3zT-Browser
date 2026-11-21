@@ -2,6 +2,26 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.21.0
+
+### TikTok and Instagram layout
+- The 3zT TikTok View extension is now part of the browser (*Settings → General → TikTok and Instagram layout*, on
+  by default): the like, comment, save and share buttons and the caption sit inside the playing video, at its right
+  edge and bottom-right, hidden until the eye button on the video's edge is pressed; the up/down arrows sit on the
+  video's left edge. Its highest-quality part was already built in. A copy added as an extension is no longer
+  loaded, so the two never run together.
+- Rebuilt for TikTok's new feed, which draws one set of buttons and one caption over whichever video is playing.
+- Made to survive TikTok's redesigns: the styles only touch the browser's own marks on TikTok's parts, never
+  TikTok's names; each part is looked for by several names and then by what it contains (the like / comment /
+  share buttons, the author, the arrow buttons), and the playing video by its position on screen. Nothing is moved
+  without the video, and a part that does not land in place goes back to TikTok's own layout.
+- The names of TikTok's parts live in `src/social-layout.json`, downloaded from this repository every few hours and
+  checked before use (CSS selectors only, size and character limits), with the built-in names kept as a fallback.
+  When TikTok renames something, updating that file fixes every installed copy without a new release.
+
+### Settings
+- The ad-blocker hint under "Sites allowed to show ads" points to the ⋮ menu, where the shield moved in 0.20.0.
+
 ## 0.20.0
 
 ### Song recognition

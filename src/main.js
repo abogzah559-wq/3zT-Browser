@@ -27,6 +27,7 @@ const { knownMediaPage } = require('./media/detect');
 const { site: siteOf } = require('./domains');
 const YTRULES = require('./ytrules');
 const SONGID = require('./songid');
+const { SocialLayout } = require('./sociallayout');
 
 // the app is called "3zT"; its profile folder keeps the older name so nothing is lost after updating
 app.setPath('userData', path.join(app.getPath('appData'), '3zT Browser'));
@@ -149,6 +150,7 @@ function makeStore(name, def) {
 }
 let settings, bookmarks, history, sessionStore, favStore, dl;
 let adblock = null;
+let socialLayout = null;   // where TikTok's parts are (src/sociallayout.js)
 let linkCleaner = null;   // tracking parts off addresses (src/cleanlinks.js)
 let passwords = null;
 const stores = () => [settings, bookmarks, history, sessionStore, favStore].filter(Boolean);
@@ -2205,6 +2207,9 @@ const YTR = {
 const senderHost = e => { try { return new URL(e.senderFrame.url).hostname; } catch (x) { return ''; } };
 const isYT = h => /(^|\.)youtube\.com$/i.test(h), isYTAny = h => /(^|\.)youtube(-nocookie)?\.com$/i.test(h), isTwitch = h => /(^|\.)twitch\.tv$/i.test(h);
 let ambientStore = null;
+// TikTok or Instagram (and, in the tests only, a local stand-in for TikTok)
+const socialSite = host => (/(^|\.)tiktok\.com$/i.test(host || '') || (process.env.ZEUS_E2E && host === 'tt.localhost') ? 'tiktok'
+  : /(^|\.)instagram\.com$/i.test(host || '') ? 'instagram' : null);
 function siteCfg(host) {
   const d = settings.data, adsOn = d.adblock !== false;
   return {
@@ -2216,11 +2221,13 @@ function siteCfg(host) {
     cookies: d.cookiePopups !== false && !!host && !d.adAllow.includes(AdBlocker.site(host)) && AC.ready(),
     // TikTok / Instagram: highest quality (its own setting) and no sponsored posts (with the ad blocker, like YouTube's ads)
     social: (() => {
-      const site = /(^|\.)tiktok\.com$/i.test(host) ? 'tiktok' : /(^|\.)instagram\.com$/i.test(host) ? 'instagram' : null;
+      const site = socialSite(host);
       if (!site) return null;
       const hq = d.hqVideo !== false, ads = adsOn && !d.adAllow.includes(site + '.com');
       return hq || ads ? { site, hq, ads } : null;
     })(),
+    // TikTok / Instagram layout: buttons and caption inside the video (src/inject/social-view.js)
+    view: !!socialSite(host) && d.socialView !== false,
     reader: d.reader !== false,
     // empty ad slots left behind by the blocker are folded away (see preload-newtab.js)
     collapse: adsOn && !!host && !d.adAllow.includes(AdBlocker.site(host)),
@@ -2283,8 +2290,9 @@ function setupSiteIpc() {
   });
   ipcMain.on('site:code', (e, name) => {
     const h = senderHost(e);
-    const ok = (name === 'twitch' && isTwitch(h)) || (name === 'ambientContent' && isYT(h));
-    e.returnValue = ok ? FEAT.code(name) : '';
+    const ok = (name === 'twitch' && isTwitch(h)) || (name === 'ambientContent' && isYT(h)) || ((name === 'socialView' || name === 'socialCss') && !!socialSite(h));
+    // the layout script gets the current names of TikTok's parts (kept up to date from GitHub, src/sociallayout.js)
+    e.returnValue = !ok ? '' : name === 'socialView' ? FEAT.code(name).trim().replace(/;?$/, '') + '(' + JSON.stringify(socialLayout ? socialLayout.rules : require('./sociallayout').merge(null)) + ');' : FEAT.code(name);
   });
   ipcMain.handle('site:ambientMain', e => (isYT(senderHost(e)) ? FEAT.code('ambientMain') : ''));
   ipcMain.handle('ac:get', e => {
@@ -2356,6 +2364,20 @@ function mergeBuiltInExtensions() {
   settings.data.pinnedExt = (settings.data.pinnedExt || []).filter(id => !ids.includes(id));
   for (const id of ids) { try { fs.rmSync(path.join(extRoot(), id), { recursive: true, force: true }); } catch (e) {} }
   settings.data.mergedExt = true; settings.save();
+}
+
+/* "3zT TikTok View" (the layout extension for TikTok and Instagram) is part of the browser now
+   (src/inject/social-view.*, and the quality part was already built in): a copy added as an extension is no longer
+   loaded, so the two never run together. The folder it was added from is left alone. */
+function retireTikTokView() {   // (every start: a few small files read; Chrome's import could bring it back)
+  const isTTV = dir => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).name === '3zT TikTok View'; } catch (e) { return false; } };
+  const gone = (settings.data.extensions || []).filter(isTTV);
+  if (gone.length) {
+    settings.data.extensions = settings.data.extensions.filter(p => !gone.includes(p));
+    for (const p of gone) if (p.startsWith(extRoot() + path.sep)) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) {} }
+    console.log('[3zT] 3zT TikTok View is built in now: the extension copy was removed');
+    settings.save();
+  }
 }
 
 /* ---------- the music button: what song is playing (src/songid.js) ---------- */
@@ -2616,6 +2638,7 @@ function setupIpc() {
     if (key === 'ytDislikes') settings.data.ytDislikes = !!val;
     if (key === 'cookiePopups') settings.data.cookiePopups = !!val;
     if (key === 'hqVideo') settings.data.hqVideo = !!val;
+    if (key === 'socialView') settings.data.socialView = !!val;
     if (key === 'reader') { settings.data.reader = !!val; for (const x of wins) x.pushState(); }
     if (key === 'twitchAds') settings.data.twitchAds = !!val;
     if (key === 'ytClean' && val && typeof val === 'object') { const o = {}; for (const k of Object.keys(FEAT.YT_CLEAN)) if (val[k]) o[k] = true; settings.data.ytClean = o; pushSiteCfg(); }
@@ -2801,7 +2824,7 @@ function setupSettingsIpc() {
     return {
       lang: d.lang, perfMode: d.perfMode || 'normal', perfActive: FAST ? 'fast' : 'normal',
       memorySaverMin: d.memorySaverMin, hwAccel: d.hwAccel !== false, hwAccelActive: early.hwAccel !== false, darkPages: d.darkPages !== false, darkPagesActive: DARK_PAGES, siteFont: !!d.siteFont, restoreTabs: !!d.restoreTabs,
-      adblock: d.adblock !== false, cookiePopups: d.cookiePopups !== false, hqVideo: d.hqVideo !== false, reader: d.reader !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
+      adblock: d.adblock !== false, cookiePopups: d.cookiePopups !== false, hqVideo: d.hqVideo !== false, socialView: d.socialView !== false, reader: d.reader !== false, ytAds: d.ytAds !== false, twitchAds: d.twitchAds !== false, adAllow: d.adAllow || [],
       blockedTotal: d.adBlockedTotal || 0, adRules: adblock ? adblock.ruleCount : 0,
       sponsorBlock: d.sponsorBlock !== false, sbCats: d.sbCats || [], ambient: d.ambient !== false, ytMaxQuality: d.ytMaxQuality !== false, ytDislikes: d.ytDislikes !== false, ytClean: d.ytClean || {},
       passkeys: !!d.passkeys, cleanLinks: d.cleanLinks !== false, fpProtect: d.fpProtect !== false, dlAsk: d.dlAsk !== false, dlDir: dl ? dl.folder() : '', canDefault: process.platform === 'win32', isDefault: isDefaultCache,
@@ -2972,6 +2995,11 @@ app.whenReady().then(async () => {
   setTimeout(refreshClean, 6000);
   setInterval(refreshClean, 12 * 3600 * 1000);
   setInterval(() => YTR.refresh(), 3 * 3600 * 1000);
+  // the names of TikTok's parts for the TikTok / Instagram layout, from this project on GitHub (every few hours)
+  socialLayout = new SocialLayout(path.join(app.getPath('userData'), 'social-layout'), (...a) => console.log('[3zT]', ...a));
+  const refreshSocial = () => socialLayout.refresh((u, headers) => net.fetch(u, { cache: 'no-store', headers })).catch(e => console.warn('[3zT] TikTok layout names:', e.message));
+  setTimeout(refreshSocial, 8000);
+  setInterval(refreshSocial, 3 * 3600 * 1000);
   perms = new PERM.Permissions({ settings, onChange: () => { for (const w of wins) w.pushState(); } });
   setupSession(session.defaultSession);
   setupIpc();
@@ -2995,6 +3023,7 @@ app.whenReady().then(async () => {
     settings.data.extImported = true; settings.save();
   }
   try { mergeBuiltInExtensions(); } catch (e) { console.warn('merge failed', e.message); }
+  try { retireTikTokView(); } catch (e) { console.warn('TikTok View retire failed', e.message); }
   if (settings.data.hideRules) { delete settings.data.hideRules; settings.save(); }   // the manual "Hide this ad" of 0.16.2 (now automatic)
   // all extensions load at the same time (not one after another): the window opens sooner
   await Promise.all([

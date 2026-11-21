@@ -5,6 +5,7 @@
  *  - Clean YouTube: hide parts of YouTube (shorts, comments...) with CSS switches
  *  - Ambient light for YouTube: the original scripts, run directly in YouTube pages
  *  - Twitch ads: the open-source "vaft" script (TwitchAdSolutions, MIT)
+ *  - TikTok / Instagram layout: buttons and caption inside the video, hidden until asked for (inject/social-view.*)
  */
 const fs = require('fs');
 const path = require('path');
@@ -15,7 +16,7 @@ const INJECT = path.join(__dirname, 'inject');
 const AMBIENT = path.join(INJECT, 'ambient');
 
 /* ---------- scripts injected into pages (read once, kept in memory) ---------- */
-const CODE = { twitch: 'twitch-vaft.js', ambientContent: 'ambient/scripts/content.js', ambientMain: 'ambient/scripts/content-main.js' };
+const CODE = { twitch: 'twitch-vaft.js', ambientContent: 'ambient/scripts/content.js', ambientMain: 'ambient/scripts/content-main.js', socialView: 'social-view.js', socialCss: 'social-view.css' };
 const codeCache = new Map();
 function code(name) {
   if (!CODE[name]) return '';

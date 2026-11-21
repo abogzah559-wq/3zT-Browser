@@ -1,0 +1,213 @@
+/* TikTok and Instagram layout (3zT), with src/inject/social-view.js: only the marks that script puts on the
+   sites' parts are styled (data-tzt-part on TikTok, data-tzt-ig on Instagram), never the sites' own names, and the
+   TikTok part only while the playing video was found (html.tzt-placed). */
+
+/* ---------- the eye button (both sites): white icon, no background, on the right edge of the video ---------- */
+#tzt-toggle {
+  display: none;
+  position: fixed;
+  z-index: 2147483000;
+  left: var(--tzt-toggle-left);
+  top: var(--tzt-toggle-top);
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.75));
+  opacity: 0.85;
+  transition: opacity 0.15s ease;
+}
+
+#tzt-toggle:hover {
+  opacity: 1;
+}
+
+html.tzt-placed #tzt-toggle {
+  display: flex;
+}
+
+/* Instagram's up / down arrows: fixed at the far left of the screen, vertically centred.
+   (TikTok's are placed on the video's left edge, in tiktok.css.) */
+[data-tzt-nav] {
+  position: fixed !important;
+  left: 28px !important;
+  right: auto !important;
+  top: 50% !important;
+  bottom: auto !important;
+  transform: translateY(-50%) !important;
+  z-index: 2147482999 !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+/* ---------- TikTok ---------- */
+/* 1) Action buttons (like, comment, save, share): right edge of the video */
+html.tzt-placed [data-tzt-part="actions"] {
+  position: fixed !important;
+  right: var(--tzt-act-right) !important;
+  bottom: var(--tzt-act-bottom) !important;
+  left: auto !important;
+  top: auto !important;
+  transform: none !important;
+  margin: 0 !important;
+  z-index: 2147482998 !important;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease, visibility 0s linear 0.15s;
+}
+
+/* 2) Caption (account, description, music): bottom-right corner of the video */
+html.tzt-placed [data-tzt-part="caption"] {
+  position: fixed !important;
+  right: var(--tzt-cap-right) !important;
+  bottom: var(--tzt-cap-bottom) !important;
+  left: auto !important;
+  top: auto !important;
+  width: auto !important;
+  max-width: var(--tzt-cap-width) !important;
+  transform: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  text-align: right;
+  z-index: 2147482997 !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.15s ease, visibility 0s linear 0.15s;
+}
+
+html.tzt-placed [data-tzt-part="caption"] * {
+  max-width: 100%;
+}
+
+html.tzt-placed.tzt-show-actions [data-tzt-part="actions"],
+html.tzt-placed.tzt-show-actions [data-tzt-part="caption"] {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 0.15s ease;
+}
+
+/* No backgrounds behind the buttons — white icons with a soft shadow instead
+   (the follow button keeps its colour) */
+html.tzt-placed [data-tzt-part="actions"] button:not([data-e2e*="follow"]),
+html.tzt-placed [data-tzt-part="actions"] [class*="tux-interaction-container"],
+html.tzt-placed [data-tzt-part="actions"] [class*="SpanTuxIconWrapper"] {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+html.tzt-placed [data-tzt-part="actions"] svg {
+  color: #fff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
+}
+
+html.tzt-placed [data-tzt-part="actions"] strong,
+html.tzt-placed [data-tzt-part="actions"] [data-e2e$="-count"] {
+  color: #fff !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+/* 3) Up / down arrows: on the video's left edge, in the middle; dark round buttons */
+html.tzt-placed [data-tzt-part="nav"] {
+  position: fixed !important;
+  left: var(--tzt-nav-left) !important;
+  top: var(--tzt-nav-top) !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translateY(-50%) !important;
+  z-index: 2147482999 !important;
+  width: auto !important;
+  height: auto !important;
+}
+
+html.tzt-placed [data-tzt-part="nav"] button {
+  background-color: rgba(22, 24, 35, 0.6) !important;
+  color: #fff !important;
+  border: none !important;
+}
+
+/* ---------- Instagram Reels: the buttons column and the account/caption block inside the video ---------- */
+[data-tzt-ig="item"] {
+  position: relative !important;
+}
+
+[data-tzt-ig="media"] {
+  position: relative !important;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* Like / comment / share / more: inside the video, right edge, above the eye button */
+[data-tzt-ig="actions"] {
+  position: absolute !important;
+  right: 6px !important;
+  left: auto !important;
+  top: auto !important;
+  bottom: var(--tzt-toggle-gap, 60px) !important;
+  height: auto !important;
+  z-index: 5;
+  color: #fff;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.75));
+}
+
+/* Account + caption: bottom-right corner of the video */
+[data-tzt-ig="info"] {
+  position: absolute !important;
+  top: 0 !important;
+  bottom: 0 !important;
+  right: 0 !important;
+  left: auto !important;
+  width: min(75%, 360px) !important;
+  margin: 0 !important;
+  z-index: 4;
+  pointer-events: none;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+/* Hidden by default */
+[data-tzt-ig="actions"],
+[data-tzt-ig="info"] {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.15s ease, visibility 0s linear 0.15s;
+}
+
+html.tzt-show-actions [data-tzt-ig="actions"],
+html.tzt-show-actions [data-tzt-ig="info"] {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 0.15s ease;
+}
+
+html.tzt-show-actions [data-tzt-ig="info"] > :last-child {
+  pointer-events: auto;
+}
+
+/* Arrows: same place (common.css) and look as on TikTok */
+html.tzt-ig [data-tzt-nav] {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 16px !important;
+}
+
+html.tzt-ig [data-tzt-nav] [role="button"],
+html.tzt-ig [data-tzt-nav] button {
+  width: 48px !important;
+  height: 48px !important;
+  margin: 0 !important;
+  border-radius: 50% !important;
+  background-color: rgba(22, 24, 35, 0.6) !important;
+  color: #fff !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}

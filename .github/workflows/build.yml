@@ -93,6 +93,9 @@ jobs:
       - name: Song recognition (library download and checksums, fingerprint, Shazam's answer)
         run: node tests/songid.mjs
 
+      - name: TikTok layout names (checks, merging, the copy on GitHub)
+        run: node tests/social.mjs
+
       - name: End-to-end test of the installed app (pages + real Chrome Web Store installs)
         shell: pwsh
         run: node tests/e2e.mjs "$env:LOCALAPPDATA\Programs\3zT\3zT.exe" --store

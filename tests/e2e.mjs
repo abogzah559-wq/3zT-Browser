@@ -865,6 +865,68 @@ async function song() {
   }
 }
 
+/* the TikTok / Instagram layout (src/inject/social-view.*), on a local page built like TikTok's 2026 feed:
+   the parts are marked and moved onto the playing video (buttons and caption on its right edge, hidden until the eye
+   button is pressed, arrows on its left edge); after a "redesign" (TikTok's names changed) they are still found by
+   what they contain; with no video nothing is moved; the setting turns it off */
+const TT_PAGE = `<!doctype html><meta charset="utf-8"><title>tt</title><style>body{margin:0;background:#111;color:#fff}button{background:#333;color:#fff}</style>
+<div data-e2e="anchoring-player-column" style="position:relative;width:900px;height:700px">
+ <article data-e2e="recommend-list-item-container"><section data-e2e="feed-video"><video id=v src="/clip.mp4" muted autoplay loop playsinline style="display:block;width:400px;height:700px;margin:0 auto;object-fit:contain;background:#000"></video></section></article>
+ <div data-e2e="anchoring-chrome-host" style="position:absolute;inset:0;pointer-events:none"><div style="pointer-events:auto">
+  <div data-e2e="anchoring-engagement-vertical" style="position:absolute;left:20px;bottom:80px;width:48px"><div data-e2e="like-icon"><button>L</button><strong data-e2e="like-count">1</strong></div><div data-e2e="comment-icon"><button>C</button></div><div data-e2e="share-icon"><button>S</button></div></div>
+  <div data-e2e="anchoring-description-layer" style="position:absolute;left:80px;right:0;bottom:64px"><a data-e2e="video-author-avatar" href="#">@author</a><div data-e2e="video-desc">a caption</div></div>
+  <div data-e2e="anchoring-playback-chrome" style="position:absolute;left:0;right:0;bottom:0;height:60px"></div>
+ </div></div>
+ <div data-e2e="anchoring-scroll-controls" style="position:absolute;left:20px;top:300px;transform:translateY(-10px)"><div><button data-e2e="feed-navigation-prev">^</button><button data-e2e="feed-navigation-next">v</button></div></div>
+</div>`;
+async function socialView() {
+  const vid = path.join(OUT, 'clip.mp4');
+  if (!fs.existsSync(vid)) { console.log('::notice title=tiktok layout::no test video (made by the downloader test on Windows); skipped'); return; }
+  const srv = http.createServer((q, r) => {
+    if (q.url.startsWith('/clip.mp4')) { const b = fs.readFileSync(vid); r.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': b.length }); return r.end(b); }
+    r.setHeader('Content-Type', 'text/html; charset=utf-8'); r.end(TT_PAGE);
+  }).listen(8803, '127.0.0.1');
+  const B = 'http://tt.localhost:8803/';
+  const state = c => c.ev(`JSON.stringify((() => { const q = s => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { l: Math.round(r.left), r: Math.round(r.right), t: Math.round(r.top), b: Math.round(r.bottom), vis: getComputedStyle(e).visibility, e2e: e.getAttribute('data-e2e') }; };
+    const v = document.getElementById('v'), vr = v.getBoundingClientRect(), s = Math.min(vr.width / (v.videoWidth || 1), vr.height / (v.videoHeight || 1));
+    return { placed: document.documentElement.classList.contains('tzt-placed'), tt: document.documentElement.classList.contains('tzt-tt'),
+      video: { l: Math.round(vr.left + (vr.width - v.videoWidth * s) / 2), r: Math.round(vr.right - (vr.width - v.videoWidth * s) / 2), w: v.videoWidth },
+      act: q('[data-tzt-part="actions"]'), cap: q('[data-tzt-part="caption"]'), nav: q('[data-tzt-part="nav"]'), tog: q('#tzt-toggle') }; })())`).then(x => JSON.parse(x || '{}'));
+  try {
+    await go(B, true);
+    const pc = await connect(await find(u => u.startsWith(B), 30));
+    const a = await poll(async () => { const st = await state(pc); return st.placed && st.video.w ? st : null; }, 15000, 300) || await state(pc);
+    const near = (x, y) => Math.abs(x - y) <= 3;
+    ok('TikTok layout: buttons, caption and arrows are marked and moved onto the playing video, buttons and caption hidden',
+      a.placed && a.act && a.cap && a.nav && a.tog && near(a.act.r, a.video.r - 12) && near(a.cap.r, a.video.r - 12) && near(a.nav.l, a.video.l + 12) && a.act.vis === 'hidden' && a.cap.vis === 'hidden' && a.tog.vis === 'visible',
+      JSON.stringify(a));
+    await pc.ev(`document.getElementById('tzt-toggle').click(), 1`); await sleep(500);
+    const b = await state(pc);
+    ok('TikTok layout: the eye button shows the buttons and the caption, the buttons above the caption', b.act && b.act.vis === 'visible' && b.cap.vis === 'visible' && b.act.b <= b.tog.t && b.tog.b <= b.cap.t + 2, JSON.stringify(b));
+    // a "redesign": TikTok's names for the three parts change; the parts are found again by what they contain
+    await pc.ev(`(() => { for (const [k, v] of [['anchoring-engagement-vertical', 'x-eng'], ['anchoring-description-layer', 'x-desc'], ['anchoring-scroll-controls', 'x-nav']]) document.querySelector('[data-e2e="' + k + '"]').setAttribute('data-e2e', v); window.dispatchEvent(new Event('resize')); return 1; })()`);
+    await sleep(800);
+    const c = await state(pc);
+    ok('TikTok layout: after TikTok renames its parts they are still found (by the like / comment / share buttons, the author, the arrows) and placed',
+      c.placed && c.act && c.cap && c.nav && near(c.act.r, c.video.r - 12) && near(c.cap.r, c.video.r - 12) && near(c.nav.l, c.video.l + 12), JSON.stringify(c));
+    // no video: nothing of ours stays (TikTok's own layout)
+    await pc.ev(`document.getElementById('v').remove(), window.dispatchEvent(new Event('resize')), 1`); await sleep(800);
+    const d = await state(pc).catch(() => null) || {};
+    const left = await pc.ev(`JSON.stringify({ placed: document.documentElement.classList.contains('tzt-placed'), marks: document.querySelectorAll('[data-tzt-part]').length, toggle: getComputedStyle(document.getElementById('tzt-toggle')).display })`);
+    ok('TikTok layout: without the playing video nothing is moved (TikTok keeps its own layout)', /"placed":false,"marks":0,"toggle":"none"/.test(left || ''), left);
+    pc.close();
+    // the setting off: the page opened again has none of it
+    { const t = await toolbar(); await t.ev(`ui.send('set', 'socialView', false), 1`); t.close(); }
+    await go(B + '?off', true);
+    const pc2 = await connect(await find(u => u.startsWith(B + '?off'), 30));
+    await sleep(2500);
+    const off = await pc2.ev(`JSON.stringify({ tt: document.documentElement.classList.contains('tzt-tt'), toggle: !!document.getElementById('tzt-toggle') })`);
+    ok('TikTok layout: turned off in Settings, the page is left as it is', off === '{"tt":false,"toggle":false}', off);
+    pc2.close();
+    { const t = await toolbar(); await t.ev(`ui.send('set', 'socialView', true), S.tabs.filter(x => x.url.startsWith(${JSON.stringify(B)})).forEach(x => ui.send('tab', 'close', x.id)), 1`); t.close(); }
+  } finally { srv.close(); }
+}
+
 async function features() {
   let hits = {};
   const srv = http.createServer((q, r) => {
@@ -1047,6 +1109,7 @@ async function main() {
   if (!only) { await smoke(); await permissions(); }
   if (!only || only === 'downloads') await downloads();
   if (only === 'features') { await clientHints(); await popups(); await adSlots(); await tint(); await song(); await ytIdle(); await privacy(); await features(); }
+  if (only === 'social') await socialView();
   if (only === 'song') await song();
   if (only) { await stop(); report(); process.exit(results.some(r => !r.pass) ? 1 : 0); }
   // arablocn.com (a real third-party site, reported problem) only when diagnosing: E2E_DIAG=1
@@ -1059,6 +1122,7 @@ async function main() {
   await ytIdle();
   await privacy();
   await features();
+  await socialView();
   if (STORE) {
     for (const ext of STORE_EXTS) await storeInstall(ext);
     // Dark Reader really runs on websites

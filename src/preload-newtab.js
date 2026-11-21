@@ -18,6 +18,7 @@ const inMainWorld = code => {
 // 'isolated'; AdGuard's rules do not use it): it sees the page's DOM but not its scripts, and has none of this
 // preload's powers (ipcRenderer...)
 const UBO_WORLD = 1201;
+const SOCIAL_WORLD = 1202;   // the TikTok / Instagram layout (see cfg.view below)
 const inUboWorld = code => { try { webFrame.executeJavaScriptInIsolatedWorld(UBO_WORLD, [{ code }]); } catch (e) {} };
 // AdGuard's YouTube rules (main.js, YTR): any isolated ones first, then the ones that run in the page itself
 const runYtRules = r => { if (!r || !r.main) return false; if (r.isolated) inUboWorld(r.isolated); inMainWorld(r.main); return true; };
@@ -679,6 +680,16 @@ if (SUB) {
     } });
     Response.prototype.json = new Proxy(Response.prototype.json, { apply(f, self, args) { return Reflect.apply(f, self, args).then(fix); } });
   })();`);
+
+  /* --- TikTok / Instagram layout (src/inject/social-view.*): the action buttons and caption inside the playing
+     video, hidden until the eye button is pressed; the arrows on its left edge. Its own isolated world: it sees the
+     page's elements but not its scripts, and has none of this preload's powers. --- */
+  if (cfg.view) {
+    let css = '', code = '';
+    try { css = ipcRenderer.sendSync('site:code', 'socialCss'); code = ipcRenderer.sendSync('site:code', 'socialView'); } catch (e) {}
+    if (css) try { webFrame.insertCSS(css); } catch (e) {}
+    if (code) try { webFrame.executeJavaScriptInIsolatedWorld(SOCIAL_WORLD, [{ code }]); } catch (e) {}
+  }
 
   /* --- sign-in pages and the "Windows Security" window ---
      Many sign-in pages (Google, Microsoft, GitHub...) ask for a passkey in the background as soon as they open
