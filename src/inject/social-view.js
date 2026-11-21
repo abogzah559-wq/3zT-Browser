@@ -39,10 +39,9 @@
   };
 
   // ---------------------------------------------------------------- TikTok
-  // Names newest first. The 2026 design ("anchoring") draws one set of buttons and one caption over
-  // whichever video is playing; the older one had a set inside every video.
   // where TikTok's parts are: names newest first (src/social-layout.json, kept up to date from GitHub by
-  // src/sociallayout.js), then what the parts contain
+  // src/sociallayout.js), then what the parts contain. TikTok's 2026 design ("anchoring") draws one set of
+  // buttons and one caption over whichever video is playing; the older one had a set inside every video.
   const TT = RULES.tiktok;
 
   // the video playing in the middle of the screen, and where its picture really is (without the black bars)
@@ -97,7 +96,7 @@
     // climb while the box stays a caption (no video, no buttons column, not most of the screen)
     for (el = inner; el && el.parentElement; el = el.parentElement) {
       const p = el.parentElement;
-      if (p.querySelector('video') || p.querySelector('[data-e2e="like-icon"]') || p.getBoundingClientRect().height > window.innerHeight / 3) break;
+      if (p.querySelector('video') || first(TT.actionIcons, p) || p.getBoundingClientRect().height > window.innerHeight / 3) break;
     }
     return inner ? el : null;
   }
