@@ -688,7 +688,10 @@ if (SUB) {
     let css = '', code = '';
     try { css = ipcRenderer.sendSync('site:code', 'socialCss'); code = ipcRenderer.sendSync('site:code', 'socialView'); } catch (e) {}
     if (css) try { webFrame.insertCSS(css); } catch (e) {}
-    if (code) try { webFrame.executeJavaScriptInIsolatedWorld(SOCIAL_WORLD, [{ code }]); } catch (e) {}
+    // (it needs the page's root element, which does not exist yet when this preload starts)
+    const run = () => { try { webFrame.executeJavaScriptInIsolatedWorld(SOCIAL_WORLD, [{ code }]); } catch (e) {} };
+    if (code && document.documentElement) run();
+    else if (code) { const mo = new MutationObserver(() => { if (document.documentElement) { mo.disconnect(); run(); } }); mo.observe(document, { childList: true }); }
   }
 
   /* --- sign-in pages and the "Windows Security" window ---
