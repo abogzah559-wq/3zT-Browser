@@ -133,12 +133,17 @@
   }
   // a part that is not where it was put (something around it changed how it is positioned) goes back to
   // TikTok's own place rather than staying somewhere wrong
+  // (only after it was off three times in a row: a part still sliding into place is off for a moment)
+  const misses = new WeakMap();
   function check(part, want) {
     const el = marked[part];
     if (!el) return;
     const r = el.getBoundingClientRect();
     const off = Object.entries(want).some(([k, v]) => Math.abs(r[k] - v) > 24);
-    if (off) { refused.add(el); mark(part, null); }
+    const n = off ? (misses.get(el) || 0) + 1 : 0;
+    misses.set(el, n);
+    if (n >= 3) { refused.add(el); mark(part, null); }
+    else if (off) setTimeout(schedule, 250);   // look again once it has settled
   }
 
   // ------------------------------------------------------------- Instagram

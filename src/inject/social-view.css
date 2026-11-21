@@ -119,6 +119,8 @@ html.tzt-placed [data-tzt-part="actions"] [data-e2e$="-count"] {
 /* 3) Up / down arrows: on the video's left edge, in the middle; dark round buttons */
 html.tzt-placed [data-tzt-part="nav"] {
   position: fixed !important;
+  transition: none !important;   /* TikTok slides it: it would be caught half-way */
+  animation: none !important;
   left: var(--tzt-nav-left) !important;
   top: var(--tzt-nav-top) !important;
   right: auto !important;
