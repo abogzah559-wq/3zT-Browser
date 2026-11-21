@@ -816,7 +816,7 @@ async function song() {
   const panel = await tb.ev(`openKind + '|' + document.getElementById('drop').innerText.slice(0, 80)`);
   await tb.ev('closeDrop(), 1'); tb.close();
   ok('music button in the bar; the ad blocker moved into the menu and opens its panel', bar === '{"song":true,"shield":false}' && item && /^shield\|/.test(panel) && /مانع|blocker/i.test(panel), `${bar} ${panel}`);
-  const result = async (ms = 40000) => poll(async () => { const t = await toolbar(); const v = await t.ev(`openKind === 'song' ? (songRes && songRes.status) + '|' + document.getElementById('drop').innerText.replace(/\n/g, ' ') : ''`); t.close(); return v; }, ms, 300);
+  const result = async (ms = 40000) => poll(async () => { const t = await toolbar(); const v = await t.ev(`openKind === 'song' ? (songRes && songRes.status) + '|' + document.getElementById('drop').innerText.replace(/\\n/g, ' ') : ''`); t.close(); return v; }, ms, 300);
   const press = async () => { const t = await toolbar(); await t.ev(`closeDrop(), document.getElementById('songBtn').click(), 1`); t.close(); };
   // nothing playing (close every tab that could be making sound first: a fresh tab is active)
   await go('about:blank', true); await sleep(800);
@@ -857,7 +857,12 @@ async function song() {
       if (process.platform === 'win32') ok('music button: the fingerprint library was downloaded into userData\\songid', lib);
     }
     await pc.ev('a.pause(), 1'); pc.close();
-  } finally { srv.close(); }
+  } finally {
+    srv.close();
+    // the tabs this test opened go away (later tests count and point at tabs)
+    const t = await toolbar(); await t.ev(`closeDrop(), S.tabs.filter(x => x.url === 'about:blank' || x.url.startsWith('http://127.0.0.1:8802')).forEach(x => ui.send('tab', 'close', x.id)), 1`); t.close();
+    await sleep(800);
+  }
 }
 
 async function features() {

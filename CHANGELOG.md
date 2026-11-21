@@ -2,6 +2,25 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.20.0
+
+### Song recognition
+- New music button in the bar, where the ad-blocker shield was: one press names the song playing in a tab and drops
+  down its title and artist with a *Copy* button. It uses the current tab when it plays sound, otherwise another tab
+  that does, so it also works while you are on a different tab.
+- Music sites that publish what is playing (YouTube Music, SoundCloud and others) answer at once from the page,
+  with nothing sent anywhere.
+- Elsewhere the tab's own sound (not the computer's) is heard for up to 11 seconds while it keeps playing. At 4,
+  7.5 and 11 seconds an audio fingerprint of what was heard is made locally, on a worker thread, and only the
+  fingerprint is sent to Shazam's recognition service; the first match ends it.
+- The fingerprint library (shazam-api, GPL-2.0, with fft.js) is downloaded at runtime on first use, every file
+  checked against a pinned SHA-256 and checked again on each load. Nothing runs until the button is pressed.
+
+### Ad blocker
+- The shield moved from the bar into the ⋮ menu (*Ad blocker*, with the page's blocked count). It opens the same
+  panel: per-site and global switches and the site's permissions. The icon that appears in the address bar when a
+  site was refused a permission still opens it directly.
+
 ## 0.19.0
 
 ### YouTube

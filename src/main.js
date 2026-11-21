@@ -1593,10 +1593,18 @@ function setupPermissions(ses) {
     const deny = () => { try { cb(null); } catch (e) { try { cb({}); } catch (x) {} } };
     let wc = null; try { wc = req.frame ? webContents.fromFrame(req.frame) : null; } catch (e) {}
     // the music button's listener: the sound of the one tab it was started for, which keeps playing as usual
-    const songTarget = wc && songRec.get(wc.id);
-    if (songTarget) {
-      if (songTarget.isDestroyed()) return deny();
-      try { return cb({ video: songTarget.mainFrame, audio: songTarget.mainFrame, enableLocalEcho: true }); } catch (e) { return deny(); }
+    // (the picture has to come from something on screen: the tab itself when it is showing, else the screen; it
+    // is dropped at once)
+    const song = wc && songRec.get(wc.id);
+    if (song) {
+      const target = song.target;
+      if (target.isDestroyed()) return deny();
+      let video = target.mainFrame;
+      if (!song.shown) {
+        try { video = (await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false }))[0]; } catch (e) { video = null; }
+        if (!video || target.isDestroyed()) return deny();
+      }
+      try { return cb({ video, audio: target.mainFrame, enableLocalEcho: true }); } catch (e) { return deny(); }
     }
     const tab = tabOf(wc); const origin = PERM.originOf(req.securityOrigin || (req.frame && req.frame.url) || '');
     if (!tab || !origin || perms.get(origin, 'screen', partOf(tab)) === 'block') return deny();
@@ -2355,22 +2363,33 @@ function mergeBuiltInExtensions() {
 // for up to 11 seconds (src/ui/songid.html); at 4, 7.5 and 11 seconds what it heard so far is fingerprinted and
 // the fingerprint sent to Shazam, until a song is found. Nothing runs before the button is pressed.
 const SONG_FILE = path.join(SRC, 'ui', 'songid.html');
-const SONG_WORLD = 1997;
 const SONG_TRIES = [4, 7.5, 11];      // seconds heard when a fingerprint is sent
-const songRec = new Map();            // hidden listener webContents id -> the tab webContents it may hear
+const songRec = new Map();            // hidden listener webContents id -> { target: the tab webContents it may hear, shown }
 let songId = null, songBusy = false;
 const songLib = () => songId || (songId = new SONGID.SongId(path.join(app.getPath('userData'), 'songid'), (...a) => console.log('[3zT]', ...a)));
 const audibleTab = t => !!(t && t.view && !t.view.webContents.isDestroyed() && t.view.webContents.isCurrentlyAudible());
 // the tab to listen to: this one if it plays sound, else another playing tab of this window, else of another
 // window of the same kind (a private window only looks at its own tabs)
-function songTab(w) {
+async function songTab(w) {
   const a = w.active(); if (audibleTab(a)) return a;
-  return w.tabs.find(audibleTab) || (w.private ? null : allTabs().find(t => !t.win.private && audibleTab(t))) || null;
+  const other = w.tabs.find(audibleTab) || (w.private ? null : allTabs().find(t => !t.win.private && audibleTab(t)));
+  if (other) return other;
+  // nothing loud enough for Chromium to call it "audible" (a quiet intro): this tab, if something in it is playing
+  if (!a || !a.view || a.view.webContents.isDestroyed() || !/^https?:/i.test(a.url)) return null;
+  const playing = await Promise.race([
+    a.view.webContents.executeJavaScript(`(() => { const s = navigator.mediaSession; if (s && s.playbackState === 'playing') return true; return [...document.querySelectorAll('video, audio')].some(m => !m.paused && !m.ended && !m.muted && m.volume > 0); })()`).catch(() => false),
+    new Promise(r => setTimeout(() => r(false), 1500))
+  ]);
+  return playing ? a : null;
 }
 async function songFromPage(t) {
   if (!SONGID.musicSite(hostOf(t.url))) return null;
   try {
-    const m = await t.view.webContents.executeJavaScriptInIsolatedWorld(SONG_WORLD, [{ code: `(() => { const m = navigator.mediaSession && navigator.mediaSession.metadata; return m && m.title ? { title: String(m.title), artist: String(m.artist || '') } : null; })()` }]);
+    // (read in the page itself: the player's media session is not visible from an isolated world)
+    const m = await Promise.race([
+      t.view.webContents.executeJavaScript(`(() => { const s = navigator.mediaSession, m = s && s.playbackState !== 'paused' && s.metadata; return m && m.title ? { title: String(m.title), artist: String(m.artist || '') } : null; })()`),
+      new Promise(r => setTimeout(() => r(null), 1500))
+    ]);
     if (m && typeof m.title === 'string' && m.title.trim()) return { title: m.title.trim().slice(0, 300), artist: String(m.artist || '').trim().slice(0, 300) };
   } catch (e) {}
   return null;
@@ -2386,7 +2405,9 @@ async function songListen(t) {
     webPreferences: { session: target.session, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false, autoplayPolicy: 'no-user-gesture-required' }
   });
   const rid = rec.webContents.id;
-  songRec.set(rid, target);
+  // a tab on screen gives the picture the capture needs; a tab in the background cannot (the screen's is used)
+  const shown = t.win.activeId === t.id && !t.win.win.isDestroyed() && t.win.win.isVisible() && !t.win.win.isMinimized();
+  songRec.set(rid, { target, shown });
   rec.webContents.on('will-navigate', e => e.preventDefault());
   rec.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   const run = code => rec.webContents.executeJavaScript(code, true);
@@ -2403,7 +2424,8 @@ async function songListen(t) {
       if (rec.isDestroyed()) throw new Error('listener closed');
       const pcm = new Int16Array(new Uint8Array(Buffer.from(await run('rec.take()'), 'base64')).buffer);
       if (pcm.length < SONGID.RATE * 2) { if (target.isDestroyed()) return { status: 'silent' }; continue; }
-      if (SONGID.peak(pcm) < 0.004) return { status: 'silent' };
+      // nothing heard yet (digital silence, not a quiet passage): keep listening; still nothing at the end: say so
+      if (SONGID.peak(pcm) < 0.0015) { if (sec === SONG_TRIES[SONG_TRIES.length - 1]) return { status: 'silent' }; continue; }
       const req = await sid.request(pcm, tz);
       const headers = {};
       for (const [k, v] of Object.entries(req.headers || {})) if (!/^(accept-encoding|content-length|host)$/i.test(k)) headers[k] = String(v);
@@ -2423,9 +2445,9 @@ function setupSongIpc() {
   ipcMain.handle('song:id', async e => {
     const w = uiWin(e); if (!w) return null;
     if (songBusy) return { status: 'busy' };
-    const t = songTab(w);
-    if (!t) return { status: 'silent' };
     songBusy = true;
+    const t = await songTab(w).catch(() => null);
+    if (!t) { songBusy = false; return { status: 'silent' }; }
     const t0 = Date.now();
     try {
       const fromPage = await songFromPage(t);

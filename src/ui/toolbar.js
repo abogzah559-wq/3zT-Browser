@@ -479,7 +479,7 @@ async function renderMenu(kind) {
       <button class="mi" data-a="history">${ICO.hist}<span class="t">${L('السجل', 'History')}</span><span class="sub">Ctrl+H</span></button>
       <button class="mi" data-a="downloads">${ICO.down}<span class="t">${L('التنزيلات', 'Downloads')}</span></button>
       <button class="mi" data-a="passwords">${ICO.key}<span class="t">${L('كلمات السر', 'Passwords')}</span></button>
-      <button class="mi" data-a="shield">${ICO.shield}<span class="t">${L('مانع الإعلانات', 'Ad blocker')}</span><span class="sub" id="shSub">${S.adblock && !S.adSiteOff ? Number(S.blocked || 0).toLocaleString('en') : L('طافي', 'Off')}</span></button>
+      <button class="mi" data-a="shield">${ICO.shield}<span class="t">${L('مانع الإعلانات', 'Ad blocker')}</span><span class="sub">${S.adblock && !S.adSiteOff ? Number(S.blocked || 0).toLocaleString('en') : L('طافي', 'Off')}</span></button>
       ${S.closedCount ? `<button class="mi" data-a="reopen">${ICO.clock}<span class="t">${L('إرجاع آخر تبويب مغلق', 'Reopen closed tab')}</span><span class="sub">Ctrl+Shift+T</span></button>` : ''}
       <div class="sep"></div>
       <button class="mi" data-a="find">${ICO.find}<span class="t">${L('بحث في الصفحة', 'Find in page')}</span><span class="sub">Ctrl+F</span></button>

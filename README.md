@@ -115,8 +115,8 @@ delete it.
 ### Ad blocking and privacy protection
 
 - Network-level blocker using the public **EasyList** and **EasyPrivacy** lists, refreshed in the
-  background. It can be turned off per site from the shield button, which shows the number of blocked items
-  for the page inside it.
+  background. Its panel, under *Ad blocker* in the ⋮ menu, shows the number of blocked items on the page and
+  turns the blocker off for one site or for all of them.
 - YouTube and Twitch video ads are blocked. On YouTube this uses **AdGuard's YouTube rules** from AdGuard Base
   filter, run with AdGuard's scriptlet library. Both are downloaded at runtime, checked (the list's checksum and
   the presence of the rules YouTube's current checks need) and refreshed every 12 hours, so YouTube's frequent
@@ -137,7 +137,7 @@ delete it.
   its per-site switch).
 - **Pop-up ads:** a new tab or window that a page opens to another site is allowed only when it is the link or
   form that was clicked (or a sign-in window). Scripted pop-unders, including blank tabs that are redirected to an
-  ad afterwards, are closed quietly and counted on the shield. Hosts marked `$popup` in the lists are always
+  ad afterwards, are closed quietly and counted by the ad blocker. Hosts marked `$popup` in the lists are always
   refused.
 - **Empty ad slots are folded away**: when an ad's picture or frame is blocked, the box the page made for it
   is hidden together with wrappers that held nothing else. This also covers slots built by ad scripts served
@@ -152,6 +152,25 @@ delete it.
   ("insert your security key") dialog on their own, including through embedded frames or blank frames
   created by the page. A security key used as a second sign-in step still works after a click. When
   enabled, only requests the user did not initiate are refused.
+
+### Song recognition
+
+- The **music button** in the bar names the song playing in a tab. One press: the result drops down with the title,
+  the artist and a *Copy* button.
+- The tab used is the current one when it plays sound, otherwise another tab that does (a private window only
+  looks at its own tabs). Music sites that publish what is playing through the Media Session API (YouTube Music,
+  SoundCloud and others) are read directly, with nothing sent anywhere.
+- Elsewhere the browser listens to that tab only (not the whole computer) for up to 11 seconds while it keeps
+  playing normally. At 4, 7.5 and 11 seconds what was heard so far is turned into an audio fingerprint on this
+  computer, and only the fingerprint, never the recording, is sent to Shazam's recognition service. A found song
+  ends the listening early; a fingerprint takes about half a second on a worker thread.
+- The fingerprint code is [shazam-api](https://github.com/asivery/node-shazam-api) (GPL-2.0) with
+  [fft.js](https://github.com/indutny/fft.js) (MIT). They are not part of 3zT or its setup: they are downloaded
+  from npm through jsDelivr the first time the button is used, every file checked against a SHA-256 pinned in
+  `src/songid.js`, kept in `songid\`, and checked again each time they are loaded. Nothing runs before the button
+  is pressed.
+- Shazam does not offer a public API; the requests are the ones its apps make. If Shazam changes them, the button
+  reports that it could not check until the library is updated.
 
 ### YouTube and Twitch
 
@@ -257,6 +276,8 @@ src/
   features.js          SponsorBlock, Return YouTube Dislike, Clean YouTube, Ambient light, Twitch
   adblock.js           EasyList / EasyPrivacy host matcher with resource types
   cleanlinks.js        link cleaning with ClearURLs' rules
+  songid.js            song recognition: the fingerprint library (downloaded, checksums pinned), the worker
+                       thread that runs it, Shazam's answer (ui/songid.html is the hidden page that hears a tab)
   downloads.js         download manager (hands large files to aria2)
   aria2.js             the aria2 helper process and its JSON-RPC connection
   media/engine.js      video / audio / photo downloader: yt-dlp, gallery-dl and FFmpeg orchestration
@@ -270,7 +291,7 @@ src/
   inject/              third-party scripts injected into YouTube / Twitch
   vendor/              Readability, tldts, Chrome Web Store support; Autoconsent (added at build time)
 scripts/               build_win.py, fetch_tools.mjs, fetch_autoconsent.mjs, sign-update.mjs
-tests/                 e2e.mjs, update-test.mjs, media-real.mjs, bench.ps1, speed.mjs, resources.mjs
+tests/                 e2e.mjs, songid.mjs, update-test.mjs, media-real.mjs, bench.ps1, speed.mjs, resources.mjs
 installer/             Inno Setup script, wizard images, in-app release notes (Arabic)
 ```
 
@@ -341,6 +362,9 @@ trackers.
   - `filters.adtidy.org`, for AdGuard Base filter's YouTube rules (checked every 12 hours, downloaded only when changed);
   - `cdn.jsdelivr.net`, for AdGuard's scriptlet library (with each new filter list);
   - `rules2.clearurls.xyz`, for the link-cleaning rules (every few days);
+  - when the music button is pressed: `amp.shazam.com` (an audio fingerprint of a few seconds, the time zone and
+    a random request ID; no recording, page address or account), and `cdn.jsdelivr.net` once for the fingerprint
+    library;
   - `sponsor.ajay.app`, on YouTube with SponsorBlock enabled (a 4-character hash prefix of the video ID);
   - `returnyoutubedislikeapi.com`, on YouTube with the dislike count enabled (the video ID);
   - Google's extension servers, when installing or updating a Chrome Web Store extension;
@@ -391,6 +415,7 @@ Everything is stored locally in `%APPDATA%\3zT Browser`:
 | `passwords.json` | Saved passwords (encrypted) |
 | `extensions\`, `webstore\` | Installed extensions |
 | `adblock\` | Downloaded filter lists and a parsed cache |
+| `songid\` | The song recognition library (downloaded on first use, checksums pinned) |
 | `media\tools\` | The downloader's self-updating copies of yt-dlp and gallery-dl |
 | `logs\3zt.log` | Error log (capped at 1 MB), useful for bug reports |
 | other files | Chromium's cookies, cache and site storage |
@@ -445,8 +470,12 @@ every push the Windows workflow:
 8. tests the reader view (content, images, captions, sanitizing), picture in picture (window, controls,
    restoring the page, remembered position and size), tab hover cards,
    tab search across windows and the cookie-popup handling;
-9. tests silent updating end to end with a locally signed fake release;
-10. uninstalls and verifies removal, then runs the memory, speed and resource benchmarks.
+9. tests the music button: the ad blocker's place in the menu, "nothing is playing", and a tab playing a test tone
+   heard from another tab, fingerprinted and sent to Shazam, with the listener gone and the tab still playing
+   afterwards ([`tests/songid.mjs`](tests/songid.mjs) checks the library's download, checksums and Shazam's answer
+   on its own);
+10. tests silent updating end to end with a locally signed fake release;
+11. uninstalls and verifies removal, then runs the memory, speed and resource benchmarks.
 
 [`tests/media-real.mjs`](tests/media-real.mjs) runs the downloader engine against real YouTube and
 TikTok videos (manually or on `diag/**` branches). [`tests/sites-real.mjs`](tests/sites-real.mjs) runs
@@ -512,6 +541,8 @@ full texts are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 | [AdGuard Base filter](https://github.com/AdguardTeam/AdguardFilters) (YouTube rules) | AdGuard and filter contributors | GPL-3.0 | Downloaded at runtime |
 | [AdGuard Scriptlets](https://github.com/AdguardTeam/Scriptlets) | AdGuard | GPL-3.0 | Downloaded at runtime |
 | [ClearURLs](https://docs.clearurls.xyz) rules | ClearURLs contributors | LGPL-3.0 | Downloaded at runtime |
+| [shazam-api](https://github.com/asivery/node-shazam-api) 0.3.0 | asivery | GPL-2.0 | Downloaded at runtime, song recognition |
+| [fft.js](https://github.com/indutny/fft.js) 4.0.4 | Fedor Indutny | MIT | Downloaded at runtime, song recognition |
 | Clean YouTube (Chrome Web Store) | its developer | — | Element list adapted |
 | [Thmanyah](https://thmanyah.com) font | Thmanyah | Free to use | Not redistributed; used when installed |
 
