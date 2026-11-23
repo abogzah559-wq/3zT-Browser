@@ -85,6 +85,16 @@ function logError(kind, err) {
     fs.appendFileSync(LOG_FILE, text);
   } catch (e) {}
 }
+/* how long the browser takes to open: kept in the log when the window shows later than 3 s after the program
+   started (a cold start after Windows boots is the slow one), with the time each part of the start took */
+const START = { marks: [] };
+const startMark = name => { if (!START.done) START.marks.push(name + ' ' + Math.round(performance.now())); };
+function startShown() {
+  if (START.done) return; START.done = true;
+  const ms = Math.round(performance.now());
+  if (process.env.ZEUS_TIMING) console.log('[timing] window shown', ms, 'ms');
+  if (ms > 3000) logError('slow start', `${ms} ms: ${START.marks.join(', ')}`);
+}
 process.on('uncaughtException', err => logError('uncaught', err));
 process.on('unhandledRejection', err => logError('unhandled', err));
 
@@ -219,7 +229,7 @@ class Win {
     this.ui.webContents.once('did-finish-load', () => {
       if (opts.maximized) this.win.maximize();
       if (opts.show !== false) this.win.show();
-      if (process.env.ZEUS_TIMING) console.log('[timing] window shown', Math.round(performance.now()), 'ms');
+      startShown();
       this.pushState();
       const t = this.active(); if (t && isNewtab(t.url)) this.focusAddress();
     });
@@ -349,6 +359,7 @@ class Win {
       if (best && best.n >= total * 0.4) col = [best.r, best.g, best.b].map(v => Math.round(v / best.n));
       // (with dark pages on, Chromium darkens light sites, but not their declared theme colour: a light one is left out)
       else if (info && Array.isArray(info.theme) && !(DARK_PAGES && (0.299 * info.theme[0] + 0.587 * info.theme[1] + 0.114 * info.theme[2]) / 255 > 0.5)) col = info.theme;
+      if (tintCache.size > 500) tintCache.clear();   // (a long session: kept small)
       tintCache.set(host, col || 'none');
     } catch (e) {} finally { t.tintBusy = false; }
     if (!this.win.isDestroyed()) this.applyTint();
@@ -720,6 +731,8 @@ async function storeFavicon(tab, iconUrl) {
       if (!buf.length || buf.length > 150000) return;
       data = `data:${type};base64,${buf.toString('base64')}`;
     }
+    data = smallIcon(data);
+    if (!data) return;
     favStore.data['u:' + normUrl(tab.url)] = data;
     favStore.data['h:' + hostOf(tab.url)] = data;
     const keys = Object.keys(favStore.data);
@@ -728,12 +741,45 @@ async function storeFavicon(tab, iconUrl) {
     tab.favicon = data; tab.win && tab.win.pushState();
   } catch (e) {}
 }
+/* icons are shown at 16 px (32 on a high-DPI screen): kept at 32 px, so the icon file stays small. Sites hand out
+   icons of up to 150 KB (512 px app icons); kept as they were, a few hundred of them made favicons.json about 10 MB,
+   read whole when the browser starts and written whole after every new icon. An icon the image decoder can't read
+   (SVG) is kept as it is up to 24 KB, and dropped above that (the tab shows the default icon). */
+const ICON_KEEP = 6000;   // characters: an icon this small is kept as it is
+function smallIcon(data) {
+  if (typeof data !== 'string' || !data.startsWith('data:')) return '';
+  if (data.length <= ICON_KEEP) return data;
+  try {
+    const img = nativeImage.createFromDataURL(data);
+    if (img.isEmpty()) return data.length <= 4 * ICON_KEEP ? data : '';   // (SVG: not decoded here)
+    const { width, height } = img.getSize();
+    const out = (Math.max(width, height) > 32 ? img.resize(width >= height ? { width: 32, quality: 'best' } : { height: 32, quality: 'best' }) : img).toDataURL();
+    return out.length < data.length ? out : (data.length <= 4 * ICON_KEEP ? data : '');
+  } catch (e) { return ''; }
+}
+// the icons saved before this: made small once, a little at a time, after the browser has started
+function shrinkStoredIcons() {
+  if (settings.data.iconsSmall || !favStore) return;
+  const keys = Object.keys(favStore.data).filter(k => typeof favStore.data[k] === 'string' && favStore.data[k].length > ICON_KEEP);
+  let i = 0;
+  const step = () => {
+    for (const end = Math.min(i + 40, keys.length); i < end; i++) {
+      const k = keys[i], v = smallIcon(favStore.data[k]);
+      if (v) favStore.data[k] = v; else delete favStore.data[k];
+    }
+    if (i < keys.length) return void setTimeout(step, 50);
+    if (keys.length) favStore.save();
+    settings.data.iconsSmall = true; settings.save();
+  };
+  step();
+}
 function bookmarkUrls(node = bookmarks.data, out = []) {
   for (const c of node.children || []) { if (c.url) out.push(c.url); if (c.children) bookmarkUrls(c, out); }
   return out;
 }
 function importChromeFavicons() {
   const got = CI.readFavicons(app, bookmarkUrls());
+  for (const k of Object.keys(got)) { const v = smallIcon(got[k]); if (v) got[k] = v; else delete got[k]; }
   Object.assign(favStore.data, got); favStore.save();
   return Object.keys(got).length;
 }
@@ -1416,6 +1462,15 @@ let adSaveTimer = null;
 const nonGet = new Map();
 function noteNonGet(u) { nonGet.set(u, Date.now()); if (nonGet.size > 200) nonGet.delete(nonGet.keys().next().value); }
 const wasNonGet = chain => chain.some(u => { const t = nonGet.get(u); return t && Date.now() - t < 10 * 60000; });
+let acceptLangs = '';
+function acceptLanguages() {
+  if (acceptLangs) return acceptLangs;
+  const want = [];
+  const add = l => { l = String(l || '').trim(); if (l && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(l) && !want.some(x => x.toLowerCase() === l.toLowerCase())) want.push(l); };
+  add(app.getLocale() || 'en-US');
+  try { for (const l of app.getPreferredSystemLanguages()) add(l); } catch (e) {}
+  return (acceptLangs = want.slice(0, 4).join(','));   // (Chromium adds the ";q=" weights to the header itself)
+}
 const setUpSessions = new WeakSet();
 function setupSession(ses) {
   if (setUpSessions.has(ses)) return;   // a private window's tabs share one session: set it up once
@@ -1424,6 +1479,9 @@ function setupSession(ses) {
   // registered with the session (a page only sees the schemes handled before it was made): see previewLink
   try { ses.protocol.handle('ztpv', req => previewServe(ses, req)); } catch (e) {}
   try { ses.setSpellCheckerEnabled(false); } catch (e) {}   // no dictionary download, less memory
+  // the languages sites are told you read: the same list the pages themselves read (navigator.languages: the
+  // browser's language, then Windows' preferred languages); Electron sent only the first one in the header
+  try { ses.setUserAgent(app.userAgentFallback, acceptLanguages()); } catch (e) {}
   ses.webRequest.onBeforeSendHeaders({ urls: ['http://*/*', 'https://*/*'] }, (d, cb) => {
     const h = d.requestHeaders;
     if (SIGNIN_HOST.test(hostOf(d.url) || '')) {
@@ -1996,7 +2054,7 @@ function setupDownloadIpc() {
   const fileIcon = async r => {
     if (!r.path || r.state !== 'completed') return '';
     if (iconCache.has(r.path)) return iconCache.get(r.path);
-    let u = ''; try { if (fs.existsSync(r.path)) { const im = await app.getFileIcon(r.path, { size: 'normal' }); dragIcons.set(r.path, im); u = im.toDataURL(); } } catch (x) {}
+    let u = ''; try { if (fs.existsSync(r.path)) { const im = await app.getFileIcon(r.path, { size: 'normal' }); if (dragIcons.size > 200) dragIcons.clear(); dragIcons.set(r.path, im); u = im.toDataURL(); } } catch (x) {}
     iconCache.set(r.path, u); return u;
   };
   ipcMain.handle('dl:session', async e => {
@@ -2022,7 +2080,7 @@ function setupDownloadIpc() {
   ipcMain.handle('dl:icon', async (e, id) => {
     if (!okPage(e)) return '';
     const r = dl.get(id); if (!r || !r.path || !fs.existsSync(r.path)) return '';
-    try { const im = await app.getFileIcon(r.path, { size: 'normal' }); dragIcons.set(r.path, im); return im.toDataURL(); } catch (x) { return ''; }
+    try { const im = await app.getFileIcon(r.path, { size: 'normal' }); if (dragIcons.size > 200) dragIcons.clear(); dragIcons.set(r.path, im); return im.toDataURL(); } catch (x) { return ''; }
   });
 }
 
@@ -2098,7 +2156,48 @@ function setupPasswordIpc() {
     e.returnValue = ok ? { main: YTR.code('main', senderHost(e)) } : null;
     if (ok && process.env.ZEUS_E2E && e.returnValue) console.log('[3zT] yt rules injected', senderHost(e));
   });
+  // what a page reads about the browser (chromeCode in preload-newtab.js): the permissions this frame's site was
+  // refused for good
+  ipcMain.on('site:look', e => {
+    const out = { blocked: [] };
+    try {
+      const origin = PERM.originOf((e.senderFrame && e.senderFrame.url) || '');
+      const t = tabOfWc(e.sender);
+      if (origin && t && perms) out.blocked = Object.entries(perms.site(origin, partOf(t))).filter(([, v]) => v === 'block').map(([k]) => k);
+    } catch (x) {}
+    e.returnValue = out;
+  });
+  ipcMain.on('yt:restricted', (e, url) => { const t = tabOfWc(e.sender); if (t && isYTAny(senderHost(e))) ytRestricted(t, String(url || '')); });
   setupSiteIpc();
+}
+
+/* YouTube's "Video unavailable ... network administrator restrictions" (error 151: Restricted Mode, on a network
+   and an account that have none) on every video, reloading did not help, until the browser was closed and opened
+   again; a private window played the same video at the same time. What a restart changes for YouTube: the
+   cookies that last only until the browser closes, new connections, addresses looked up again. That is done here
+   (the sign-in cookies stay: they are kept across restarts too) and the page is loaded again, which played the
+   video every time it was tried. Written in the log with the addresses YouTube was reached at (the ones of a
+   restricted network are YouTube's restrict addresses), so it can be followed. At most once every 10 minutes. */
+let ytFixAt = 0;
+async function ytRestricted(tab, url) {
+  const wc = tab.view && tab.view.webContents;
+  if (!wc || wc.isDestroyed()) return;
+  const ses = wc.session, now = Date.now();
+  if (now - ytFixAt < 10 * 60 * 1000) { logError('youtube 151', 'again within 10 minutes, left as it is: ' + url.slice(0, 120)); return; }
+  ytFixAt = now;
+  let where = '', gone = 0;
+  try { if (typeof ses.resolveHost === 'function') { const r = await ses.resolveHost('www.youtube.com'); where = ((r && r.endpoints) || []).map(x => x.address).join(' '); } } catch (e) {}
+  try {
+    const mine = d => /(^|\.)(youtube\.com|google\.com)$/i.test(String(d || '').replace(/^\./, ''));
+    for (const c of await ses.cookies.get({})) {
+      if (!c.session || !mine(c.domain)) continue;
+      try { await ses.cookies.remove(`http${c.secure ? 's' : ''}://${c.domain.replace(/^\./, '')}${c.path || '/'}`, c.name); gone++; } catch (e) {}
+    }
+    await ses.clearHostResolverCache();
+    await ses.closeAllConnections();
+  } catch (e) {}
+  logError('youtube 151', `${gone} until-closed cookies cleared, connections renewed, youtube at ${where || '?'}: ${url.slice(0, 120)}`);
+  if (!wc.isDestroyed()) wc.reload();
 }
 
 /* ---------- YouTube: AdGuard's YouTube rules ----------
@@ -2371,6 +2470,9 @@ function mergeBuiltInExtensions() {
    loaded, so the two never run together. The folder it was added from is left alone. */
 function retireTikTokView() {   // (every start: a few small files read; Chrome's import could bring it back)
   const isTTV = dir => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).name === '3zT TikTok View'; } catch (e) { return false; } };
+  // (and any extension copy whose folder is gone: it can't load, and it was tried again at every start)
+  const lost = (settings.data.extensions || []).filter(p => p.startsWith(extRoot() + path.sep) && !fs.existsSync(path.join(p, 'manifest.json')));
+  if (lost.length) { settings.data.extensions = settings.data.extensions.filter(p => !lost.includes(p)); settings.save(); }
   const gone = (settings.data.extensions || []).filter(isTTV);
   if (gone.length) {
     settings.data.extensions = settings.data.extensions.filter(p => !gone.includes(p));
@@ -2959,6 +3061,7 @@ app.whenReady().then(async () => {
   // dark everywhere: sites, error pages, scrollbars, form controls, the PDF viewer, menus
   nativeTheme.themeSource = DARK_PAGES ? 'dark' : 'system';
   if (process.env.ZEUS_TIMING) console.log('[timing] ready', Math.round(performance.now()), 'ms');
+  startMark('ready');
   Menu.setApplicationMenu(null);
   settings = makeStore('settings.json', {
     lang: 'ar', memorySaverMin: 15, restoreTabs: true, extensions: [], bookmarksImported: false,
@@ -2971,6 +3074,7 @@ app.whenReady().then(async () => {
   history = makeStore('history.json', []);
   sessionStore = makeStore('session.json', { windows: [] });
   favStore = makeStore('favicons.json', {});
+  startMark('stores');
   // big downloads go to aria2, shipped next to the video tools (resources/tools)
   const toolsDir = app.isPackaged ? path.join(process.resourcesPath, 'tools') : path.join(SRC, '..', 'tools-cache');
   const aria = new Aria2({ exe: path.join(toolsDir, process.platform === 'win32' ? 'aria2c.exe' : 'aria2c'), log: (...a) => console.log('[3zT downloads]', ...a) });
@@ -2995,6 +3099,7 @@ app.whenReady().then(async () => {
   setTimeout(refreshClean, 6000);
   setInterval(refreshClean, 12 * 3600 * 1000);
   setInterval(() => YTR.refresh(), 3 * 3600 * 1000);
+  setTimeout(shrinkStoredIcons, 20000);
   // the names of TikTok's parts for the TikTok / Instagram layout, from this project on GitHub (every few hours)
   socialLayout = new SocialLayout(path.join(app.getPath('userData'), 'social-layout'), (...a) => console.log('[3zT]', ...a));
   const refreshSocial = () => socialLayout.refresh((u, headers) => net.fetch(u, { cache: 'no-store', headers })).catch(e => console.warn('[3zT] TikTok layout names:', e.message));
@@ -3031,6 +3136,7 @@ app.whenReady().then(async () => {
     // extensions from the Chrome Web Store (installs, loads and keeps them updated)
     setupWebStore().catch(e => console.warn('web store failed', e.message))
   ]);
+  startMark('extensions');
   // a new extension (from the store or anywhere): refresh the bar and the settings page
   try { extApi().on('extension-loaded', () => { for (const w of wins) w.pushState(); settingsChanged(); }); extApi().on('extension-unloaded', () => { for (const w of wins) w.pushState(); settingsChanged(); }); } catch (e) {}
 

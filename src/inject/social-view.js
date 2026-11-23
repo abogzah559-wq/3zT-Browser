@@ -294,15 +294,24 @@
     const r = el.getBoundingClientRect();
     // toggle: right edge of the video — bottom corner while everything is hidden,
     // just above the caption once it is shown
-    let below = EDGE + 8; // clear of the progress bar
-    if (root.classList.contains('tzt-show-actions')) {
-      const info = el.querySelector('[data-tzt-ig="info"] > :last-child');
-      if (info) below = info.offsetHeight + EDGE;
-    }
     const visibleBottom = Math.min(r.bottom, window.innerHeight);
+    let top = visibleBottom - (EDGE + 8) - TOGGLE_SIZE; // clear of the progress bar
+    if (root.classList.contains('tzt-show-actions')) {
+      // above the caption's first line, measured where the caption really is: the block's last element can be an
+      // empty one (its height alone left the eye over the caption's last line); the last one showing something is it
+      const info = el.querySelector('[data-tzt-ig="info"]');
+      const kids = info ? [...info.children].reverse() : [];
+      for (const k of kids) {
+        const ir = k.getBoundingClientRect();
+        if (!(ir.height > 0 && ir.height < r.height * 0.6)) continue;
+        // only when it sits at the bottom, where the eye is (on a wide video it shows at the top: the eye stays)
+        if (ir.bottom > top) top = Math.min(ir.top, visibleBottom) - 6 - TOGGLE_SIZE;
+        break;
+      }
+    }
     setVar('--tzt-toggle-left', px(r.right - EDGE - TOGGLE_SIZE));
-    setVar('--tzt-toggle-top', px(visibleBottom - below - TOGGLE_SIZE));
-    setVar('--tzt-toggle-gap', px(below + TOGGLE_SIZE + 8));
+    setVar('--tzt-toggle-top', px(top));
+    setVar('--tzt-toggle-gap', px(r.bottom - top + 8));   // the buttons column, above the eye (from the video's bottom)
     ensureToggle();
     placed(true);
   }

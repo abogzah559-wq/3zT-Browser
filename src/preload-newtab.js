@@ -183,6 +183,98 @@ const fpCode = seed => `(() => {
   wrap(AB, 'getChannelData', orig => ({ getChannelData(ch) { const d = orig.apply(this, arguments); try { nudge(this, ch, d); } catch (e) {} return d; } }).getChannelData);
 })();`;
 
+/* What a website reads about the browser, the same as in Google Chrome where Electron differs (a bot check that
+   compares a page's view of the browser with Chrome's reads these, and refuses what looks like an automated
+   browser; ordinary sites read them too):
+   - window.chrome: Chrome gives every web page chrome.app, chrome.csi() and chrome.loadTimes(); Electron gives an
+     empty object
+   - a permission nobody has answered yet: Chrome says "ask" (Notification.permission "default", permissions.query
+     "prompt"); Electron can only say yes or no, and said "denied", so sites thought you had blocked them (a video
+     call site would show "you blocked the camera" instead of asking). The real question still comes from the bar
+     when the site asks (main.js, setPermissionRequestHandler). look.blocked: what this site was refused for good.
+   Applied to the page and to frames of the same page; the functions look built in. */
+const chromeCode = look => `(() => {
+  'use strict';
+  const BLOCKED = ${JSON.stringify((look && look.blocked) || [])};
+  const KIND = { notifications: 'notifications', push: 'notifications', geolocation: 'geolocation', camera: 'camera', microphone: 'microphone',
+    'clipboard-read': 'clipboard-read', midi: 'midi', 'window-management': 'window-management', 'idle-detection': 'idle-detection' };
+  const fts0 = Function.prototype.toString;
+  const src = f => { try { return fts0.call(f); } catch (e) { return 'function () { [native code] }'; } };
+  const native = new WeakMap(), done = new WeakSet(), asked = new WeakSet();
+  const nat = (f, name, len, text) => {
+    native.set(f, text || 'function ' + name + '() { [native code] }');
+    try { Object.defineProperty(f, 'name', { value: name, configurable: true }); Object.defineProperty(f, 'length', { value: len, configurable: true }); } catch (e) {}
+    return f;
+  };
+  const install = w => {
+    let FP; try { FP = w.Function.prototype; } catch (e) { return; }   // another site's frame: its own copy runs there
+    if (!FP || done.has(FP)) return;
+    done.add(FP);
+    try {
+      const fts = FP.toString;
+      const ts = ({ toString() { return native.has(this) ? native.get(this) : fts.call(this); } }).toString;
+      native.set(ts, src(fts));
+      Object.defineProperty(FP, 'toString', { value: ts, configurable: true, writable: true, enumerable: false });
+    } catch (e) {}
+    try {
+      let c = w.chrome;
+      if (!c || typeof c !== 'object') { c = {}; Object.defineProperty(w, 'chrome', { value: c, writable: true, configurable: true, enumerable: true }); }
+      if (!('app' in c)) {
+        const m = {
+          getDetails() { return null; }, getIsInstalled() { return false; }, runningState() { return 'cannot_run'; },
+          installState(cb) { if (typeof cb === 'function') w.setTimeout(() => cb('not_installed'), 0); }
+        };
+        const app = { isInstalled: false };   // (in Chrome's order)
+        for (const k of ['getDetails', 'getIsInstalled', 'installState', 'runningState']) app[k] = nat(m[k], k, 0);
+        app.InstallState = { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' };
+        app.RunningState = { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' };
+        c.app = app;
+      }
+      const perf = w.performance;
+      const nav = () => { try { return perf.getEntriesByType('navigation')[0] || {}; } catch (e) { return {}; } };
+      const at = ms => (perf.timeOrigin + (ms || 0)) / 1000;
+      if (!('csi' in c)) c.csi = nat(({ csi() { const n = nav(); return { startE: Math.round(perf.timeOrigin), onloadT: Math.round(perf.timeOrigin + (n.domContentLoadedEventEnd || 0)), pageT: perf.now(), tran: 15 }; } }).csi, '', 0, 'function () { [native code] }');
+      if (!('loadTimes' in c)) c.loadTimes = nat(({ loadTimes() {
+        const n = nav(), proto = n.nextHopProtocol || '', h2 = proto === 'h2' || proto === 'h3';
+        let paint = 0; try { const p = perf.getEntriesByName('first-paint')[0]; if (p) paint = at(p.startTime); } catch (e) {}
+        return { requestTime: at(n.requestStart || 0), startLoadTime: at(0), commitLoadTime: at(n.responseStart), finishDocumentLoadTime: at(n.domContentLoadedEventEnd),
+          finishLoadTime: at(n.loadEventEnd), firstPaintTime: paint, firstPaintAfterLoadTime: 0, navigationType: 'Other', wasFetchedViaSpdy: h2,
+          wasNpnNegotiated: h2, npnNegotiatedProtocol: h2 ? proto : 'unknown', wasAlternateProtocolAvailable: false, connectionInfo: proto || 'http/1.1' };
+      } }).loadTimes, '', 0, 'function () { [native code] }');
+    } catch (e) {}
+    try {
+      const N = w.Notification, d = N && Object.getOwnPropertyDescriptor(N, 'permission');
+      if (d && d.get && !BLOCKED.includes('notifications')) {
+        const g = d.get;
+        Object.defineProperty(N, 'permission', Object.assign({}, d, { get: nat(({ get permission() { const v = g.call(this); return v === 'denied' ? 'default' : v; } }).__lookupGetter__('permission'), 'get permission', 0, src(g)) }));
+      }
+    } catch (e) {}
+    try {
+      const PP = w.Permissions && w.Permissions.prototype, q = PP && PP.query;
+      const SP = w.PermissionStatus && w.PermissionStatus.prototype, sd = SP && Object.getOwnPropertyDescriptor(SP, 'state');
+      if (typeof q === 'function' && sd && sd.get) {
+        const sg = sd.get;
+        Object.defineProperty(PP, 'query', { value: nat(({ query(desc) {
+          const r = q.apply(this, arguments);
+          const k = KIND[desc && desc.name];
+          if (!k || BLOCKED.includes(k) || !r || typeof r.then !== 'function') return r;
+          return r.then(st => { try { asked.add(st); } catch (e) {} return st; });
+        } }).query, 'query', 1, src(q)), configurable: true, writable: true, enumerable: true });
+        Object.defineProperty(SP, 'state', Object.assign({}, sd, { get: nat(({ get state() { const v = sg.call(this); return v === 'denied' && asked.has(this) ? 'prompt' : v; } }).__lookupGetter__('state'), 'get state', 0, src(sg)) }));
+      }
+    } catch (e) {}
+    // frames of this page get the same as soon as the page can reach them
+    try {
+      const IP = w.HTMLIFrameElement.prototype, cd = Object.getOwnPropertyDescriptor(IP, 'contentWindow');
+      if (cd && cd.get) {
+        const cg = cd.get;
+        Object.defineProperty(IP, 'contentWindow', Object.assign({}, cd, { get: nat(({ get contentWindow() { const r = cg.call(this); if (r) { try { install(r); } catch (e) {} } return r; } }).__lookupGetter__('contentWindow'), 'get contentWindow', 0, src(cg)) }));
+      }
+    } catch (e) {}
+  };
+  install(window);
+})();`;
+
 const internal = !SUB && location.protocol === 'file:' && /\/newtab\/(newtab|history|tasks|passwords|settings|downloads|media)\.html$/i.test(decodeURIComponent(location.pathname));
 // the reader view shows text taken from a website: it only gets its own article, nothing else of the browser
 const readerPage = !SUB && location.protocol === 'file:' && /\/newtab\/reader\.html$/i.test(decodeURIComponent(location.pathname));
@@ -283,6 +375,26 @@ const FOLD = (() => {
     if (!doc || !doc.body || doc.designMode === 'on' || doc.body.isContentEditable) return false;
     return !shows(doc);
   };
+  /* the boxes a site keeps for Google's and Taboola's ads: their scripts are stopped, so the box stays empty and
+     only leaves a blank space (often with a dark or grey background) where the ad was meant to be */
+  const SLOT = '[id^="div-gpt-ad"], ins.adsbygoogle, [id^="google_ads_iframe_"], [data-google-query-id], [id^="taboola-"], .trc_related_container';
+  const holdsSomething = el => {
+    if ((el.innerText || '').trim().length > 40) return true;
+    for (const m of el.querySelectorAll('img, video, canvas, iframe, embed, object, picture')) {
+      const r = m.getBoundingClientRect(); if (r.width < 30 || r.height < 20) continue;
+      if (m.tagName === 'IMG' && !(m.complete && m.naturalWidth > 0)) continue;
+      if (m.tagName === 'IFRAME' && !emptySlotFrame(m)) return true;
+      if (m.tagName !== 'IFRAME') return true;
+    }
+    return false;
+  };
+  const emptySlotFrame = f => {
+    const src = (f.getAttribute('src') || '').trim();
+    if (/^https?:\/\/([\w-]+\.)*(googlesyndication\.com|doubleclick\.net|googleadservices\.com)\//i.test(src)) return true;   // an ad frame (stopped by the blocker)
+    if (src && !/^(about:blank|javascript:)/i.test(src)) return false;
+    let doc = null; try { doc = f.contentDocument; } catch (e) { return false; }
+    return !doc || !doc.body || !shows(doc);
+  };
   const scanSlots = () => {
     if (!document.body) return;
     const now = Date.now();
@@ -290,6 +402,11 @@ const FOLD = (() => {
       if (f.hasAttribute('data-zt-fold')) continue;
       if (!seen.has(f)) { seen.set(f, now); continue; }
       if (now - seen.get(f) >= 2000 && emptySlot(f)) fold(f);
+    }
+    for (const el of document.querySelectorAll(SLOT)) {
+      if (el.hasAttribute('data-zt-fold') || el.closest('[data-zt-fold]')) continue;
+      if (!seen.has(el)) { seen.set(el, now); continue; }
+      if (now - seen.get(el) >= 2000 && !holdsSomething(el)) fold(el);
     }
   };
   return { sweepBlocked, scanSlots };
@@ -304,6 +421,7 @@ if (SUB) {
     if (/^accounts\.(google|youtube)\.com$/i.test(location.hostname)) try { ua = ipcRenderer.sendSync('signin:ua'); } catch (e) {}
     if (mode !== 'nofix' || ua) inMainWorld(pkCode(mode, ua));
     { let seed = 0; try { seed = ipcRenderer.sendSync('fp:seed'); } catch (e) {} if (seed) inMainWorld(fpCode(seed)); }
+    { let k = null; try { k = ipcRenderer.sendSync('site:look'); } catch (e) {} inMainWorld(chromeCode(k)); }
     // a YouTube player embedded in another site: AdGuard's YouTube rules too (see main.js, YTR)
     if (/(^|\.)youtube(-nocookie)?\.com$/i.test(location.hostname)) {
       let st = null; try { st = ipcRenderer.sendSync('yt:adblock'); } catch (e) {}
@@ -553,6 +671,8 @@ if (SUB) {
 
   /* --- fingerprinting protection (fpCode above) --- */
   if (cfg.fp) mainWorld(fpCode(cfg.fp));
+  /* --- what the page reads about the browser, as in Chrome (chromeCode above) --- */
+  { let k = null; try { k = ipcRenderer.sendSync('site:look'); } catch (e) {} mainWorld(chromeCode(k)); }
 
   /* --- YouTube keeps playing: after a while without mouse or keyboard it pauses ("Video paused. Continue
      watching?"), often right as the next video of a playlist or autoplay starts. Its idle clock (_lact) is kept
@@ -796,6 +916,34 @@ if (SUB) {
       if (b && b.getAttribute('aria-checked') === 'true') { const btn = document.querySelector('button.ytp-button[data-tooltip-target-id="ytp-autonav-toggle-button"]'); if (btn) btn.click(); }
     };
     ipcRenderer.on('site:update', (e, c) => { if (c && c.yt) { clean = c.yt.clean || {}; applyClean(); autoplayOff(); } });
+
+    /* --- "Video unavailable ... Error code: 151": YouTube served the video under Restricted Mode
+       (PLAYABILITY_ERROR_CODE_VIDEO_BLOCK_BY_MRM) although none is set for the network or the account; it came
+       and went by itself, and closing the browser and opening it again cleared it. The player's own answer is read
+       in the page (one look every 3 s, on a video page that is shown); the browser then does that part of a restart
+       itself (main.js, ytRestricted) and loads the page again. */
+    {
+      const EV = 'zt-yt-' + Math.random().toString(36).slice(2);
+      let sent = '';
+      document.addEventListener(EV, () => {
+        if (sent === location.href) return;
+        sent = location.href;
+        try { ipcRenderer.send('yt:restricted', location.href); } catch (e) {}
+      });
+      mainWorld(`(() => {
+        let last = '';
+        setInterval(() => {
+          if (document.visibilityState !== 'visible' || location.pathname !== '/watch') return;
+          let st = null;
+          try { const p = document.getElementById('movie_player'); const r = p && typeof p.getPlayerResponse === 'function' ? p.getPlayerResponse() : null; st = r && r.playabilityStatus; } catch (e) {}
+          if (!st || st.status === 'OK') { last = ''; return; }
+          const mrm = st.errorCode === 'PLAYABILITY_ERROR_CODE_VIDEO_BLOCK_BY_MRM' || /Error code: 151\\b/.test(JSON.stringify(st.errorScreen || ''));
+          if (!mrm || last === location.href) return;
+          last = location.href;
+          document.dispatchEvent(new CustomEvent(${JSON.stringify(EV)}));
+        }, 3000);
+      })();`);
+    }
 
     /* --- SponsorBlock: skip sponsor parts of the video --- */
     let segs = [], segFor = '', bound = null, muted = false, note = null;

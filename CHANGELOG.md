@@ -2,6 +2,55 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.21.1
+
+### Websites see what they would see in Chrome
+- `window.chrome` on web pages now has `app`, `csi()` and `loadTimes()`, as in Google Chrome; Electron leaves it
+  empty, one of the first things bot checks compare with Chrome.
+- A permission nobody has answered yet reads as "ask" to the page (`Notification.permission` is `default`,
+  `permissions.query` gives `prompt`) instead of "denied", so sites ask (the bar under the address bar) instead of
+  treating it as blocked, e.g. a video call reporting the camera as blocked. Permissions refused for good still
+  read as denied.
+- The Accept-Language header lists the same languages pages read in `navigator.languages` (the browser's language,
+  then Windows' preferred languages); Electron sent the browser's language only, so the two did not match.
+
+### YouTube
+- "Video unavailable … Error code: 151" (Restricted Mode, served now and then on a network and an account that
+  have none, until the browser was closed and opened again) is read from the player's own answer
+  (`PLAYABILITY_ERROR_CODE_VIDEO_BLOCK_BY_MRM`). The browser then clears YouTube's until-closed cookies (sign-in
+  cookies stay), renews its connections and loads the page again, at most once every 10 minutes, with a line in
+  `logs/3zt.log`. Reloading alone did not help; this played the video every time it was tried.
+
+### Ad blocker
+- The boxes pages keep for Google's and Taboola's ads (`div-gpt-ad…`, `ins.adsbygoogle`, `google_ads_iframe_…`,
+  Taboola's containers) fold away like empty ad frames already did: with those scripts stopped they stayed empty
+  and showed as blank or grey blocks, most visibly on Arabic news sites.
+
+### Instagram layout
+- With the buttons and caption shown, the eye button sits above the caption instead of over its last line (the
+  caption block ends with an empty element, which the placement measured). On a wide video, where the caption is
+  at the top, the eye stays at the bottom.
+
+### Picture in picture
+- The *Bring it back* button shown on the tab while its video is in picture in picture works: its message to the
+  browser was missing from the toolbar's list of allowed messages, so only Alt+P brought the video back.
+
+### Speed and housekeeping
+- Site icons are stored at 32 px. They were kept as sites sent them (up to 150 KB each), which grew
+  `favicons.json` to about 10 MB, read whole at every start and written whole after every new icon. Icons
+  already stored are shrunk once, a few at a time, 20 seconds after start.
+- An extension entry whose folder no longer exists is removed instead of being tried at every start.
+- A start that takes longer than 3 seconds until the window shows is written to `logs/3zt.log` with the time of
+  each step, to find what makes the first start after Windows boots slow.
+- Two lookups kept for the whole session (the bar colour per site, file icons in the downloads list) are bounded.
+
+### Tests
+- `tests/site-check.mjs` opens about 200 widely used websites (global and Arabic) in one 3zT session and in Google
+  Chrome on the same machine; `tests/site-report.mjs` lists what goes wrong only in 3zT: bot checks, refusals,
+  script errors, missing text, pages wider than the window, broken images and ads still on screen.
+  `tests/fp-check.mjs` prints what a page can read about the browser in both. Both run manually
+  (`site-check.yml`, `fp-check.yml`).
+
 ## 0.21.0
 
 ### TikTok and Instagram layout

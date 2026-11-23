@@ -142,8 +142,9 @@ delete it.
 - **Empty ad slots are folded away**: when an ad's picture or frame is blocked, the box the page made for it
   is hidden together with wrappers that held nothing else. This also covers slots built by ad scripts served
   from rotating domains (an empty frame written next to a third-party script, with no picture or video in it
-  after a few seconds). Ad networks that move to a new domain every few days are also recognised by the
-  fixed shape of their addresses.
+  after a few seconds), and the boxes pages keep for Google's and Taboola's ads (`div-gpt-ad…`,
+  `ins.adsbygoogle`, …), which stay empty once those scripts are stopped. Ad networks that move to a new domain
+  every few days are also recognised by the fixed shape of their addresses.
 - **Cookie popups:** consent dialogs are answered with "reject" / "necessary only" by DuckDuckGo's
   Autoconsent rules, the same way a person would click them, so pages are not left locked behind a
   hidden overlay. The rules are loaded only on pages that show signs of a consent manager. Sites excluded
@@ -179,6 +180,10 @@ delete it.
 - **Ambient light**: the glow around the video that follows the picture.
 - **Highest quality automatically**: every video starts at the best available quality instead of
   *Auto*; a quality selected manually is kept for that video.
+- **"Video unavailable … Error code: 151"** (YouTube's Restricted Mode, served now and then on a network and an
+  account that have none, until the browser was restarted): read from the player's own answer, then YouTube's
+  until-closed cookies are cleared (sign-in stays), connections renewed and the page loaded again, at most once
+  every 10 minutes and noted in `logs/3zt.log`.
 
 ### TikTok and Instagram
 
@@ -256,7 +261,14 @@ tools* in the window updates yt-dlp and gallery-dl when a site changes.
 - Saved passwords are encrypted with Windows DPAPI (Electron `safeStorage`). Sites are matched with the
   Public Suffix List. Import from a Chrome CSV export.
 - Sensitive permissions (camera, microphone, location, notifications, clipboard read, MIDI, USB / HID /
-  serial, screen sharing) are requested through a small non-blocking bar and remembered per site.
+  serial, screen sharing) are requested through a small non-blocking bar and remembered per site. A permission
+  not answered yet reads as "ask" to the page (`Notification.permission` is `default`, `permissions.query` gives
+  `prompt`), as in Chrome, so sites ask instead of treating it as blocked.
+- **Pages see what they would see in Chrome** where Electron differs: `window.chrome` has `app`, `csi()` and
+  `loadTimes()`, and the Accept-Language header lists the same languages as `navigator.languages` (the browser's
+  language, then Windows' preferred languages). Bot checks compare exactly these with Chrome;
+  [`tests/fp-check.mjs`](tests/fp-check.mjs) shows what is still different (the brand list says Chromium, not
+  Google Chrome).
 - A single settings page (`3zt://settings`) with an Arabic (right-to-left) or English interface.
 - Task manager (`Shift+Esc`) with memory and CPU per tab.
 
@@ -303,7 +315,8 @@ src/
   inject/              third-party scripts injected into YouTube / Twitch
   vendor/              Readability, tldts, Chrome Web Store support; Autoconsent (added at build time)
 scripts/               build_win.py, fetch_tools.mjs, fetch_autoconsent.mjs, sign-update.mjs
-tests/                 e2e.mjs, songid.mjs, social.mjs, update-test.mjs, media-real.mjs, bench.ps1, speed.mjs, resources.mjs
+tests/                 e2e.mjs, songid.mjs, social.mjs, update-test.mjs, media-real.mjs, bench.ps1, speed.mjs, resources.mjs,
+                       site-check.mjs, site-report.mjs, fp-check.mjs
 installer/             Inno Setup script, wizard images, in-app release notes (Arabic)
 ```
 
@@ -423,7 +436,7 @@ Everything is stored locally in `%APPDATA%\3zT Browser`:
 | Path | Contents |
 |---|---|
 | `settings.json` | Settings |
-| `bookmarks.json`, `history.json`, `favicons.json` | Bookmarks, history, site icons |
+| `bookmarks.json`, `history.json`, `favicons.json` | Bookmarks, history, site icons (kept at 32 px) |
 | `session.json` | Open windows and tabs |
 | `downloads.json` | Downloads list |
 | `passwords.json` | Saved passwords (encrypted) |
@@ -432,7 +445,7 @@ Everything is stored locally in `%APPDATA%\3zT Browser`:
 | `songid\` | The song recognition library (downloaded on first use, checksums pinned) |
 | `social-layout\` | The latest names of TikTok's page parts for the TikTok layout |
 | `media\tools\` | The downloader's self-updating copies of yt-dlp and gallery-dl |
-| `logs\3zt.log` | Error log (capped at 1 MB), useful for bug reports |
+| `logs\3zt.log` | Error log (capped at 1 MB), slow starts and YouTube error 151 recoveries, useful for bug reports |
 | other files | Chromium's cookies, cache and site storage |
 
 Tab preview images are kept in memory only and are never written to disk.
@@ -500,6 +513,17 @@ TikTok videos (manually or on `diag/**` branches). [`tests/sites-real.mjs`](test
 the browser itself there: TikTok's playback resolution with and without the quality setting, and picture in
 picture on a real YouTube page. YouTube frequently refuses GitHub's datacenter addresses, so those results
 are informational.
+
+[`tests/site-check.mjs`](tests/site-check.mjs) opens about 200 widely used websites (about half global, half Arabic, in
+[`tests/site-list.mjs`](tests/site-list.mjs)) one after another in one 3zT session and in Google Chrome on the
+same machine, and records per page the HTTP status, load time, script errors, failed and blocked requests, bot
+checks, refusals, "browser not supported" pages, missing text, a page wider than the window, broken images and
+ads still on screen. [`tests/site-report.mjs`](tests/site-report.mjs) lists what goes wrong only in 3zT
+([`site-check.yml`](.github/workflows/site-check.yml), run manually, four parts per browser in parallel).
+[`tests/fp-check.mjs`](tests/fp-check.mjs) prints what a page can read about the browser (navigator, client
+hints, `window.chrome`, permissions, WebGL, headers) in 3zT and in Chrome ([`fp-check.yml`](.github/workflows/fp-check.yml)).
+Bot checks depend heavily on the address a machine has, so these are compared on the same machine, never
+across runs.
 
 ## Known limitations
 

@@ -1,0 +1,66 @@
+name: Site check (3zT vs Chrome on widely used websites)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [3zT, Chrome]
+        part: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        if: matrix.browser == '3zT'
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Build 3zT (dist/3zT)
+        if: matrix.browser == '3zT'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install pillow
+          v=$(node -p "require('./package.json').devDependencies.electron")
+          base=https://github.com/electron/electron/releases/download/v$v
+          f=electron-v$v-win32-x64.zip
+          curl -sSfL -o $f $base/$f
+          curl -sSfL -o SHASUMS256.txt $base/SHASUMS256.txt
+          grep " \*$f\$" SHASUMS256.txt | sed 's/ \*/  /' | sha256sum -c -
+          node scripts/fetch_tools.mjs tools-cache
+          node scripts/fetch_autoconsent.mjs
+          python scripts/build_win.py $f
+      - name: Check the sites
+        shell: pwsh
+        run: |
+          if ('${{ matrix.browser }}' -eq '3zT') { $exe = "$PWD\dist\3zT\3zT.exe" }
+          else { $exe = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
+          node tests/site-check.mjs ${{ matrix.browser }} "$exe" ${{ matrix.part }} 4
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sites-${{ matrix.browser }}-${{ matrix.part }}
+          path: tests/out/
+
+  report:
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - uses: actions/download-artifact@v4
+        with: { path: all }
+      - run: node tests/site-report.mjs all && cat all/site-report.md >> $GITHUB_STEP_SUMMARY && cat all/site-report.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-report
+          path: |
+            all/site-report.md
+            all/site-report.json

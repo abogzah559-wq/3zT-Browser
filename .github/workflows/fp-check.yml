@@ -1,0 +1,35 @@
+name: What sites can read (3zT vs Chrome)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fp:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - name: Build 3zT (dist/3zT)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m pip install pillow
+          v=$(node -p "require('./package.json').devDependencies.electron")
+          base=https://github.com/electron/electron/releases/download/v$v
+          f=electron-v$v-win32-x64.zip
+          curl -sSfL -o $f $base/$f
+          curl -sSfL -o SHASUMS256.txt $base/SHASUMS256.txt
+          grep " \*$f\$" SHASUMS256.txt | sed 's/ \*/  /' | sha256sum -c -
+          node scripts/fetch_autoconsent.mjs
+          python scripts/build_win.py $f
+      - name: 3zT
+        run: node tests/fp-check.mjs 3zT "$PWD\dist\3zT\3zT.exe"
+        shell: pwsh
+      - name: Chrome
+        shell: pwsh
+        run: node tests/fp-check.mjs Chrome "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
