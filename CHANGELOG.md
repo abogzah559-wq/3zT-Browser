@@ -37,10 +37,8 @@ All notable changes to 3zT, newest first. Release notes are generated from this 
   own pages are opened with `3zt://` addresses only.
 
 ### Fixed
-- Sign-in on sites protected by Cloudflare Turnstile (for example TorBox) failed with "not permitted" after the
-  green tick: fingerprint protection, passkey handling and the Chrome look were applied inside the verification
-  frame, which fails its check when changed. Verification frames (Cloudflare, hCaptcha, reCAPTCHA) are no longer
-  touched.
+- Human-verification frames (Cloudflare Turnstile, hCaptcha, reCAPTCHA) are no longer changed by fingerprint
+  protection, passkey handling or the Chrome look; such frames check the page for changes.
 - TikTok: a liked video's heart is red again and a saved video's icon yellow (the white icon colour overrode
   TikTok's own).
 
