@@ -21,7 +21,7 @@ function day(t) {
 let seq = 0;
 async function load() {
   const my = ++seq;
-  const items = await zeus.searchHistory($('q').value.trim(), 1500);
+  const items = await tzt.searchHistory($('q').value.trim(), 1500);
   if (my !== seq) return;
   let html = '', cur = '';
   for (const it of items) {
@@ -39,11 +39,11 @@ async function load() {
 $('q').addEventListener('input', load);
 $('list').addEventListener('click', async e => {
   const b = e.target.closest('.del'); if (!b) return;
-  await zeus.deleteHistory(b.dataset.url); load();
+  await tzt.deleteHistory(b.dataset.url); load();
 });
 $('clear').onclick = async () => {
   if (!confirm(L('مسح كل السجل؟', 'Clear all history?'))) return;
-  await zeus.clearHistory(); load();
+  await tzt.clearHistory(); load();
 };
-zeus.getLang().then(l => { lang = l || 'ar'; texts(); load(); });
-zeus.onLang(l => { lang = l; texts(); load(); });
+tzt.getLang().then(l => { lang = l || 'ar'; texts(); load(); });
+tzt.onLang(l => { lang = l; texts(); load(); });

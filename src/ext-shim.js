@@ -38,23 +38,40 @@
     if (!c.contextMenus) def(c, 'contextMenus', { create: ret(undefined), update: ret(undefined), remove: ret(undefined), removeAll: ret(undefined), onClicked: ev() });
     // Electron never fires runtime.onInstalled for extensions added from the Chrome Web Store:
     // fire it once per version from the background worker (remembered in the worker's own IndexedDB)
-    if (globalThis.__zeusStore && typeof ServiceWorkerGlobalScope !== 'undefined' && self instanceof ServiceWorkerGlobalScope &&
+    if (globalThis.__tztStore && typeof ServiceWorkerGlobalScope !== 'undefined' && self instanceof ServiceWorkerGlobalScope &&
         c.runtime && c.runtime.onInstalled && self.indexedDB) {
       var oi = c.runtime.onInstalled, ls = [], nativeFired = false, origAdd = oi.addListener.bind(oi);
       def(oi, 'addListener', function (f) { if (typeof f !== 'function') return; ls.push(f); try { origAdd(function (d) { nativeFired = true; f(d); }); } catch (e) {} });
       setTimeout(function () {
         var ver = ''; try { ver = c.runtime.getManifest().version || ''; } catch (e) {}
-        var rq = indexedDB.open('__zeus3zt', 1);
+        var rq = indexedDB.open('__tzt_ext', 1);
         rq.onupgradeneeded = function () { rq.result.createObjectStore('kv'); };
         rq.onsuccess = function () {
-          var db = rq.result, tx = db.transaction('kv', 'readwrite'), st = tx.objectStore('kv'), g = st.get('installed');
+          var db = rq.result, st = db.transaction('kv', 'readwrite').objectStore('kv'), g = st.get('installed');
           g.onsuccess = function () {
-            var prev = g.result; if (prev === ver) return;
-            st.put(ver, 'installed');
-            if (nativeFired) return;
+            if (g.result === undefined) return legacy(function (old) { decide(old, true); });
+            decide(g.result, false);
+          };
+          // the version remembered by an install from before 0.22.0 (another database name), read once
+          function legacy(cb) {
+            var lr; try { lr = indexedDB.open('__zeus3zt'); } catch (e) { return cb(undefined); }
+            lr.onerror = function () { cb(undefined); };
+            lr.onsuccess = function () {
+              var ldb = lr.result;
+              if (!ldb.objectStoreNames.contains('kv')) { ldb.close(); try { indexedDB.deleteDatabase('__zeus3zt'); } catch (e) {} return cb(undefined); }
+              var lg = ldb.transaction('kv').objectStore('kv').get('installed');
+              lg.onsuccess = function () { var v = lg.result; ldb.close(); try { indexedDB.deleteDatabase('__zeus3zt'); } catch (e) {} cb(v); };
+              lg.onerror = function () { ldb.close(); cb(undefined); };
+            };
+          }
+          function decide(prev, late) {
+            // late: the old database was read in between, so the first transaction has ended: a new one
+            if (late) { try { db.transaction('kv', 'readwrite').objectStore('kv').put(ver, 'installed'); } catch (e) {} }
+            else if (prev !== ver) st.put(ver, 'installed');
+            if (prev === ver || nativeFired) return;
             var d = prev ? { reason: 'update', previousVersion: prev } : { reason: 'install' };
             ls.forEach(function (f) { try { f(d); } catch (e) { console.error(e); } });
-          };
+          }
         };
       }, 250);
     }

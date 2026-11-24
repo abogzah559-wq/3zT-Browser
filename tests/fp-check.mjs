@@ -52,7 +52,7 @@ const FP = `(async () => {
   t('share', () => typeof navigator.share + ' ' + typeof navigator.contacts);
   t('intl', () => Intl.DateTimeFormat().resolvedOptions().timeZone + ' ' + Intl.DateTimeFormat().resolvedOptions().locale);
   t('windowKeys', () => Object.getOwnPropertyNames(window).filter(k => !/^on/.test(k)).length);
-  t('extraGlobals', () => Object.getOwnPropertyNames(window).filter(k => /^(__|zeus|electron|process|require|Buffer|global)/i.test(k)).join(','));
+  t('extraGlobals', () => Object.getOwnPropertyNames(window).filter(k => /^(__|tzt|electron|process|require|Buffer|global)/i.test(k)).join(','));
   t('docKeys', () => Object.keys(document).join(','));
   t('stackLen', () => { let d = 0; const f = () => { d++; f(); }; try { f(); } catch (e) {} return d; });
   return o;

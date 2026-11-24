@@ -5476,7 +5476,7 @@ Reload the webpage to reload the extension.`);
       return;
     }
     try {
-      await globalThis.__zeusAmbientMain(scriptUrl); /* 3zT: built in, runs here instead of as an extension module */
+      await globalThis.__tztAmbientMain(scriptUrl); /* 3zT: built in, runs here instead of as an extension module */
     } catch (error) {
       await captureResourceLoadingException(scriptUrl, error);
     }

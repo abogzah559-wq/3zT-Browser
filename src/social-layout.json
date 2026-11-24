@@ -1,13 +1,43 @@
 {
   "version": 1,
   "tiktok": {
-    "actions": ["[data-e2e=\"anchoring-engagement-vertical\"]", "[class*=\"SectionActionBarContainer\"]", "[class*=\"DivActionBarWrapper\"]"],
-    "caption": ["[data-e2e=\"anchoring-description-layer\"]", "[class*=\"DivOverlayBottomContent\"]", "[class*=\"DivDescriptionLayer\"]"],
-    "nav": ["[data-e2e=\"anchoring-scroll-controls\"]", "[class*=\"DivFeedNavigationContainer\"]"],
-    "controls": ["[data-e2e=\"anchoring-playback-chrome\"]"],
-    "actionIcons": ["[data-e2e=\"like-icon\"]", "[data-e2e=\"comment-icon\"]", "[data-e2e=\"share-icon\"]", "[data-e2e=\"favorite-icon\"]"],
-    "captionInside": ["[data-e2e=\"video-author-avatar\"]", "[data-e2e=\"video-desc\"]", "[data-e2e=\"browse-username\"]"],
-    "navButtons": ["[data-e2e=\"feed-navigation-prev\"]", "[data-e2e=\"feed-navigation-next\"]", "[data-e2e=\"arrow-left\"]", "[data-e2e=\"arrow-right\"]"]
+    "actions": [
+      "[data-e2e=\"anchoring-engagement-vertical\"]",
+      "[class*=\"SectionActionBarContainer\"]",
+      "[class*=\"DivActionBarWrapper\"]"
+    ],
+    "caption": [
+      "[data-e2e=\"anchoring-description-layer\"]",
+      "[class*=\"DivOverlayBottomContent\"]",
+      "[class*=\"DivDescriptionLayer\"]"
+    ],
+    "nav": [
+      "[data-e2e=\"anchoring-scroll-controls\"]",
+      "[class*=\"DivFeedNavigationContainer\"]"
+    ],
+    "controls": [
+      "[data-e2e=\"anchoring-playback-chrome\"]"
+    ],
+    "actionIcons": [
+      "[data-e2e=\"like-icon\"]",
+      "[data-e2e=\"comment-icon\"]",
+      "[data-e2e=\"share-icon\"]",
+      "[data-e2e=\"favorite-icon\"]"
+    ],
+    "captionInside": [
+      "[data-e2e=\"video-author-avatar\"]",
+      "[data-e2e=\"video-desc\"]",
+      "[data-e2e=\"browse-username\"]"
+    ],
+    "navButtons": [
+      "[data-e2e=\"feed-navigation-prev\"]",
+      "[data-e2e=\"feed-navigation-next\"]",
+      "[data-e2e=\"arrow-left\"]",
+      "[data-e2e=\"arrow-right\"]"
+    ],
+    "sidebarToggle": [
+      "[class*=\"DivToggleTrigger\"]"
+    ]
   },
   "instagram": {
     "navLabel": "ريلز|reel"

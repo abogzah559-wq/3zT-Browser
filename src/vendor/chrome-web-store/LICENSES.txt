@@ -2,7 +2,7 @@ Chrome Web Store support for 3zT, bundled from:
   electron-chrome-web-store 0.13.0 (MIT) - https://github.com/samuelmaddock/electron-browser-shell (commit 3817c42)
   adm-zip 0.5.16 (MIT) - https://github.com/cthackers/adm-zip
   pbf 4.0.1 (BSD-3-Clause) - https://github.com/mapbox/pbf
-Changes: installer calls globalThis.__zeusCwsUnpacked(dir, manifest) before loading, so 3zT can add its compatibility shim.
+Changes: installer calls globalThis.__tztCwsUnpacked(dir, manifest) before loading, so 3zT can add its compatibility shim.
          downloads go through Electron net.fetch (Chromium network stack, system proxy) instead of Node fetch.
          a failed update check (offline) no longer becomes an unhandled promise rejection.
 

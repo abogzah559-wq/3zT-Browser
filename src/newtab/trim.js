@@ -110,21 +110,21 @@ $('tv').addEventListener('seeking', () => {
 });
 const closeTrim = () => { $('tv').pause(); $('tv').removeAttribute('src'); $('tv').load(); $('trim').hidden = true; T = null; };
 $('tcancel').onclick = async () => {
-  if (T && T.busy) { if (T.jobId) await zeus.mediaCancel(T.jobId); else await zeus.mediaTrimCancel(T.listId); }
+  if (T && T.busy) { if (T.jobId) await tzt.mediaCancel(T.jobId); else await tzt.mediaTrimCancel(T.listId); }
   closeTrim(); trimHooks.done();
 };
-$('twhole').onclick = async () => { if (!T || !T.jobId) return; const id = T.jobId; closeTrim(); await zeus.mediaTrim(id, { whole: true }); trimHooks.done(); };
+$('twhole').onclick = async () => { if (!T || !T.jobId) return; const id = T.jobId; closeTrim(); await tzt.mediaTrim(id, { whole: true }); trimHooks.done(); };
 $('tsave').onclick = async () => {
   if (!T) return;
   const { s, e } = tval(), exact = document.querySelector('input[name=tm]:checked').value === 'exact';
   if (!(e - s > 0.2)) { $('tnote').className = 'mnote bad'; $('tnote').textContent = L('اختر جزء أطول', 'Pick a longer part'); return; }
   $('tsave').disabled = true; $('twhole').disabled = true; $('tnote').className = 'mnote'; $('tnote').textContent = L('أقص المقطع…', 'Trimming…');
   T.busy = true; const cur = T;
-  const r = T.jobId ? await zeus.mediaTrim(T.jobId, { start: s, end: e, exact }) : await zeus.mediaTrimFile(T.listId, { start: s, end: e, exact });
+  const r = T.jobId ? await tzt.mediaTrim(T.jobId, { start: s, end: e, exact }) : await tzt.mediaTrimFile(T.listId, { start: s, end: e, exact });
   cur.busy = false; $('tsave').disabled = false; $('twhole').disabled = false;
   if (T !== cur) return;   // cancelled meanwhile
   if (r && r.error) { $('tnote').className = 'mnote bad'; $('tnote').textContent = trimHooks.err(r.error); return; }
   closeTrim(); trimHooks.done();
 };
-zeus.onTrimPct((id, pc) => { if (T && T.listId === id) $('tnote').textContent = L('أقص المقطع… ', 'Trimming… ') + Math.round(pc) + '%'; });
+tzt.onTrimPct((id, pc) => { if (T && T.listId === id) $('tnote').textContent = L('أقص المقطع… ', 'Trimming… ') + Math.round(pc) + '%'; });
 

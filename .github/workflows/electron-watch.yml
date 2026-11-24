@@ -1,0 +1,56 @@
+name: Electron security updates
+
+# Chromium security fixes reach 3zT through Electron patch releases. Once a week this looks for a newer patch
+# release of the Electron major version in use; when there is one, it opens a branch with only that change and
+# runs the full build and test workflow on it. Merging into main (which publishes) stays a manual step.
+# A new major version is never picked up here: it needs a compatibility review first.
+
+on:
+  schedule:
+    - cron: '17 6 * * 2'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Find the newest patch release of the current major version
+        id: v
+        shell: bash
+        run: |
+          cur="$(node -p "require('./package.json').devDependencies.electron")"
+          major="${cur%%.*}"
+          new="$(npm view "electron@$major" version --json | node -e "
+            const v=JSON.parse(require('fs').readFileSync(0,'utf8'));
+            const list=(Array.isArray(v)?v:[v]).filter(x=>/^\d+\.\d+\.\d+$/.test(x));
+            const n=s=>s.split('.').map(Number);
+            list.sort((a,b)=>{const x=n(a),y=n(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]-y[i];return 0;});
+            process.stdout.write(list.pop()||'')")"
+          echo "current=$cur newest=$new"
+          echo "cur=$cur" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Open a branch with the update and test it
+        if: steps.v.outputs.new != '' && steps.v.outputs.new != steps.v.outputs.cur
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUR: ${{ steps.v.outputs.cur }}
+          NEW: ${{ steps.v.outputs.new }}
+        shell: bash
+        run: |
+          branch="deps/electron-$NEW"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then echo "$branch already exists"; exit 0; fi
+          git checkout -b "$branch"
+          sed -i "s/\"electron\": \"$CUR\"/\"electron\": \"$NEW\"/" package.json
+          git diff --stat
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -am "Electron $NEW (security fixes from Chromium)"
+          git push origin "$branch"
+          gh workflow run build.yml --ref "$branch" -f bench=false
+          echo "::notice title=electron::$branch opened and tested; merge it into a release branch when the tests pass"

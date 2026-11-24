@@ -1,7 +1,7 @@
 'use strict';
 /*
  * Runs in every tab (main frame).
- *  - our own pages (file://.../newtab/*.html) get the `zeus` API
+ *  - our own pages (file://.../newtab/*.html) get the `tzt` API
  *  - websites get two built-in features, from this isolated world (the page can't touch them):
  *      * password autofill (click a login field -> pick an account) + offer to save
  *      * YouTube ad blocking (cleans the player data before YouTube's own scripts read it)
@@ -10,6 +10,10 @@ const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 // frames inside a page (iframes) only get the passkey fix below; everything else is for the page itself
 const SUB = typeof process !== 'undefined' && process.isMainFrame === false;
+// human-verification frames (Cloudflare Turnstile, hCaptcha, reCAPTCHA) are left exactly as the engine made them:
+// they check the page for any change, and a changed one fails its check after showing the green tick
+const CAPTCHA_FRAME = /^(challenges\.cloudflare\.com|([a-z0-9-]+\.)?hcaptcha\.com|www\.recaptcha\.net)$/i.test(location.hostname) ||
+  (/^www\.google\.com$/i.test(location.hostname) && /^\/recaptcha\//.test(location.pathname));
 const inMainWorld = code => {
   try { if (contextBridge.executeInMainWorld) contextBridge.executeInMainWorld({ func: new Function(code) }); else webFrame.executeJavaScript(code); }
   catch (e) { try { webFrame.executeJavaScript(code); } catch (x) {} }
@@ -307,7 +311,7 @@ if (/^https?:$/.test(location.protocol)) {
      networks place their slots), whose inside still shows no picture or video a few seconds later.
    A user style marks them (attribute data-zt-fold), so the page's own !important styles cannot show them again. */
 const FOLD = (() => {
-  if (!/^https?:$/.test(location.protocol)) return null;
+  if (!/^https?:$/.test(location.protocol) || CAPTCHA_FRAME) return null;
   let css = false;
   const SKIP = new Set(['SCRIPT', 'STYLE', 'LINK', 'NOSCRIPT', 'TEMPLATE', 'META']);
   const area = e => { const r = e.getBoundingClientRect(); return r.width * r.height; };
@@ -414,7 +418,7 @@ const FOLD = (() => {
 
 if (SUB) {
   // a sign-in box embedded from another site must not open Windows' passkey window by itself either
-  if (/^https?:$/.test(location.protocol)) {
+  if (/^https?:$/.test(location.protocol) && !CAPTCHA_FRAME) {
     const arg = (Array.isArray(process.argv) ? process.argv : []).find(x => x.startsWith('--3zt-pk='));
     const mode = arg ? arg.slice(9) : 'off';
     let ua = '';
@@ -429,9 +433,9 @@ if (SUB) {
     }
   }
 } else if (readerPage) {
-  contextBridge.exposeInMainWorld('zeus', { readerGet: k => ipcRenderer.invoke('reader:get', String(k || '').slice(0, 64)) });
+  contextBridge.exposeInMainWorld('tzt', { readerGet: k => ipcRenderer.invoke('reader:get', String(k || '').slice(0, 64)) });
 } else if (internal) {
-  contextBridge.exposeInMainWorld('zeus', {
+  contextBridge.exposeInMainWorld('tzt', {
     getBookmarks: () => ipcRenderer.invoke('bm:get'),
     favicons: urls => ipcRenderer.invoke('fav:get', urls),
     searchHistory: (text, max) => ipcRenderer.invoke('history:search', text, max),
@@ -801,8 +805,8 @@ if (SUB) {
     Response.prototype.json = new Proxy(Response.prototype.json, { apply(f, self, args) { return Reflect.apply(f, self, args).then(fix); } });
   })();`);
 
-  /* --- TikTok / Instagram layout (src/inject/social-view.*): the action buttons and caption inside the playing
-     video, hidden until the eye button is pressed; the arrows on its left edge. Its own isolated world: it sees the
+  /* --- TikTok / Instagram layout (src/inject/social-view.*): the action buttons and caption in a fixed corner,
+     hidden until the eye button is pressed; the arrows at the screen's left edge. Its own isolated world: it sees the
      page's elements but not its scripts, and has none of this preload's powers. --- */
   if (cfg.view) {
     let css = '', code = '';
@@ -887,7 +891,7 @@ if (SUB) {
           } else if (msg.type === 'autoconsentDone' || (msg.type === 'optOutResult' && msg.result)) ipcRenderer.send('ac:done', msg.cmp);
         };
         ac = new AutoConsent(send, { enabled: true, autoAction: 'optOut', enablePrehide: false, enableCosmeticRules: true, enableGeneratedRules: true, detectRetries: 20, isMainWorld: false, logs: { lifecycle: false, rulesteps: false, detectionsteps: false, evals: false, errors: false, messages: false, waits: false } },
-          { autoconsent: [], compact: r.rules });
+          { autoconsent: Array.isArray(r.own) ? r.own : [], compact: r.rules });
       } catch (e) {}
     };
     /* Most pages have no consent popup: the library is only loaded when the page shows signs of one (a consent
@@ -1042,10 +1046,10 @@ if (SUB) {
     /* --- Ambient light for YouTube: the original scripts, in their own isolated world (like an extension's),
            so YouTube's script rules (CSP / Trusted Types) don't apply to them --- */
     if (yt.ambient && !/^\/(live_chat|embed)/.test(location.pathname)) {
-      const WORLD = 1010, EV = 'zeus-amb-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-      try { webFrame.setIsolatedWorldInfo(WORLD, { name: '3zT Ambient light', securityOrigin: 'zeus-res://ambient', csp: "script-src 'self' 'unsafe-eval' zeus-res:; object-src 'none'" }); } catch (e) {}
+      const WORLD = 1010, EV = 'tzt-amb-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+      try { webFrame.setIsolatedWorldInfo(WORLD, { name: '3zT Ambient light', securityOrigin: 'tzt-res://ambient', csp: "script-src 'self' 'unsafe-eval' tzt-res:; object-src 'none'" }); } catch (e) {}
       const inWorld = code => webFrame.executeJavaScriptInIsolatedWorld(WORLD, [{ code }]).catch(err => console.warn('[3zT] ambient light', err));
-      const wrap = c => '(function (chrome) {\n' + c + '\n})(globalThis.__zeusChrome);';
+      const wrap = c => '(function (chrome) {\n' + c + '\n})(globalThis.__tztChrome);';
       // requests from that world (settings storage, loading the main script) come here as events with a secret name
       document.addEventListener(EV + '-q', async e => {
         let m; try { m = JSON.parse(e.detail); } catch (x) { return; }
@@ -1071,13 +1075,13 @@ if (SUB) {
           remove: (keys, cb) => { const ks = [].concat(keys || []); return done(call('remove', { keys: ks }).then(() => { const c = {}; for (const k of ks) c[k] = { newValue: undefined }; fire(c); }), cb); },
           onChanged: ev
         };
-        globalThis.__zeusChrome = {
-          runtime: { id: '3zt-ambient-light', lastError: undefined, getURL: p => 'zeus-res://ambient/' + String(p || '').replace(/^\\//, ''),
+        globalThis.__tztChrome = {
+          runtime: { id: '3zt-ambient-light', lastError: undefined, getURL: p => 'tzt-res://ambient/' + String(p || '').replace(/^\\//, ''),
             getManifest: () => ({ name: 'Ambient light for YouTube™', version: '2.38.17', manifest_version: 3 }),
             sendMessage: () => Promise.resolve(), onMessage: { addListener() {}, removeListener() {} } },
           storage: { local, onChanged: ev }
         };
-        globalThis.__zeusAmbientMain = () => call('main');
+        globalThis.__tztAmbientMain = () => call('main');
       })();`;
       let c = ''; try { c = ipcRenderer.sendSync('site:code', 'ambientContent'); } catch (e) {}
       if (c) inWorld(prelude + '\n' + wrap(c));
@@ -1266,4 +1270,27 @@ if (!SUB && /^https?:$/.test(location.protocol)) {
   }
   ipcRenderer.on('tr:start', (e, lang) => { tl = lang === 'en' ? 'en' : 'ar'; start(); });
   ipcRenderer.on('tr:stop', stop);
+}
+
+/* memory saver: a page holding text the user typed and has not sent is not put to sleep (main.js, canSleep).
+   Only the state change is reported, never the text. */
+if (!SUB && /^https?:$/.test(location.protocol)) {
+  let typed = false;
+  const report = v => { if (v !== typed) { typed = v; try { ipcRenderer.send('tab:typed', v); } catch (e) {} } };
+  const editable = el => !!el && (el.isContentEditable || el.tagName === 'TEXTAREA' ||
+    (el.tagName === 'INPUT' && !/^(button|submit|reset|checkbox|radio|range|color|file|image|hidden|search)$/i.test(el.type)));
+  const empty = el => !(el.isContentEditable ? el.textContent : el.value || '').trim();
+  const filled = new Set();   // fields holding typed text
+  const update = el => {
+    if (empty(el)) filled.delete(el); else filled.add(el);
+    for (const f of filled) if (!f.isConnected) filled.delete(f);
+    report(filled.size > 0);
+  };
+  document.addEventListener('input', e => { if (e.isTrusted && editable(e.target)) update(e.target); }, true);
+  document.addEventListener('submit', () => { filled.clear(); report(false); }, true);
+  // chat boxes send on Enter and clear the field from script (no input event): looked at again just after
+  document.addEventListener('keydown', e => {
+    const el = e.target;
+    if (filled.has(el) && e.key === 'Enter' && !e.shiftKey) setTimeout(() => update(el), 400);
+  }, true);
 }

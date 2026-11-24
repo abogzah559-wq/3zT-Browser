@@ -94,7 +94,7 @@ function texts() {
 }
 async function main() {
   let r = null;
-  try { r = await zeus.readerGet(KEY); } catch (e) {}
+  try { r = await tzt.readerGet(KEY); } catch (e) {}
   if (!r || !r.article) { const u = webUrl(SRC); if (u) location.replace(u); return; }   // after a restart: back to the page itself
   lang = r.lang === 'en' ? 'en' : 'ar';
   const a = r.article, base = r.url;

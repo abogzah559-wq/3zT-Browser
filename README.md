@@ -48,7 +48,9 @@ process and background page.
 - **Load on demand.** Features such as the reader view and the video downloader load their code only
   when they are used, and the downloader's tools run only while a job is active.
 - **Sleeping tabs.** Tabs left unused for a configurable time (5–60 minutes) release their memory and
-  reload when selected.
+  reload when selected. A tab is kept awake while it plays sound, uses the camera, microphone or screen, is
+  starting a download, or holds text typed into the page and not yet sent. Pinned tabs wait twice as long. When
+  the computer runs short of memory, the idle tab using the most sleeps first.
 
 Two performance modes are available in Settings:
 
@@ -69,7 +71,8 @@ choose **More info → Run anyway**.
 **Default browser:** *Settings → Default browser → Make default*, then select 3zT in the Windows
 dialog (Windows requires the user to confirm this choice).
 
-**Updates** are automatic. The browser checks this repository's releases in the background, downloads a
+**Updates** are automatic. The browser reads a small `latest.json` file attached to the latest release (a plain
+download, without the GitHub API's rate limit; the API is the fallback), downloads a
 newer installer and verifies both its SHA-256 digest and an Ed25519 signature produced by the release
 workflow (the private key exists only in the repository's secrets; the public key is built into the
 browser). The update is installed silently when the browser is closed, and a short note with the release
@@ -148,7 +151,10 @@ delete it.
 - **Cookie popups:** consent dialogs are answered with "reject" / "necessary only" by DuckDuckGo's
   Autoconsent rules, the same way a person would click them, so pages are not left locked behind a
   hidden overlay. The rules are loaded only on pages that show signs of a consent manager. Sites excluded
-  from the ad blocker are left untouched.
+  from the ad blocker are left untouched. Dialogs the shared rules do not cover yet are handled by the browser's
+  own rules in [`src/consent-rules.json`](src/consent-rules.json) (same format).
+- **Human-verification frames** (Cloudflare Turnstile, hCaptcha, reCAPTCHA) are never modified: no fingerprint
+  protection, passkey handling or ad-slot folding runs inside them, since any change makes their check fail.
 - **Passkeys are off by default** (*Settings → Ads & privacy*). Sites cannot open the Windows Security
   ("insert your security key") dialog on their own, including through embedded frames or blank frames
   created by the page. A security key used as a second sign-in step still works after a click. When
@@ -187,9 +193,11 @@ delete it.
 
 ### TikTok and Instagram
 
-- **Video-first layout** (on by default, *Settings → General*): the action buttons (like, comment, save, share) and
-  the caption move inside the playing video, at its right edge and bottom-right corner, and stay hidden until the
-  eye button on the video's edge is pressed; the feed arrows sit on the video's left edge. On TikTok the parts are
+- **Video-first layout** (on by default, *Settings → General*): on TikTok the action buttons (like, comment, save,
+  share), the caption and the eye button sit in the bottom-right corner just above the video bar, in the same
+  place for every video, wide or tall; buttons and caption stay hidden until the eye button is pressed. The feed
+  arrows are fixed at the left edge of the screen on both sites. TikTok's side menu is collapsed to its icons when
+  the page opens. Instagram uses a black background in dark mode. On TikTok the parts are
   found by the names listed in [`src/social-layout.json`](src/social-layout.json), newest first, then by what they
   contain (TikTok's own test ids for the like / comment / share buttons, the author link, the arrow buttons), and
   the playing video by its position on screen. The styles apply only to the browser's own marks on those parts, and
@@ -259,7 +267,10 @@ tools* in the window updates yt-dlp and gallery-dl when a site changes.
 ### Passwords, permissions and settings
 
 - Saved passwords are encrypted with Windows DPAPI (Electron `safeStorage`). Sites are matched with the
-  Public Suffix List. Import from a Chrome CSV export.
+  Public Suffix List and filled only after the account is picked from the list under the field. Import from a
+  Chrome CSV export. Only the passwords page itself can list, show or delete passwords, and it can move to the
+  recycle bin only the CSV file just imported. The browser's own pages carry a strict Content Security Policy
+  (scripts from the app folder only).
 - Sensitive permissions (camera, microphone, location, notifications, clipboard read, MIDI, USB / HID /
   serial, screen sharing) are requested through a small non-blocking bar and remembered per site. A permission
   not answered yet reads as "ask" to the page (`Notification.permission` is `default`, `permissions.query` gives
@@ -309,6 +320,8 @@ src/
   updater.js           signed silent updates
   permissions.js       site permissions
   passwords.js         encrypted password store
+  consent-rules.json   the browser's own cookie-popup rules (Autoconsent format)
+  legacy.js            names used before 0.22.0, read only to migrate existing installs
   ui/                  toolbar and tab strip
   newtab/              internal pages (new tab, settings, history, downloads, passwords, task manager,
                        downloader window, reader view)
@@ -346,7 +359,9 @@ preview player through a session-scoped `ztpv://` protocol with random, window-b
 local HTTP server and no listening port.
 
 **Updates.** The release workflow signs `setup filename + version + SHA-256` with Ed25519. The browser
-downloads the installer, checks the digest and signature, and installs it on exit.
+downloads the installer, checks the digest and signature, checks the digest again right before installing it on
+exit, and installs it. A weekly workflow ([`electron-watch.yml`](.github/workflows/electron-watch.yml)) looks for
+new Electron patch releases (Chromium security fixes) and runs the full test suite on a branch with the update.
 
 ## Performance
 
@@ -385,7 +400,7 @@ trackers.
   - Google, for search suggestions and translation when used;
   - `easylist.to`, for the filter lists;
   - `filters.adtidy.org`, for AdGuard Base filter's YouTube rules (checked every 12 hours, downloaded only when changed);
-  - `cdn.jsdelivr.net`, for AdGuard's scriptlet library (with each new filter list);
+  - `cdn.jsdelivr.net`, for AdGuard's scriptlet library (one pinned release);
   - `rules2.clearurls.xyz`, for the link-cleaning rules (every few days);
   - `raw.githubusercontent.com`, for the names of TikTok's page parts used by the TikTok layout (every few hours,
     downloaded only when changed);
@@ -395,7 +410,7 @@ trackers.
   - `sponsor.ajay.app`, on YouTube with SponsorBlock enabled (a 4-character hash prefix of the video ID);
   - `returnyoutubedislikeapi.com`, on YouTube with the dislike count enabled (the video ID);
   - Google's extension servers, when installing or updating a Chrome Web Store extension;
-  - `api.github.com`, every few hours, to check for updates (installed copies only);
+  - `github.com` (and `api.github.com` as a fallback), every few hours, to check for updates (installed copies only);
   - for the video downloader, the site being downloaded from, and GitHub / Codeberg when the tools are
     updated manually.
 - Cookie-popup rules and the reader view run locally; nothing is sent anywhere.

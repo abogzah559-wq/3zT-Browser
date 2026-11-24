@@ -32,8 +32,8 @@ html.tzt-placed #tzt-toggle {
   display: flex;
 }
 
-/* Instagram's up / down arrows: fixed at the far left of the screen, vertically centred.
-   (TikTok's are placed on the video's left edge, in tiktok.css.) */
+/* The up / down arrows (Instagram here, TikTok below): fixed at the far left of the screen, vertically centred,
+   the same place whatever the video's shape */
 [data-tzt-nav] {
   position: fixed !important;
   left: 28px !important;
@@ -54,7 +54,9 @@ html.tzt-placed [data-tzt-part="actions"] {
   bottom: var(--tzt-act-bottom) !important;
   left: auto !important;
   top: auto !important;
-  transform: none !important;
+  /* larger buttons, the same size on every video (grown from the corner, so they stay in place) */
+  transform: scale(1.3) !important;
+  transform-origin: bottom right !important;
   margin: 0 !important;
   z-index: 2147482998 !important;
   opacity: 0;
@@ -96,8 +98,8 @@ html.tzt-placed.tzt-show-actions [data-tzt-part="caption"] {
   transition: opacity 0.15s ease;
 }
 
-/* No backgrounds behind the buttons — white icons with a soft shadow instead
-   (the follow button keeps its colour) */
+/* No backgrounds behind the buttons: white icons with a soft shadow instead (the follow button keeps its colour).
+   The white is inherited, so a liked (red) or saved (yellow) button keeps TikTok's own colour. */
 html.tzt-placed [data-tzt-part="actions"] button:not([data-e2e*="follow"]),
 html.tzt-placed [data-tzt-part="actions"] [class*="tux-interaction-container"],
 html.tzt-placed [data-tzt-part="actions"] [class*="SpanTuxIconWrapper"] {
@@ -105,8 +107,11 @@ html.tzt-placed [data-tzt-part="actions"] [class*="SpanTuxIconWrapper"] {
   box-shadow: none !important;
 }
 
-html.tzt-placed [data-tzt-part="actions"] svg {
+html.tzt-placed [data-tzt-part="actions"] {
   color: #fff;
+}
+
+html.tzt-placed [data-tzt-part="actions"] svg {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.7));
 }
 
@@ -116,13 +121,13 @@ html.tzt-placed [data-tzt-part="actions"] [data-e2e$="-count"] {
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
 }
 
-/* 3) Up / down arrows: on the video's left edge, in the middle; dark round buttons */
+/* 3) Up / down arrows: fixed at the screen's left edge, in the middle; dark round buttons */
 html.tzt-placed [data-tzt-part="nav"] {
   position: fixed !important;
   transition: none !important;   /* TikTok slides it: it would be caught half-way */
   animation: none !important;
-  left: var(--tzt-nav-left) !important;
-  top: var(--tzt-nav-top) !important;
+  left: 28px !important;
+  top: 50% !important;
   right: auto !important;
   bottom: auto !important;
   transform: translateY(-50%) !important;
@@ -212,4 +217,10 @@ html.tzt-ig [data-tzt-nav] button {
   display: flex !important;
   align-items: center !important;
   justify-content: center !important;
+}
+
+/* Instagram in dark mode: a black page instead of Instagram's dark blue-grey (its own theme variable) */
+html.tzt-ig.__fb-dark-mode,
+html.tzt-ig.__fb-dark-mode .__fb-dark-mode {
+  --ig-primary-background: 0, 0, 0 !important;
 }

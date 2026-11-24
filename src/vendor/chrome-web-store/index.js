@@ -3763,7 +3763,7 @@ async function downloadExtensionFromURL(url, extensionsDir, expectedExtensionId)
     const unpackedPath = path3.join(extensionsDir, crx.extensionId, installUuid);
     await fs2.promises.mkdir(unpackedPath, { recursive: true });
     let manifest = await unpackCrx(crx, unpackedPath);
-    const hook = globalThis.__zeusCwsUnpacked;
+    const hook = globalThis.__tztCwsUnpacked;
     if (typeof hook === "function") manifest = await hook(unpackedPath, manifest) || manifest;
     if (!manifest.version) {
       throw new Error("Installed extension is missing manifest version");

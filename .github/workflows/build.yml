@@ -15,9 +15,6 @@ on:
 permissions:
   contents: write
 
-env:
-  ELECTRON_VERSION: 45.1.0
-
 jobs:
   windows:
     runs-on: windows-latest
@@ -29,6 +26,10 @@ jobs:
         with: { python-version: '3.12' }
       - uses: actions/setup-node@v4
         with: { node-version: '22' }
+      # the Electron version is the one in package.json (the weekly security update changes only that file)
+      - name: Electron version
+        shell: bash
+        run: echo "ELECTRON_VERSION=$(node -p "require('./package.json').devDependencies.electron")" >> "$GITHUB_ENV"
       - run: python -m pip install pillow
 
       - name: Download Electron (checksum verified)
@@ -189,5 +190,12 @@ jobs:
           # only for copies whose program file (3zT.exe: icon, Electron) is the same: "exeGen" in package.json, written to resources/exegen.txt
           python scripts/make_app_bundle.py dist/3zT/resources/app dist/3zT-app.json "$ELECTRON_VERSION+exe$(node -p "require('./package.json').exeGen || 1")"
           node scripts/sign-update.mjs dist/3zT-app.json "${v#v}"
-          gh release create "$v" dist/3zT-Browser-Setup.exe dist/3zT-Browser-Setup.exe.sha256 dist/3zT-Browser-Setup.exe.sig dist/3zT-app.json dist/3zT-app.json.sig --target "$GITHUB_SHA" --title "3zT $v" --notes "$notes"
+          # latest.json: what installed copies read to find this release (a plain download, no API rate limit);
+          # the same fields as GitHub's API answer. The files it lists are still checked by their signatures.
+          NOTES="$notes" V="$v" REPO="$GITHUB_REPOSITORY" node -e "
+            const fs=require('fs'),c=require('crypto'),v=process.env.V,base='https://github.com/'+process.env.REPO+'/releases/download/'+v+'/';
+            const names=['3zT-Browser-Setup.exe','3zT-Browser-Setup.exe.sha256','3zT-Browser-Setup.exe.sig','3zT-app.json','3zT-app.json.sig'];
+            const assets=names.map(n=>({name:n,browser_download_url:base+n,digest:'sha256:'+c.createHash('sha256').update(fs.readFileSync('dist/'+n)).digest('hex')}));
+            fs.writeFileSync('dist/latest.json',JSON.stringify({tag_name:v,body:process.env.NOTES,assets}));"
+          gh release create "$v" dist/3zT-Browser-Setup.exe dist/3zT-Browser-Setup.exe.sha256 dist/3zT-Browser-Setup.exe.sig dist/3zT-app.json dist/3zT-app.json.sig dist/latest.json --target "$GITHUB_SHA" --title "3zT $v" --notes "$notes"
           echo "::notice title=release::published $v"

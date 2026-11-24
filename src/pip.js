@@ -199,7 +199,7 @@ module.exports = function createPip(o) {
     }, o.icon || {}));
     win.setAlwaysOnTop(true, 'floating');
     const overlay = new WebContentsView({
-      webPreferences: { preload: o.preload, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, partition: 'zeus-ui' }
+      webPreferences: { preload: o.preload, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, partition: 'tzt-ui' }
     });
     overlay.setBackgroundColor('#00000000');
     // the page moves here from its window (it keeps playing, nothing reloads)
@@ -302,7 +302,7 @@ module.exports = function createPip(o) {
     if (g.kind !== 'move') layout();
   });
   // tests only: the same as a drag that ends at these bounds (a test machine has no mouse to drag with)
-  if (process.env.ZEUS_E2E) ipcMain.handle('pip:testBounds', (e, b) => {
+  if (process.env.TZT_E2E) ipcMain.handle('pip:testBounds', (e, b) => {
     if (!from(e) || cur.win.isDestroyed() || !b) return null;
     cur.win.setBounds(fit({ x: +b.x || 0, y: +b.y || 0, width: +b.width || 0, height: +b.height || 0 }));
     layout(); save();

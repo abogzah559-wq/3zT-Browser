@@ -9,7 +9,7 @@ const FONTS = {
   tajawal:{ar:'تجوال', en:'Tajawal', css:'Tajawal,Tahoma,sans-serif'},
   kufi:  {ar:'ريم كوفي', en:'Reem Kufi', css:'"Reem Kufi",Tajawal,sans-serif'},
   orbit: {ar:'أوربترون (رقمي)', en:'Orbitron (digital)', css:'Orbitron,Tajawal,sans-serif'},
-  mine:  {ar:'خطي المرفوع', en:'My uploaded font', css:'ZeusUserFont,system-ui,sans-serif'},
+  mine:  {ar:'خطي المرفوع', en:'My uploaded font', css:'TztUserFont,system-ui,sans-serif'},
   sys:   {ar:'خط من جهازي (بالاسم)', en:'Font from my PC (by name)', css:null}
 };
 /* ---- extra Google fonts (loaded on demand). a = has Arabic glyphs. Latin-only fonts fall back to Tajawal for Arabic text ---- */
@@ -198,7 +198,7 @@ const parseG=it=>{ try{ const x=new URL(it.url); if(!/(^|\.)google\.[a-z.]+$/i.t
 const pool=()=>aiMode?recentAI:recent;
 async function loadRecent(){
   try{
-    const a=await zeus.searchHistory('google.',900), b=[];
+    const a=await tzt.searchHistory('google.',900), b=[];
     const sS=new Set(), sA=new Set(); recent=[]; recentAI=[];
     for(const it of [...a,...b].sort((x,y)=>(y.lastVisitTime||0)-(x.lastVisitTime||0))){
       const p=parseG(it); if(!p) continue; const L=p.ai?recentAI:recent, SS=p.ai?sA:sS, k=p.q.toLowerCase();
@@ -207,7 +207,7 @@ async function loadRecent(){
   }catch(e){ recent=[]; recentAI=[]; }
 }
 async function fetchSug(q){
-  try{ return (await zeus.suggest(q,en()?'en':'ar'))||[]; }catch(e){ return []; }
+  try{ return (await tzt.suggest(q,en()?'en':'ar'))||[]; }catch(e){ return []; }
 }
 function renderSug(){
   sug.innerHTML='';
@@ -272,7 +272,7 @@ async function showMedia(kind){
 let userFontLoaded=false;
 async function loadUserFont(){
   if(userFontLoaded) return; const b=await get('font'); if(!b) return;
-  try{ const ff=new FontFace('ZeusUserFont',await b.arrayBuffer()); await ff.load(); document.fonts.add(ff); userFontLoaded=true; }catch(e){ console.warn('font',e); }
+  try{ const ff=new FontFace('TztUserFont',await b.arrayBuffer()); await ff.load(); document.fonts.add(ff); userFontLoaded=true; }catch(e){ console.warn('font',e); }
 }
 const fontCss=k=>{ if(k==='sys') return S.fontName?`"${S.fontName.replace(/"/g,'')}",system-ui,sans-serif`:FONTS.def.css; return (FONTS[k]||FONTS.def).css; };
 /* Google fonts: one <link> per font, injected only when used (or when a font menu is opened, to preview them) */
@@ -303,7 +303,7 @@ let favMap={};
 const fav=u=>favMap[u]||'https://www.google.com/s2/favicons?sz=64&domain_url='+encodeURIComponent(u);
 async function loadFavs(node){ const urls=[]; (function walk(n){ for(const c of (n&&n.children)||[]){ if(c.url) urls.push(c.url); if(c.children) walk(c); } })(node);
   for(const m of S.mine) urls.push(m.url);
-  try{ favMap=(await zeus.favicons(urls))||{}; }catch(e){ favMap={}; } }
+  try{ favMap=(await tzt.favicons(urls))||{}; }catch(e){ favMap={}; } }
 function hideUrl(u){ const n=norm(u); const i=S.mine.findIndex(m=>norm(m.url)===n);
   if(i>=0) S.mine.splice(i,1); else if(!S.hidden.includes(n)) S.hidden.push(n);
   save(); loadTiles(); }
@@ -365,7 +365,7 @@ function showBM(node,stack){
 }
 async function sourceList(){
   try{
-    if(S.src==='bm'){ const bar=await zeus.getBookmarks(); await loadFavs(bar);
+    if(S.src==='bm'){ const bar=await tzt.getBookmarks(); await loadFavs(bar);
       return {node:bar,list:(bar.children||[]).filter(c=>c.url).map(c=>({title:c.title,url:c.url}))}; }
   }catch(e){}
   return [];
@@ -430,7 +430,7 @@ $('clockFont').onchange=e=>{S.clockFont=e.target.value;apply();};
 $('dateFont').onchange=e=>{S.dateFont=e.target.value;apply();};
 $('fontName').onchange=e=>{S.fontName=e.target.value.trim(); if(S.fontName){ if(S.clockFont!=='sys'&&S.dateFont!=='sys'){S.clockFont='sys';S.dateFont='sys';} } apply();};
 $('fontFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;await put('font',f);userFontLoaded=false;
-  try{ document.fonts.forEach(ff=>{ if(ff.family==='ZeusUserFont') document.fonts.delete(ff); }); }catch(err){}
+  try{ document.fonts.forEach(ff=>{ if(ff.family==='TztUserFont') document.fonts.delete(ff); }); }catch(err){}
   S.clockFont='mine';S.dateFont='mine';apply();};
 $('h24').onchange=e=>{S.h24=e.target.checked;apply();tick();};
 $('clockOp').oninput=e=>{S.clockOp=+e.target.value;cssVarsF();saveSoon();};
@@ -460,9 +460,9 @@ function setLang(){
 }
 function fs(){}
 addEventListener('resize',fs);
-$('lang').onchange=e=>{S.lang=e.target.value;try{zeus.setLang(S.lang);}catch(err){}apply();if(S.src!=='off')loadTiles();};
+$('lang').onchange=e=>{S.lang=e.target.value;try{tzt.setLang(S.lang);}catch(err){}apply();if(S.src!=='off')loadTiles();};
 /* the browser keeps one language for the toolbar and this page */
-try{ zeus.onLang(l=>{ if(l!==S.lang){ S.lang=l; apply(); } }); }catch(e){}
+try{ tzt.onLang(l=>{ if(l!==S.lang){ S.lang=l; apply(); } }); }catch(e){}
 $('dateOn').onchange=e=>{S.dateOn=e.target.checked;apply();};
 
 resize(); apply();
@@ -472,11 +472,11 @@ function syncPanel(){
   $('color').value=S.color; $('clockOn').checked=S.clockOn; $('searchOn').checked=S.searchOn;
 }
 async function takeImport(){
-  let imp=null; try{ imp=await zeus.takeImport(); }catch(e){}
+  let imp=null; try{ imp=await tzt.takeImport(); }catch(e){}
   if(!imp||!imp.settings) return;
   const b=imp.blobs||{};
   if(b.font&&b.font.data){ await put('font',new Blob([b.font.data],{type:b.font.type})); userFontLoaded=false;
-    try{ document.fonts.forEach(ff=>{ if(ff.family==='ZeusUserFont') document.fonts.delete(ff); }); }catch(err){} }
+    try{ document.fonts.forEach(ff=>{ if(ff.family==='TztUserFont') document.fonts.delete(ff); }); }catch(err){} }
   if(b.bg&&b.bg.data){ await put('bg',new Blob([b.bg.data],{type:b.bg.type})); }
   const lang=S.lang;
   S=Object.assign({},DEF,imp.settings,{shiftX:0,lang});
@@ -491,8 +491,8 @@ document.addEventListener('visibilitychange',()=>{
   if(bgv.style.display==='block'&&bgv.src) bgv.play().catch(()=>{});
 });
 /* the toolbar grows when the tabs row shows: keep the shortcuts bar just under it */
-try{ zeus.onStrip(h=>document.documentElement.style.setProperty('--strip',h+'px')); }catch(e){}
-try{ zeus.onImportReady(takeImport); }catch(e){}
-try{ zeus.getLang().then(l=>{ if(l&&l!==S.lang){ S.lang=l; apply(); } }); }catch(e){}
+try{ tzt.onStrip(h=>document.documentElement.style.setProperty('--strip',h+'px')); }catch(e){}
+try{ tzt.onImportReady(takeImport); }catch(e){}
+try{ tzt.getLang().then(l=>{ if(l&&l!==S.lang){ S.lang=l; apply(); } }); }catch(e){}
 /* the new tab gets a fresh page each time; refresh shortcuts when you come back to it */
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&S.src!=='off') loadTiles(); });

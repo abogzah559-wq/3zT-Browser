@@ -189,7 +189,7 @@ async function preview(u) {
   $('ptitle').textContent = 'loading'; $('pby').textContent = 'loading';
   showError('');
   draw();
-  const r = await zeus.mediaInfo(u);
+  const r = await tzt.mediaInfo(u);
   if (my !== infoSeq) return;
   // info.url stays the link you gave: yt-dlp answers with the site's own form of it (YouTube drops &list=, &pp=, &t=...),
   // and the download is matched to this preview by the link in the box. Using its form here lost the chosen part.
@@ -282,7 +282,7 @@ async function start(url, m, again) {
     if (m !== 'images' && !isWhole()) { o.start = cut.s; o.end = end(); o.exact = document.querySelector('input[name=cm]:checked').value === 'exact'; }
   }
   if (again) Object.assign(o, again, { infoId: (info && info.url === url && info.infoId) || again.infoId });   // "Retry": the same part and quality as the first time
-  const r = await zeus.mediaStart(o);
+  const r = await tzt.mediaStart(o);
   starting = false;
   if (r && r.error) { note = explain(r.error); noteBad = true; }
   else if (r && r.id) meta.set(r.id, { o, thumb: info && info.url === url ? info.thumbnail : '', title: info && info.url === url ? info.title : '' });
@@ -293,11 +293,11 @@ $('murl').addEventListener('keydown', e => { if (e.key === 'Enter') { const u = 
 $('murl').addEventListener('change', () => preview($('murl').value));
 $('murl').addEventListener('input', () => { if (isPhotoLink($('murl').value) && mode !== 'images') setMode('images'); });
 $('mpaste').onclick = async () => { try { $('murl').value = (await navigator.clipboard.readText()).trim(); } catch (e) {} preview($('murl').value); };
-$('mchg').onclick = async () => { const f = await zeus.mediaFolder(true); if (f) { M.folder = f; draw(); } };
-$('mopen').onclick = () => zeus.mediaFolder(false);
+$('mchg').onclick = async () => { const f = await tzt.mediaFolder(true); if (f) { M.folder = f; draw(); } };
+$('mopen').onclick = () => tzt.mediaFolder(false);
 $('mupd').onclick = async () => {
   $('mupd').disabled = true; note = L('أحدّث أدوات التحميل…', 'Updating the download tools…'); noteBad = false; draw();
-  const r = await zeus.mediaUpdate(); $('mupd').disabled = false;
+  const r = await tzt.mediaUpdate(); $('mupd').disabled = false;
   if (r && r.error) { note = explain(r.error); noteBad = true; } else note = r ? `yt-dlp: ${r.ytdlp}\ngallery-dl: ${r.gallerydl}` : '';
   draw();
 };
@@ -308,24 +308,24 @@ $('mjobs').addEventListener('click', async e => {
   if (tile) { const s = msel.get(j.id); const i = +tile.dataset.i; s.has(i) ? s.delete(i) : s.add(i); return drawJobs(); }
   const b = e.target.closest('[data-m]'); if (!b) return;
   const c = b.dataset.m;
-  if (c === 'cancel') { await zeus.mediaCancel(j.id); return load(); }
-  if (c === 'show') return zeus.mediaShow(j.file);
+  if (c === 'cancel') { await tzt.mediaCancel(j.id); return load(); }
+  if (c === 'show') return tzt.mediaShow(j.file);
   if (c === 'retry') { const m0 = meta.get(j.id) || {}; return start(j.url, j.kind === 'images' ? 'images' : j.mode || 'video', m0.o ? { mode: m0.o.mode, q: m0.o.q, start: m0.o.start, end: m0.o.end, exact: m0.o.exact } : null); }
   if (c === 'all') { msel.set(j.id, new Set(j.items.map(x => x.i))); return drawJobs(); }
   if (c === 'none') { msel.set(j.id, new Set()); return drawJobs(); }
   if (c === 'save') {
     const idx = [...(msel.get(j.id) || [])];
     if (!idx.length) { note = L('اختر صورة وحدة على الأقل.', 'Pick at least one.'); noteBad = true; return draw(); }
-    const r = await zeus.mediaSave(j.id, idx);
+    const r = await tzt.mediaSave(j.id, idx);
     if (r && r.error) { note = explain(r.error); noteBad = true; } else { note = L(`انحفظ ${r.saved} ✓`, `Saved ${r.saved} ✓`); noteBad = false; }
     draw();
   }
 });
-async function load() { const d = await zeus.mediaList(); if (d) M = d; draw(); }
+async function load() { const d = await tzt.mediaList(); if (d) M = d; draw(); }
 const take = u => { if (!u) return; $('murl').value = u; if (isPhotoLink(u)) setMode('images'); window.scrollTo(0, 0); preview(u); };
-zeus.onMedia(load);
-zeus.onMediaUrl(take);
-zeus.mediaTake().then(take);
-zeus.getLang().then(l => { lang = l || 'ar'; draw(); });
-zeus.onLang(l => { lang = l; draw(); });
+tzt.onMedia(load);
+tzt.onMediaUrl(take);
+tzt.mediaTake().then(take);
+tzt.getLang().then(l => { lang = l || 'ar'; draw(); });
+tzt.onLang(l => { lang = l; draw(); });
 setMode('video'); load();

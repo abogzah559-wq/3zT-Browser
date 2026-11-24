@@ -36,7 +36,7 @@ function ok(name, pass, info = '') { results.push({ name, pass, info }); console
 let child = null;
 async function start(env = {}) {
   const args = [...(appDir ? [appDir] : []), `--remote-debugging-port=${PORT}`, ...extraArgs];
-  child = spawn(exe, args, { env: { ...process.env, ZEUS_E2E: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(exe, args, { env: { ...process.env, TZT_E2E: '1', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = fs.createWriteStream(path.join(OUT, 'app.log'), { flags: 'a' });
   child.stdout.pipe(log); child.stderr.pipe(log);
   for (let i = 0; i < 120; i++) { await sleep(500); try { const t = await targets(); if (t.some(x => x.url.includes('ui/toolbar.html'))) return true; } catch (e) {} }
@@ -86,7 +86,7 @@ async function smoke() {
   const tb = await toolbar();
   ok('toolbar loads', !!(await tb.ev('!!document.getElementById("addr")')));
   tb.close();
-  const pages = [['zeus://settings', 'settings.html'], ['zeus://downloads', 'downloads.html'], ['zeus://history', 'history.html'], ['zeus://passwords', 'passwords.html'], ['zeus://tasks', 'tasks.html'], ['', 'newtab.html']];
+  const pages = [['3zt://settings', 'settings.html'], ['3zt://downloads', 'downloads.html'], ['3zt://history', 'history.html'], ['3zt://passwords', 'passwords.html'], ['3zt://tasks', 'tasks.html'], ['', 'newtab.html']];
   for (const [u, file] of pages) {
     if (u) await go(u, true); else { const t2 = await toolbar(); await t2.ev(`ui.send('tab','new'),1`); t2.close(); }
     const t = await find(file, 30);
@@ -274,10 +274,10 @@ window.bigPost = () => { const f = document.createElement('form'); f.method = 'p
 async function downloads() {
   const srv = dlServer();
   try {
-    await go('zeus://downloads', true);
+    await go('3zt://downloads', true);
     const dp = await connect(await find('downloads.html', 30));
-    await dp.ev(`zeus.set('dlAsk', false), 1`); await sleep(500);
-    const list = () => dp.ev(`zeus.dlList().then(d => d.items.map(x => ({ name: x.name, state: x.state, path: x.path, received: x.received, total: x.total, exists: x.exists, canResume: x.canResume, id: x.id })))`);
+    await dp.ev(`tzt.set('dlAsk', false), 1`); await sleep(500);
+    const list = () => dp.ev(`tzt.dlList().then(d => d.items.map(x => ({ name: x.name, state: x.state, path: x.path, received: x.received, total: x.total, exists: x.exists, canResume: x.canResume, id: x.id })))`);
     const done = name => poll(async () => (await list()).find(x => x.name === name && x.state === 'completed'), 20000);
     await go('http://127.0.0.1:8791/', true);
     const pt = await find(u => u.startsWith('http://127.0.0.1:8791/'), 30);
@@ -304,7 +304,7 @@ async function downloads() {
     await page.ev('cutDl(), 1', true);
     // Chromium may pick the file up again by itself (several connections + Range); otherwise it stops and is resumed by hand
     const cut = await poll(async () => (await list()).find(x => x.name === 'resume.bin' && (x.state === 'interrupted' || x.state === 'completed')), 20000);
-    if (cut && cut.state === 'interrupted') await dp.ev(`zeus.dlAct(${JSON.stringify(cut.id)}, 'resume')`);
+    if (cut && cut.state === 'interrupted') await dp.ev(`tzt.dlAct(${JSON.stringify(cut.id)}, 'resume')`);
     const res = cut && await done('resume.bin');
     const okBytes = res && fs.existsSync(res.path) && fs.statSync(res.path).size === BIG.length && fs.readFileSync(res.path).equals(BIG);
     ok('a connection that breaks half way: the file is finished intact (Range resume)', !!okBytes, cut ? `${cut.state === 'interrupted' ? 'stopped, resumed by hand' : 'picked up again by itself'}` : 'no download');
@@ -313,37 +313,37 @@ async function downloads() {
     const noParts = x => x && !fs.existsSync(x.path + '.part') && !fs.existsSync(x.path + '.part.aria2');
     await page.ev(`bigDl('/big'), 1`, true);
     const big = await poll(async () => (await list()).find(x => x.name === 'big.bin' && x.state === 'completed'), 40000);
-    const bigFull = big && (await dp.ev(`zeus.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(big.id)}))`));
+    const bigFull = big && (await dp.ev(`tzt.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(big.id)}))`));
     ok('a big download goes to aria2 and the file is intact', !!big && bigFull.engine === 'aria2' && sameFile(big, HUGE) && noParts(big), big ? `engine ${bigFull.engine}, ${fs.existsSync(big.path) ? fs.statSync(big.path).size : 'no file'} bytes` : JSON.stringify((await list()).map(x => x.name + ':' + x.state)));
     await page.ev('bigPost(), 1', true);
     const bp = await poll(async () => (await list()).find(x => x.name === 'bigpost.bin' && x.state === 'completed'), 40000);
-    const bpFull = bp && (await dp.ev(`zeus.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(bp.id)}))`));
+    const bpFull = bp && (await dp.ev(`tzt.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(bp.id)}))`));
     ok('a big download from a form (POST) stays in Chromium and is intact', !!bp && bpFull.engine !== 'aria2' && sameFile(bp, HUGE), bp ? `engine ${bpFull.engine}` : 'no download');
     await page.ev(`bigDl('/once'), 1`, true);
     const once = await poll(async () => (await list()).find(x => x.name === 'once.bin' && x.state === 'completed'), 60000);
-    const onceFull = once && (await dp.ev(`zeus.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(once.id)}))`));
+    const onceFull = once && (await dp.ev(`tzt.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(once.id)}))`));
     ok('a one-time link aria2 is refused: Chromium carries on, file intact', !!once && onceFull.engine !== 'aria2' && sameFile(once, HUGE) && noParts(once), once ? `engine ${onceFull.engine}, hits ${dlHits['/once']}` : JSON.stringify((await list()).map(x => x.name + ':' + x.state)));
     // pause, resume, cancel while aria2 has it
     await page.ev(`bigDl('/bigslow'), 1`, true);
-    const full = id => dp.ev(`zeus.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(id)}))`);
+    const full = id => dp.ev(`tzt.dlList().then(d => d.items.find(x => x.id === ${JSON.stringify(id)}))`);
     const bs = await poll(async () => { const x = (await list()).find(y => y.name === 'bigslow.bin'); if (!x) return null; const f = await full(x.id); return f.engine === 'aria2' && f.received > 0 ? f : null; }, 30000);
     let pr = 'no aria2 download';
     if (bs) {
-      await dp.ev(`zeus.dlAct(${JSON.stringify(bs.id)}, 'pause')`);
+      await dp.ev(`tzt.dlAct(${JSON.stringify(bs.id)}, 'pause')`);
       await sleep(1500);
       const a1 = (await full(bs.id)).received; await sleep(1500); const a2 = await full(bs.id);
-      await dp.ev(`zeus.dlAct(${JSON.stringify(bs.id)}, 'resume')`);
+      await dp.ev(`tzt.dlAct(${JSON.stringify(bs.id)}, 'resume')`);
       const more = await poll(async () => { const f = await full(bs.id); return f.received > a2.received + 200000 ? f : null; }, 15000);
       pr = `paused ${a2.paused} (${a1} -> ${a2.received}), went on ${!!more}`;
       ok('pausing and resuming an aria2 download', a2.paused && a1 === a2.received && !!more, pr);
-      await dp.ev(`zeus.dlAct(${JSON.stringify(bs.id)}, 'cancel')`);
+      await dp.ev(`tzt.dlAct(${JSON.stringify(bs.id)}, 'cancel')`);
       const c = await poll(async () => { const f = await full(bs.id); return f.state === 'cancelled' ? f : null; }, 10000);
       await sleep(800);
       ok('cancelling an aria2 download removes its partial files', !!c && !fs.existsSync(c.part) && !fs.existsSync(c.part + '.aria2'), c ? c.part : 'not cancelled');
     } else { ok('pausing and resuming an aria2 download', false, pr); ok('cancelling an aria2 download removes its partial files', false, pr); }
     await page.ev('slowDl(), 1', true);
     const slow = await poll(async () => (await list()).find(x => x.name === 'slow.bin' && x.state === 'progressing'), 15000);
-    if (slow) await dp.ev(`zeus.dlAct(${JSON.stringify(slow.id)}, 'cancel')`);
+    if (slow) await dp.ev(`tzt.dlAct(${JSON.stringify(slow.id)}, 'cancel')`);
     ok('cancelling a download', !!(slow && await poll(async () => (await list()).find(x => x.id === slow.id && x.state === 'cancelled'), 10000)));
     // a page cannot name files of another site (Chrome ignores <a download> across sites)
     await page.ev(`document.dispatchEvent(new CustomEvent('__3zt_dl', { detail: JSON.stringify({ href: 'http://localhost:8791/plain-file', name: 'شي.exe' }) })), location.href = 'http://localhost:8791/plain-file', 1`, true);
@@ -365,7 +365,7 @@ async function downloads() {
       pp.close();
       await priv.ev(`ui.send('win','close'),1`); priv.close(); await sleep(1500);
     } else ok('a private window\'s download stays out of normal windows\' lists', false, 'no private window');
-    await dp.ev(`zeus.set('dlAsk', true), 1`);
+    await dp.ev(`tzt.set('dlAsk', true), 1`);
     page.close(); dp.close();
   } finally { srv.close(); }
 }
@@ -394,19 +394,19 @@ async function mediaTest() {
     r.writeHead(404); r.end();
   }).listen(8792, '127.0.0.1');
   try {
-    await go('zeus://downloads', true);
+    await go('3zt://downloads', true);
     const dp = await connect(await find('downloads.html', 30));
     // the downloader has its own window (opened here from the downloads page; the address-bar button is tested below)
-    await dp.ev('zeus.mediaWindow(), 1');
+    await dp.ev('tzt.mediaWindow(), 1');
     const mp = await connect(await find('newtab/media.html', 30));
     await poll(() => mp.ev('typeof preview === "function"'), 15000);
     const job = async (o, ms = 300000) => {
-      const j = await mp.ev(`zeus.mediaStart(${JSON.stringify(o)})`);
+      const j = await mp.ev(`tzt.mediaStart(${JSON.stringify(o)})`);
       if (!j || j.error) return j;
-      return poll(async () => { const s = await mp.ev(`zeus.mediaList().then(d => d.jobs.find(x => x.id === ${JSON.stringify(j.id)}))`); return s && s.state !== 'running' ? s : null; }, ms, 1500);
+      return poll(async () => { const s = await mp.ev(`tzt.mediaList().then(d => d.jobs.find(x => x.id === ${JSON.stringify(j.id)}))`); return s && s.state !== 'running' ? s : null; }, ms, 1500);
     };
     const ff = [path.join(path.dirname(exe), 'resources', 'tools', 'ffmpeg', 'ffmpeg.exe'), path.join(process.env.APPDATA || '', '3zT Browser', 'media', 'tools', 'ffmpeg', 'ffmpeg.exe')].find(f => fs.existsSync(f)) || '';
-    const tools = await mp.ev('zeus.mediaList().then(d => d.tools.ready)');
+    const tools = await mp.ev('tzt.mediaList().then(d => d.tools.ready)');
     ok('download tools come with the setup (ready at once)', tools === true);
     const yt = await job({ url: 'https://www.youtube.com/watch?v=jNQXAC9IVRw', mode: 'video', q: '360' });
     // real sites from a GitHub datacenter machine: YouTube often asks such machines to sign in, so this is reported, not required
@@ -423,7 +423,7 @@ async function mediaTest() {
     if (fs.existsSync(vid)) try { execSync(`"${ff}" -loglevel error -y -i "${vid}" -c:v libx265 -tag:v hvc1 -c:a copy "${vid.replace('clip.mp4', 'hevc.mp4')}"`); } catch (e) {}
     if (fs.existsSync(ff)) try { execSync(`"${ff}" -loglevel error -y -f lavfi -i testsrc=size=640x360:rate=30 -f lavfi -i sine=frequency=500 -t 60 -c:v libx264 -g 360 -keyint_min 360 -sc_threshold 0 -pix_fmt yuv420p -c:a aac -shortest "${vid.replace('clip.mp4', 'gop.mp4')}"`); } catch (e) {}
     const probe = f => { try { return +execSync(`"${ff.replace('ffmpeg.exe', 'ffprobe.exe')}" -v error -show_entries format=duration -of csv=p=0 "${f}"`).toString().trim(); } catch (e) { return 0; } };
-    const inf = await mp.ev(`zeus.mediaInfo('http://127.0.0.1:8792/clip.mp4')`);
+    const inf = await mp.ev(`tzt.mediaInfo('http://127.0.0.1:8792/clip.mp4')`);
     // a bare video file has no metadata (sites give title, picture, length, channel)
     ok('the link is shown before downloading (title)', !!(inf && !inf.error && inf.title), JSON.stringify(inf).slice(0, 200));
     const lv = await job({ url: 'http://127.0.0.1:8792/clip.mp4', mode: 'video', q: 'best' }, 120000);
@@ -431,7 +431,7 @@ async function mediaTest() {
     const tj = await job({ url: 'http://127.0.0.1:8792/clip.mp4', mode: 'video', q: 'best', trim: true }, 120000);
     ok('"pick a part before saving" waits with a preview file', !!(tj && tj.state === 'trim' && tj.temp && fs.existsSync(tj.temp)));
     if (tj && tj.state === 'trim') {
-      const r = await mp.ev(`zeus.mediaTrim(${JSON.stringify(tj.id)}, { start: 5.3, end: 9.1, exact: true })`);
+      const r = await mp.ev(`tzt.mediaTrim(${JSON.stringify(tj.id)}, { start: 5.3, end: 9.1, exact: true })`);
       const d = r && r.file ? probe(r.file) : 0;
       ok('frame-exact trim keeps exactly the chosen part', Math.abs(d - 3.8) < 0.15, `${d} s`);
     }
@@ -443,10 +443,10 @@ async function mediaTest() {
       const t0 = Date.now();
       // the handles, the way a mouse moves them (the slider runs 0..1000 over the video's length)
       if (s0 != null) await mp.ev(`(() => { const d = dur(); ts.value = Math.round(${+s0} * 10); ts.dispatchEvent(new Event("input")); te.value = Math.round(${+e0} * 10); te.dispatchEvent(new Event('input')); document.querySelector('input[name=cm][value=${how}]').checked = true; return 1; })()`);
-      const had = await mp.ev('zeus.mediaList().then(d => d.jobs.map(j => j.id))') || [];
+      const had = await mp.ev('tzt.mediaList().then(d => d.jobs.map(j => j.id))') || [];
       await mp.ev('mgo.click(), 1');
       await sleep(800);
-      const j = await poll(async () => { const x = await mp.ev(`zeus.mediaList().then(d => d.jobs.find(j => !${JSON.stringify(had)}.includes(j.id) && j.url === ${JSON.stringify(page)} && j.state !== 'running' && j.state !== 'trim'))`); return x || null; }, 120000, 700);
+      const j = await poll(async () => { const x = await mp.ev(`tzt.mediaList().then(d => d.jobs.find(j => !${JSON.stringify(had)}.includes(j.id) && j.url === ${JSON.stringify(page)} && j.state !== 'running' && j.state !== 'trim'))`); return x || null; }, 120000, 700);
       return { ready, j, d: j && j.file ? probe(j.file) : 0, secs: ((Date.now() - t0) / 1000).toFixed(1), label: await mp.ev('mgoT.textContent') };
     };
     const c1 = await cutUi('http://127.0.0.1:8792/watch', 5.3, 9.1, 'exact');
@@ -467,9 +467,9 @@ async function mediaTest() {
     const first = f => { try { return execSync(`"${ff.replace('ffmpeg.exe', 'ffprobe.exe')}" -v error -select_streams v:0 -show_entries packet=pts_time -read_intervals %+#1 -of csv=p=0 "${f}"`).toString().trim(); } catch (e) { return 'err'; } };
     const f5 = c5.j && c5.j.file ? first(c5.j.file) : 'no file';
     ok('a fast part starts on its first frame, nothing hidden before it (plays the same in Windows Media Player)', !!(c5.j && c5.j.file) && Math.abs(parseFloat(f5)) < 0.05 && c5.d > 9.5 && c5.d < 10.6, `${c5.j && c5.j.name} ${c5.d} s, first picture at ${f5} s`);
-    const id = await dp.ev(`zeus.dlList().then(d => (d.items.find(x => x.media && /clip/.test(x.name) && !/\\(clip\\)/.test(x.name)) || {}).id)`);
+    const id = await dp.ev(`tzt.dlList().then(d => (d.items.find(x => x.media && /clip/.test(x.name) && !/\\(clip\\)/.test(x.name)) || {}).id)`);
     if (id) {
-      const r = await dp.ev(`zeus.mediaTrimFile(${JSON.stringify(id)}, { start: 4, end: 12, exact: false })`);
+      const r = await dp.ev(`tzt.mediaTrimFile(${JSON.stringify(id)}, { start: 4, end: 12, exact: false })`);
       const d = r && r.file ? probe(r.file) : 0;
       ok('fast trim (no re-encoding) of a finished download', d > 7 && d < 12.5, `${d} s (starts at the key frame before 4 s)`);
     } else ok('fast trim (no re-encoding) of a finished download', false, 'no list entry');
@@ -487,15 +487,15 @@ async function mediaTest() {
     const none = await (async () => { const tb = await toolbar(); const v = await tb.ev('document.getElementById("mediaBtn").hidden'); tb.close(); return v; })();
     ok('…and not on a page without one', none === true);
     // closing the window stops everything it started and forgets the list; it opens clean
-    const before = await mp.ev('zeus.mediaList().then(d => d.jobs.length)');
+    const before = await mp.ev('tzt.mediaList().then(d => d.jobs.length)');
     mp.ev('window.close(), 1').catch(() => {}); mp.close();
     await sleep(2500);
     // only the browser's own copies count (the test machine may run other ffmpeg)
     const left = (() => { try { return +execSync(`powershell -NoProfile -Command "@(Get-Process yt-dlp,gallery-dl,ffmpeg -ErrorAction SilentlyContinue | Where-Object { $_.Path -like '*3zT*' }).Count"`).toString().trim(); } catch (e) { return -1; } })();
-    await dp.ev('zeus.mediaWindow(), 1');
+    await dp.ev('tzt.mediaWindow(), 1');
     const mp2 = await connect(await find('newtab/media.html', 30));
     await poll(() => mp2.ev('typeof preview === "function"'), 15000);
-    const after = await mp2.ev('zeus.mediaList().then(d => d.jobs.length)');
+    const after = await mp2.ev('tzt.mediaList().then(d => d.jobs.length)');
     ok('closing the downloader stops its tools and opens clean next time', before > 0 && after === 0 && left === 0, `jobs before ${before}, after ${after}, tool processes left ${left}`);
     mp2.close(); dp.close();
   } finally { srv.close(); }
@@ -550,7 +550,7 @@ async function passkeys() {
       return { v: JSON.parse(v || '{}'), win };
     };
     // the cause, shown once without the fix (reported only)
-    await stop(); await start({ ZEUS_NO_PASSKEY_FIX: '1' }); await sleep(3000);
+    await stop(); await start({ TZT_NO_PASSKEY_FIX: '1' }); await sleep(3000);
     await run('without fix');
     await stop(); await start(); await sleep(3000);
     const w = await run('with fix');
@@ -866,8 +866,8 @@ async function song() {
 }
 
 /* the TikTok / Instagram layout (src/inject/social-view.*), on a local page built like TikTok's 2026 feed:
-   the parts are marked and moved onto the playing video (buttons and caption on its right edge, hidden until the eye
-   button is pressed, arrows on its left edge); after a "redesign" (TikTok's names changed) they are still found by
+   the parts are marked and moved (buttons and caption in the bottom-right corner above the video bar, hidden until
+   the eye button is pressed; arrows fixed at the screen's left edge); after a "redesign" (TikTok's names changed) they are still found by
    what they contain; with no video nothing is moved; the setting turns it off */
 const TT_PAGE = `<!doctype html><meta charset="utf-8"><title>tt</title><style>body{margin:0;background:#111;color:#fff}button{background:#333;color:#fff}</style>
 <div data-e2e="anchoring-player-column" style="position:relative;width:900px;height:700px">
@@ -891,14 +891,14 @@ async function socialView() {
     const v = document.getElementById('v'), vr = v.getBoundingClientRect(), s = Math.min(vr.width / (v.videoWidth || 1), vr.height / (v.videoHeight || 1));
     return { placed: document.documentElement.classList.contains('tzt-placed'), tt: document.documentElement.classList.contains('tzt-tt'),
       video: { l: Math.round(vr.left + (vr.width - v.videoWidth * s) / 2), r: Math.round(vr.right - (vr.width - v.videoWidth * s) / 2), w: v.videoWidth },
-      act: q('[data-tzt-part="actions"]'), cap: q('[data-tzt-part="caption"]'), nav: q('[data-tzt-part="nav"]'), tog: q('#tzt-toggle') }; })())`).then(x => JSON.parse(x || '{}'));
+      act: q('[data-tzt-part="actions"]'), cap: q('[data-tzt-part="caption"]'), nav: q('[data-tzt-part="nav"]'), tog: q('#tzt-toggle'), ctl: q('[data-e2e="anchoring-playback-chrome"]') }; })())`).then(x => JSON.parse(x || '{}'));
   try {
     await go(B, true);
     const pc = await connect(await find(u => u.startsWith(B), 30));
     const a = await poll(async () => { const st = await state(pc); return st.placed && st.video.w ? st : null; }, 15000, 300) || await state(pc);
     const near = (x, y) => Math.abs(x - y) <= 3;
-    ok('TikTok layout: buttons, caption and arrows are marked and moved onto the playing video, buttons and caption hidden',
-      a.placed && a.act && a.cap && a.nav && a.tog && near(a.act.r, a.video.r - 12) && near(a.cap.r, a.video.r - 12) && near(a.nav.l, a.video.l + 12) && a.act.vis === 'hidden' && a.cap.vis === 'hidden' && a.tog.vis === 'visible',
+    ok('TikTok layout: buttons and caption marked and placed in the bottom-right corner above the video bar, arrows fixed at the screen\'s left edge, buttons and caption hidden',
+      a.placed && a.act && a.cap && a.nav && a.tog && a.ctl && near(a.act.r, a.ctl.r - 12) && near(a.cap.r, a.ctl.r - 12) && a.cap.b <= a.ctl.t && near(a.nav.l, 28) && a.act.vis === 'hidden' && a.cap.vis === 'hidden' && a.tog.vis === 'visible',
       JSON.stringify(a));
     await pc.ev(`document.getElementById('tzt-toggle').click(), 1`); await sleep(500);
     const b = await state(pc);
@@ -908,7 +908,7 @@ async function socialView() {
     await sleep(800);
     const c = await state(pc);
     ok('TikTok layout: after TikTok renames its parts they are still found (by the like / comment / share buttons, the author, the arrows) and placed',
-      c.placed && c.act && c.cap && c.nav && near(c.act.r, c.video.r - 12) && near(c.cap.r, c.video.r - 12) && near(c.nav.l, c.video.l + 12), JSON.stringify(c));
+      c.placed && c.act && c.cap && c.nav && near(c.act.r, c.ctl.r - 12) && near(c.cap.r, c.ctl.r - 12) && near(c.nav.l, 28), JSON.stringify(c));
     // no video: nothing of ours stays (TikTok's own layout)
     await pc.ev(`document.getElementById('v').remove(), window.dispatchEvent(new Event('resize')), 1`); await sleep(800);
     const d = await state(pc).catch(() => null) || {};
@@ -1091,7 +1091,7 @@ async function arablocn() {
     // press the first download control and watch what happens for 25 s
     const tb = await toolbar();
     const before = await tb.ev('JSON.stringify(S.tabs.map(t => t.url))');
-    const dlBefore = (await (async () => { const d = await connect(await find('downloads.html', 5) || pt); const v = await d.ev('window.zeus ? zeus.dlList().then(d => d.items.length) : -1'); d.close(); return v; })());
+    const dlBefore = (await (async () => { const d = await connect(await find('downloads.html', 5) || pt); const v = await d.ev('window.tzt ? tzt.dlList().then(d => d.items.length) : -1'); d.close(); return v; })());
     await c.ev(`(() => { const e = [...document.querySelectorAll('a[href],button')].find(e => /download|تحميل|تنزيل|mediafire|mega\\.nz|drive\\.google|pixeldrain|gofile|\\.zip|\\.rar|\\.7z/i.test((e.href || '') + ' ' + e.textContent)); if (e) { e.scrollIntoView(); e.click(); } return !!e; })()`, true);
     const seen = [];
     for (let i = 0; i < 25; i++) { await sleep(1000); const s = await tb.ev('S.url + " | tabs " + S.tabs.length + " | dl " + JSON.stringify(S.dl)'); if (seen[seen.length - 1] !== s) seen.push(`${i}s ${s}`); }

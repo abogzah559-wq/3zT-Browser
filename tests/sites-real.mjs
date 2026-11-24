@@ -98,7 +98,7 @@ async function youtubePip() {
 }
 
 async function main() {
-  child = spawn(exe, [...(appDir ? [appDir] : []), `--remote-debugging-port=${PORT}`], { env: { ...process.env, ZEUS_E2E: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child = spawn(exe, [...(appDir ? [appDir] : []), `--remote-debugging-port=${PORT}`], { env: { ...process.env, TZT_E2E: '1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   const log = fs.createWriteStream(path.join(OUT, 'sites-real-app.log')); child.stdout.pipe(log); child.stderr.pipe(log);
   if (!(await find(u => u.includes('ui/toolbar.html'), 120))) { note('error', 'sites', 'the app did not start'); return; }
   await sleep(4000);

@@ -1,6 +1,6 @@
-// TikTok and Instagram layout (3zT): the playing video as large as the page allows, its action buttons and
-// caption inside it (right edge / bottom-right) and hidden until the eye button is pressed, the up/down arrows on
-// its left edge. Runs in an isolated world of TikTok / Instagram pages (src/preload-newtab.js), with the rules
+// TikTok and Instagram layout (3zT): the playing video as large as the page allows; on TikTok its action buttons,
+// caption and the eye button in the bottom-right corner just above the video bar (hidden until the eye button is
+// pressed); the up/down arrows fixed at the screen's left edge. Runs in an isolated world of TikTok / Instagram pages (src/preload-newtab.js), with the rules
 // from src/sociallayout.js passed in as RULES.
 //
 // Built to survive TikTok's redesigns:
@@ -226,13 +226,28 @@
   // ------------------------------------------------------ placement
   const TOGGLE_SIZE = 40;
   const EDGE = 12;
+  const NAV_LEFT = 28;   // the up/down arrows: fixed at the screen's left edge (social-view.css)
   let pending = false;
 
   const setVar = (name, value) => { if (root.style.getPropertyValue(name) !== value) root.style.setProperty(name, value); };
   const px = (n) => `${Math.round(n)}px`;
   const placed = (on) => { if (root.classList.contains('tzt-placed') !== on) root.classList.toggle('tzt-placed', on); };
 
+  // TikTok's side menu is collapsed to its icons once, when the page opens (with TikTok's own button), so the video
+  // gets the room. Opened again by hand, it is left open.
+  let sidebarDone = false;
+  function collapseSidebar() {
+    if (sidebarDone) return;
+    const tg = first(TT.sidebarToggle);
+    if (!tg) return;
+    sidebarDone = true;
+    let menu = tg.parentElement;
+    for (let i = 0; menu && i < 8 && menu.getBoundingClientRect().height < window.innerHeight / 2; i++) menu = menu.parentElement;
+    if (menu && menu.getBoundingClientRect().width > 150) tg.click();
+  }
+
   function placeTikTok() {
+    collapseSidebar();
     const v = ttVideo();
     const actions = v && findActions(v);
     const caption = v && findCaption(v);
@@ -249,35 +264,32 @@
     if (!marked.actions && !marked.caption) { mark('nav', null); placed(false); return; }   // (both refused before)
 
     const W = root.clientWidth, H = window.innerHeight;
-    const top = Math.max(v.top, 0);
-    let floor = Math.min(v.bottom, H);
-    // TikTok's progress bar and play controls: kept clear when they lie over the video
+    // the corner the parts sit in: bottom-right, just above TikTok's video bar (progress bar and play controls).
+    // That bar is the same on every video, wide or tall, so the parts never move from one video to the next.
+    // Without the bar (an older design): the bottom-right corner of the video itself.
+    let edgeRight, floor;
     const ctl = first(TT.controls);
-    if (ctl) {
-      const c = ctl.getBoundingClientRect();
-      if (c.height && c.top < floor && c.top > top + 100 && c.right > v.left && c.left < v.right) floor = c.top;
-    }
+    const c = ctl && ctl.getBoundingClientRect();
+    if (c && c.width > 200 && c.height && c.top > H / 2) { edgeRight = c.right; floor = c.top; }
+    else { edgeRight = v.right; floor = Math.min(v.bottom, H); }
     const shown = root.classList.contains('tzt-show-actions');
-    const right = W - v.right + EDGE;                  // distance from the screen's right edge
+    const right = W - edgeRight + EDGE;                // distance from the screen's right edge
     let up = H - floor + 6;                            // distance from the screen's bottom
     setVar('--tzt-cap-right', px(right));
     setVar('--tzt-cap-bottom', px(up));
-    setVar('--tzt-cap-width', px(Math.max(160, Math.min(520, v.width - 2 * EDGE - 60))));
+    setVar('--tzt-cap-width', px(Math.max(260, Math.min(440, W * 0.32))));
     if (shown && caption) up += caption.getBoundingClientRect().height + 6;
-    setVar('--tzt-toggle-left', px(v.right - EDGE - TOGGLE_SIZE));
+    setVar('--tzt-toggle-left', px(edgeRight - EDGE - TOGGLE_SIZE));
     setVar('--tzt-toggle-top', px(H - up - TOGGLE_SIZE));
     up += TOGGLE_SIZE + 8;
     setVar('--tzt-act-right', px(right));
     setVar('--tzt-act-bottom', px(up));
-    // arrows: on the video's left edge, in the middle of what is on screen of it
-    setVar('--tzt-nav-left', px(Math.max(v.left, 0) + EDGE));
-    setVar('--tzt-nav-top', px((top + floor) / 2));
 
     ensureToggle();
     placed(true);
     check('actions', { right: W - right });
     check('caption', { right: W - right });
-    check('nav', { left: Math.max(v.left, 0) + EDGE });
+    check('nav', { left: NAV_LEFT });
     if (!marked.actions && !marked.caption) { mark('nav', null); placed(false); }
   }
 

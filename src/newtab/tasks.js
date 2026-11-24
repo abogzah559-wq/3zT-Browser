@@ -21,7 +21,7 @@ const KIND = { browser: ['المتصفح', 'Browser'], gpu: ['رسوميات', '
 const ICON = { browser: '⌂', gpu: '▣', ui: '▭', util: '⚙', other: '◌' };
 
 async function refresh() {
-  const d = await zeus.tasks(); if (!d) return;
+  const d = await tzt.tasks(); if (!d) return;
   $('vMem').innerHTML = esc(mb(d.total));
   $('vCpu').innerHTML = esc(d.cpu.toFixed(1)) + ' <small>%</small>';
   $('vProc').textContent = d.procs;
@@ -43,9 +43,9 @@ async function refresh() {
 }
 $('rows').addEventListener('click', async e => {
   const b = e.target.closest('[data-sleep]'); if (!b) return;
-  for (const id of b.dataset.sleep.split(',')) await zeus.sleepTab(+id);
+  for (const id of b.dataset.sleep.split(',')) await tzt.sleepTab(+id);
   refresh();
 });
-zeus.getLang().then(l => { lang = l || 'ar'; texts(); refresh(); });
-zeus.onLang(l => { lang = l; texts(); refresh(); });
+tzt.getLang().then(l => { lang = l || 'ar'; texts(); refresh(); });
+tzt.onLang(l => { lang = l; texts(); refresh(); });
 setInterval(() => { if (!document.hidden) refresh(); }, 1500);

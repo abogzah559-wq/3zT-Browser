@@ -21,7 +21,7 @@ function note() {
     : L('⚠️ نظامك ما يوفر تشفير، فكلمات السر محفوظة بدون تشفير قوي.', '⚠️ Your system offers no encryption: passwords are stored without strong encryption.');
 }
 async function load() {
-  data = await zeus.pwList() || data;
+  data = await tzt.pwList() || data;
   note(); draw();
 }
 function draw() {
@@ -50,22 +50,22 @@ $('q').addEventListener('input', draw);
 $('list').addEventListener('click', async e => {
   const b = e.target.closest('button[data-a]'); if (!b) return;
   const id = b.closest('.row').dataset.id, entry = data.entries.find(x => x.id === id);
-  if (b.dataset.a === 'eye') { if (shown.has(id)) shown.delete(id); else shown.set(id, await zeus.pwReveal(id)); draw(); }
-  if (b.dataset.a === 'cp') { await navigator.clipboard.writeText(await zeus.pwReveal(id)); b.textContent = '✓'; setTimeout(draw, 900); }
+  if (b.dataset.a === 'eye') { if (shown.has(id)) shown.delete(id); else shown.set(id, await tzt.pwReveal(id)); draw(); }
+  if (b.dataset.a === 'cp') { await navigator.clipboard.writeText(await tzt.pwReveal(id)); b.textContent = '✓'; setTimeout(draw, 900); }
   if (b.dataset.a === 'cu') { await navigator.clipboard.writeText(entry ? entry.username : ''); b.textContent = '✓'; setTimeout(draw, 900); }
-  if (b.dataset.a === 'del') { if (confirm(L(`حذف كلمة السر لـ ${entry.host}؟`, `Delete the password for ${entry.host}?`))) { await zeus.pwDelete(id); shown.delete(id); load(); } }
+  if (b.dataset.a === 'del') { if (confirm(L(`حذف كلمة السر لـ ${entry.host}؟`, `Delete the password for ${entry.host}?`))) { await tzt.pwDelete(id); shown.delete(id); load(); } }
 });
-$('never').addEventListener('click', async e => { const b = e.target.closest('[data-un]'); if (b) { await zeus.pwUnnever(b.dataset.un); load(); } });
+$('never').addEventListener('click', async e => { const b = e.target.closest('[data-un]'); if (b) { await tzt.pwUnnever(b.dataset.un); load(); } });
 $('imp').onclick = async () => {
-  const r = await zeus.pwImport(); if (!r) return;
+  const r = await tzt.pwImport(); if (!r) return;
   const box = $('result'); box.hidden = false;
   if (r.error) { box.className = 'banner warn'; box.textContent = L('ما قدرت أقرأ الملف: ', 'Could not read the file: ') + r.error; return; }
   box.className = 'banner ok';
   box.innerHTML = L(`تم: انضافت <b>${r.added}</b>، وتحدّثت <b>${r.updated}</b>${r.skipped ? `، وتخطّيت ${r.skipped} (روابط مو مواقع)` : ''}.`,
     `Done: <b>${r.added}</b> added, <b>${r.updated}</b> updated${r.skipped ? `, ${r.skipped} skipped (not websites)` : ''}.`) +
     `<br>${L('ملف CSV غير مشفّر وفيه كل كلمات السر. الأفضل تحذفه:', 'The CSV file is not encrypted and holds every password. Better delete it:')} <button id="delf">${L('انقله لسلة المحذوفات', 'Move it to the Recycle Bin')}</button>`;
-  $('delf').onclick = async () => { const ok = await zeus.pwDeleteFile(r.file); $('delf').replaceWith(document.createTextNode(ok ? L(' ✓ انحذف', ' ✓ Deleted') : L(' ما قدرت أحذفه، احذفه بنفسك', ' Could not delete it, please delete it yourself'))); };
+  $('delf').onclick = async () => { const ok = await tzt.pwDeleteFile(r.file); $('delf').replaceWith(document.createTextNode(ok ? L(' ✓ انحذف', ' ✓ Deleted') : L(' ما قدرت أحذفه، احذفه بنفسك', ' Could not delete it, please delete it yourself'))); };
   load();
 };
-zeus.getLang().then(l => { lang = l || 'ar'; texts(); load(); });
-zeus.onLang(l => { lang = l; texts(); draw(); note(); });
+tzt.getLang().then(l => { lang = l || 'ar'; texts(); load(); });
+tzt.onLang(l => { lang = l; texts(); draw(); note(); });

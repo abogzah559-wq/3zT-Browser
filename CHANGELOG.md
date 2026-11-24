@@ -2,6 +2,48 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.22.0
+
+### Security
+- Only the passwords page itself can list, show or delete saved passwords (before: any of the browser's own pages).
+  Moving the imported Chrome CSV to the recycle bin accepts only the file just imported, for 10 minutes.
+- The browser's own pages (new tab, settings, history, downloads, passwords, task manager, downloader) carry a
+  Content Security Policy: scripts from the app folder only, no frames, no plugins.
+- AdGuard's scriptlet library is pinned to one release (2.6.0) instead of following the latest 2.x.
+- A downloaded update is checked against its SHA-256 again right before it is installed on exit.
+- Weekly workflow (`electron-watch.yml`): finds new Electron patch releases of the major version in use, opens a
+  branch with the update and runs the full build and test workflow on it. CI reads the Electron version from
+  `package.json`.
+
+### Added
+- TikTok: the side menu is collapsed to its icons when the page opens (with TikTok's own button); opened by hand,
+  it stays open.
+- Instagram: black background in dark mode instead of Instagram's dark blue-grey.
+- Cookie popups: the browser's own rules (`src/consent-rules.json`, Autoconsent format) for dialogs the shared
+  rules do not cover yet, starting with FilGoal.
+- Releases carry `latest.json`; installed copies read it to find updates (a plain download, without the GitHub
+  API's limit of 60 requests an hour per address). The API remains the fallback.
+
+### Changed
+- TikTok layout: the action buttons, the caption and the eye button sit in the bottom-right corner just above the
+  video bar, in the same place for every video, wide or tall; the buttons are 30 % larger. The up/down arrows are
+  fixed at the screen's left edge, on TikTok as on Instagram.
+- Sleeping tabs: a tab is kept awake while it uses the camera, microphone or screen, while a download it started
+  is being set up, and while it holds text typed into the page and not yet sent (only that state is reported,
+  never the text). Pinned tabs wait twice as long. When less than 12 % of the computer's memory is free, the idle
+  tab using the most memory sleeps first.
+- Internal names: the page API is `tzt`, the internal protocol `tzt-res:`, test variables `TZT_*`. Extensions
+  patched by earlier versions are migrated on first start (their store-install state included). The browser's
+  own pages are opened with `3zt://` addresses only.
+
+### Fixed
+- Sign-in on sites protected by Cloudflare Turnstile (for example TorBox) failed with "not permitted" after the
+  green tick: fingerprint protection, passkey handling and the Chrome look were applied inside the verification
+  frame, which fails its check when changed. Verification frames (Cloudflare, hCaptcha, reCAPTCHA) are no longer
+  touched.
+- TikTok: a liked video's heart is red again and a saved video's icon yellow (the white icon colour overrode
+  TikTok's own).
+
 ## 0.21.1
 
 ### Websites see what they would see in Chrome
@@ -19,7 +61,7 @@ All notable changes to 3zT, newest first. Release notes are generated from this 
   have none, until the browser was closed and opened again) is read from the player's own answer
   (`PLAYABILITY_ERROR_CODE_VIDEO_BLOCK_BY_MRM`). The browser then clears YouTube's until-closed cookies (sign-in
   cookies stay), renews its connections and loads the page again, at most once every 10 minutes, with a line in
-  `logs/3zt.log`. Reloading alone did not help; this played the video every time it was tried.
+  `logs/3zt.log`. A plain reload does not clear the state.
 
 ### Ad blocker
 - The boxes pages keep for Google's and Taboola's ads (`div-gpt-ad…`, `ins.adsbygoogle`, `google_ads_iframe_…`,
@@ -94,10 +136,8 @@ All notable changes to 3zT, newest first. Release notes are generated from this 
 
 ### YouTube
 - YouTube's ad blocking now uses AdGuard's YouTube rules from **AdGuard Base filter**, with AdGuard's scriptlet
-  library, in place of uBlock Origin Lite's scripts. Tested side by side in Chrome, AdGuard alone showed no ads (also
-  in long videos skipped ahead five times), no "Experiencing interruptions?" message and no black screen before a
-  video starts. AdGuard's rules work on the player's own data before the player reads it, while the scripts used in
-  0.18.0 removed ads after they arrived, which YouTube noticed: the message came up and ads came back in long videos.
+  library, in place of uBlock Origin Lite's scripts. AdGuard's rules adjust the player's data before the player
+  reads it, so YouTube's "Experiencing interruptions?" check and mid-roll ads in long videos no longer appear.
 - The list and the library are downloaded at runtime (both GPL-3.0, not part of 3zT or its setup), checked (the list's
   own checksum, at least 15 usable rules for `www.youtube.com`, and the three rules that answer YouTube's current
   checks), turned into one page script for each YouTube host, kept on disk and refreshed every 12 hours (a list that
@@ -296,7 +336,7 @@ All notable changes to 3zT, newest first. Release notes are generated from this 
 
 - Translate page now works in place, like Chrome: the page stays where it is and keeps working, its text is swapped for the translation, new text is translated as it appears, and other pages of the same site are translated too until you press the button again. No more trip through Google Translate's site.
 - Ctrl+Shift+T after closing and reopening the browser: closed tabs are kept across restarts, and if tabs are not restored on start, the first Ctrl+Shift+T brings back all the tabs that were open.
-- The browser's own pages show as 3zt://settings, 3zt://downloads... instead of zeus:// (the old addresses still work).
+- The browser's own pages show as 3zt://settings, 3zt://downloads... for the browser's own pages.
 - Past searches under the address bar all line up on the right in the Arabic interface, English ones too.
 
 ## 0.12.7

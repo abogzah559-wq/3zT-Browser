@@ -76,30 +76,30 @@ function draw() {
   $('empty').innerHTML = D.items.length ? L('ما فيه نتائج', 'No matches') : L('ما فيه تنزيلات للحين.<br>أي ملف تنزّله يطلع هنا، وتقدر توقفه وتكمله بعدين.', 'No downloads yet.<br>Files you download show up here; you can pause and resume them.');
   for (const r of rows) if (r.state === 'completed' && !icons.has(r.id)) {
     icons.set(r.id, '');
-    zeus.dlIcon(r.id).then(u => { if (u) { icons.set(r.id, u); const im = document.querySelector(`.it[data-id="${CSS.escape(r.id)}"] .ic`); if (im) im.innerHTML = `<img src="${u}" alt="">`; } });
+    tzt.dlIcon(r.id).then(u => { if (u) { icons.set(r.id, u); const im = document.querySelector(`.it[data-id="${CSS.escape(r.id)}"] .ic`); if (im) im.innerHTML = `<img src="${u}" alt="">`; } });
   }
 }
-async function load() { D = await zeus.dlList() || D; draw(); }
+async function load() { D = await tzt.dlList() || D; draw(); }
 
 $('list').addEventListener('click', async e => {
   const b = e.target.closest('[data-c]'); if (!b) return;
   const id = b.closest('.it').dataset.id;
   if (b.dataset.c === 'trim') { const r = D.items.find(x => x.id === id); if (r) openTrim({ file: r.path, listId: id }); return; }
-  await zeus.dlAct(id, b.dataset.c); load();
+  await tzt.dlAct(id, b.dataset.c); load();
 });
 $('q').addEventListener('input', draw);
-$('clear').onclick = async () => { await zeus.dlClear(); load(); };
-$('open').onclick = () => zeus.dlFolder();
-$('ask').onclick = () => { zeus.set('dlAsk', !D.ask); setTimeout(load, 150); };
-zeus.onDl(load);
-zeus.getLang().then(l => { lang = l || 'ar'; load(); });
-zeus.onLang(l => { lang = l; draw(); });
+$('clear').onclick = async () => { await tzt.dlClear(); load(); };
+$('open').onclick = () => tzt.dlFolder();
+$('ask').onclick = () => { tzt.set('dlAsk', !D.ask); setTimeout(load, 150); };
+tzt.onDl(load);
+tzt.getLang().then(l => { lang = l || 'ar'; load(); });
+tzt.onLang(l => { lang = l; draw(); });
 
 $('list').addEventListener('dragstart', e => {
   const it = e.target.closest && e.target.closest('.it[draggable=true]'); if (!it) return;
-  e.preventDefault(); zeus.dlDrag(it.dataset.id);
+  e.preventDefault(); tzt.dlDrag(it.dataset.id);
 });
 
 /* the video downloader has its own window */
-$('openMedia').onclick = () => zeus.mediaWindow();
+$('openMedia').onclick = () => tzt.mediaWindow();
 window.trimHooks = { done: () => load(), err: e => (e === 'cancelled' ? L('انلغى', 'Cancelled') : String(e || '')) };

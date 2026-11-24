@@ -17,7 +17,7 @@ const path = require('path');
 const URL_RAW = 'https://raw.githubusercontent.com/abogzah559-wq/3zT-Browser/main/src/social-layout.json';
 const EVERY = 6 * 3600 * 1000;
 const BUILTIN = require('./social-layout.json');
-const TT_KEYS = ['actions', 'caption', 'nav', 'controls', 'actionIcons', 'captionInside', 'navButtons'];
+const TT_KEYS = ['actions', 'caption', 'nav', 'controls', 'actionIcons', 'captionInside', 'navButtons', 'sidebarToggle'];
 const MAX_BYTES = 32 * 1024, MAX_ITEMS = 16, MAX_LEN = 200;
 
 // a downloaded file -> the same shape, cleaned; throws when it is not a usable rules file

@@ -5,7 +5,7 @@
  *  - Clean YouTube: hide parts of YouTube (shorts, comments...) with CSS switches
  *  - Ambient light for YouTube: the original scripts, run directly in YouTube pages
  *  - Twitch ads: the open-source "vaft" script (TwitchAdSolutions, MIT)
- *  - TikTok / Instagram layout: buttons and caption inside the video, hidden until asked for (inject/social-view.*)
+ *  - TikTok / Instagram layout: buttons and caption in a fixed corner, hidden until asked for (inject/social-view.*)
  */
 const fs = require('fs');
 const path = require('path');
@@ -24,7 +24,7 @@ function code(name) {
   return codeCache.get(name);
 }
 
-/* ---------- zeus-res://ambient/... : files a YouTube page loads for ambient light ---------- */
+/* ---------- tzt-res://ambient/... : files a YouTube page loads for ambient light ---------- */
 const MIME = { '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png', '.svg': 'image/svg+xml' };
 function serve(req) {
   try {
@@ -44,7 +44,7 @@ const SB_CATS = ['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'previ
 const sbCache = new Map();
 async function sbSegments(id, cats) {
   if (!/^[\w-]{11}$/.test(id || '')) return [];
-  if (process.env.ZEUS_SB_TEST) { try { return JSON.parse(process.env.ZEUS_SB_TEST); } catch (e) { return []; } }   // offline testing
+  if (process.env.TZT_SB_TEST) { try { return JSON.parse(process.env.TZT_SB_TEST); } catch (e) { return []; } }   // offline testing
   cats = (cats || []).filter(c => SB_CATS.includes(c));
   if (!cats.length) return [];
   const key = id + '|' + cats.join(',');
@@ -69,7 +69,7 @@ async function sbSegments(id, cats) {
 const rydCache = new Map();
 async function rydVotes(id) {
   if (!/^[\w-]{11}$/.test(id || '')) return null;
-  if (process.env.ZEUS_RYD_TEST) { try { return JSON.parse(process.env.ZEUS_RYD_TEST); } catch (e) { return null; } }   // offline testing
+  if (process.env.TZT_RYD_TEST) { try { return JSON.parse(process.env.TZT_RYD_TEST); } catch (e) { return null; } }   // offline testing
   const hit = rydCache.get(id); if (hit && Date.now() - hit.t < 10 * 60000) return hit.v;
   let v = null;
   try {

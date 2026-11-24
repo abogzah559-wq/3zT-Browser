@@ -12,6 +12,7 @@ const {
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { pathToFileURL } = require('url');
 const CI = require('./chrome-import');
 const { AdBlocker } = require('./adblock');
@@ -92,14 +93,14 @@ const startMark = name => { if (!START.done) START.marks.push(name + ' ' + Math.
 function startShown() {
   if (START.done) return; START.done = true;
   const ms = Math.round(performance.now());
-  if (process.env.ZEUS_TIMING) console.log('[timing] window shown', ms, 'ms');
+  if (process.env.TZT_TIMING) console.log('[timing] window shown', ms, 'ms');
   if (ms > 3000) logError('slow start', `${ms} ms: ${START.marks.join(', ')}`);
 }
 process.on('uncaughtException', err => logError('uncaught', err));
 process.on('unhandledRejection', err => logError('unhandled', err));
 
 // files that built-in YouTube features load into the page (must be allowed past the site's CSP, like an extension's files)
-protocol.registerSchemesAsPrivileged([{ scheme: 'zeus-res', privileges: { standard: true, secure: true, bypassCSP: true, supportFetchAPI: true, corsEnabled: true } },
+protocol.registerSchemesAsPrivileged([{ scheme: 'tzt-res', privileges: { standard: true, secure: true, bypassCSP: true, supportFetchAPI: true, corsEnabled: true } },
   // the downloader's preview of sites that only send their video with their own headers (TikTok): see previewLink
   { scheme: 'ztpv', privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true } }]);
 
@@ -220,7 +221,7 @@ class Win {
     }, b || {}, ICON_OPT));
 
     this.ui = new WebContentsView({
-      webPreferences: { preload: PRELOAD_UI, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, partition: 'zeus-ui' }
+      webPreferences: { preload: PRELOAD_UI, contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: false, partition: 'tzt-ui' }
     });
     this.ui.setBackgroundColor('#00000000');
     this.win.contentView.addChildView(this.ui);
@@ -508,7 +509,7 @@ function newWindow(opts = {}) {
 }
 
 /* ---------- links that belong to another program ---------- */
-const WEB_SCHEMES = new Set(['http', 'https', 'file', 'about', 'data', 'blob', 'chrome-extension', 'devtools', 'chrome', 'zeus-res', 'ws', 'wss', 'filesystem']);
+const WEB_SCHEMES = new Set(['http', 'https', 'file', 'about', 'data', 'blob', 'chrome-extension', 'devtools', 'chrome', 'tzt-res', 'ws', 'wss', 'filesystem']);
 function isExternalUrl(u) {
   const m = /^([a-z][a-z0-9+.-]*):/i.exec(u || ''); if (!m) return false;
   const s = m[1].toLowerCase();
@@ -633,7 +634,7 @@ function makeView(tab, fromOpener) {
   wc.on('did-start-navigation', (e, ...rest) => {
     const isMain = e && e.isMainFrame !== undefined ? e.isMainFrame : rest[2];
     const same = e && e.isSameDocument !== undefined ? e.isSameDocument : rest[1];
-    if (isMain && !same) { tab.blocked = 0; tab.permDenied = null; cancelPermissionsOf(tab); tab.win.pushState(); }
+    if (isMain && !same) { tab.blocked = 0; tab.permDenied = null; tab.typed = false; tab.capture = false; cancelPermissionsOf(tab); tab.win.pushState(); }
   });
   wc.on('dom-ready', () => { if (isNewtab(tab.url)) wc.send('strip', tab.win.stripH); tab.siteFontKey = null; applySiteFont(tab); translateOnLoad(tab); });
   wc.on('did-navigate-in-page', (e, url, isMain) => { if (isMain) nav(e, url, true); });
@@ -667,20 +668,44 @@ function loadInto(tab, url) {
   else wc.loadURL(url).catch(() => {});
 }
 
-/* memory saver: tabs you haven't looked at for a while go to sleep (their RAM is freed) */
-function discard(t) {
-  if (!t.view || t.id === t.win.activeId || t.pip) return;
+/* memory saver: tabs you haven't looked at for a while go to sleep (their RAM is freed).
+   Never a tab that is playing sound, in picture-in-picture, using the camera, microphone or screen, still
+   starting a download, or holding text typed into the page that was not sent. (force: the sleep button in the
+   task manager, which only skips the active tab, sound and developer tools.) */
+function canSleep(t) {
+  if (!t.view || t.id === t.win.activeId || t.pip) return false;
   const wc = t.view.webContents;
-  if (wc.isCurrentlyAudible() || wc.isDevToolsOpened()) return;
-  destroyView(t.view);
-  t.view = null; t.discarded = true; t.loading = false;
-  t.win.pushState();
+  if (wc.isDestroyed() || wc.isCurrentlyAudible() || wc.isDevToolsOpened()) return false;
+  return !t.capture && !t.dlBusy && !t.typed;
 }
+function discard(t, force) {
+  if (!t.view || t.id === t.win.activeId || t.pip) return false;
+  const wc = t.view.webContents;
+  if (wc.isCurrentlyAudible() || wc.isDevToolsOpened()) return false;
+  if (!force && !canSleep(t)) return false;
+  destroyView(t.view);
+  t.view = null; t.discarded = true; t.loading = false; t.typed = false; t.capture = false; t.dlBusy = 0;
+  t.win.pushState();
+  return true;
+}
+const LOW_MEMORY = 0.12;   // free share of the computer's memory below which the largest idle tab sleeps early
 setInterval(() => {
   const min = settings && settings.data.memorySaverMin;
   if (!min || FAST) return;   // very fast mode: tabs never sleep, switching is instant
-  const limit = Date.now() - min * 60000;
-  for (const t of allTabs()) if (t.id !== t.win.activeId && t.view && t.lastActive < limit) discard(t);
+  const now = Date.now();
+  // pinned tabs are usually kept for a reason: they wait twice as long
+  for (const t of allTabs()) if (t.view && t.lastActive < now - min * 60000 * (t.pinned ? 2 : 1)) discard(t);
+  // the computer is short of memory: the tab using the most goes first (idle for at least two minutes)
+  if (os.freemem() / os.totalmem() >= LOW_MEMORY) return;
+  const pidMem = new Map();
+  try { for (const m of app.getAppMetrics()) pidMem.set(m.pid, (m.memory && m.memory.workingSetSize) || 0); } catch (e) { return; }
+  let big = null, bigMem = 0;
+  for (const t of allTabs()) {
+    if (!canSleep(t) || t.lastActive > now - 120000) continue;
+    let mem = 0; try { mem = pidMem.get(t.view.webContents.getOSProcessId()) || 0; } catch (e) {}
+    if (mem > bigMem) { big = t; bigMem = mem; }
+  }
+  if (big) discard(big);
 }, 30000);
 
 /* ---------- session restore (all normal windows) ---------- */
@@ -867,16 +892,16 @@ function manifestName(dir) {
 }
 /* bring the user's Chrome extensions in (compatible ones, patched for Electron, with their settings) */
 function importChromeExtensions() {
-  const own = settings.data.extensions.filter(p => !p.startsWith(extRoot()));   // folders the user added himself
+  const own = settings.data.extensions.filter(p => !p.startsWith(extRoot()));   // folders added by hand
   const r = EXT.importFromChrome(CI.profiles(app), app.getPath('userData'), SHIM);
-  // a folder the user added himself (e.g. his own modified version) wins over the store copy
+  // a folder added by hand (for example a modified build) wins over the copy imported from Chrome
   const ownNames = new Set(own.map(manifestName).filter(Boolean));
   const keep = r.imported.filter(x => !ownNames.has(manifestName(x.path)));
   settings.data.extensions = [...own, ...keep.map(x => x.path)];
   settings.save();
   return { imported: keep, skipped: r.skipped };
 }
-/* the user picked a folder: copy it into our extensions folder and patch the copy (his folder stays untouched) */
+/* the user picked a folder: copy it into our extensions folder and patch the copy (the original folder is not changed) */
 async function addExtensionFolder(dir) {
   let d = dir;
   if (!fs.existsSync(path.join(d, 'manifest.json'))) {
@@ -898,11 +923,11 @@ const STORE_URL = 'https://chromewebstore.google.com/';
 async function setupWebStore() {
   const CWS = require('./vendor/chrome-web-store');
   // patch every store download for Electron before it is loaded (keeps its update address so it can update)
-  globalThis.__zeusCwsUnpacked = dir => { try { return EXT.patch(dir, SHIM, { keepUpdateUrl: true }); } catch (e) { console.warn('patch failed', e.message); } };
+  globalThis.__tztCwsUnpacked = dir => { try { return EXT.patch(dir, SHIM, { keepUpdateUrl: true }); } catch (e) { console.warn('patch failed', e.message); } };
   await CWS.installChromeWebStore({
     session: session.defaultSession, extensionsPath: storeRoot(), loadExtensions: true, autoUpdate: true,
     beforeInstall: async d => {
-      if (process.env.ZEUS_E2E === '1') return { action: 'allow' };   // automated tests only
+      if (process.env.TZT_E2E === '1') return { action: 'allow' };   // automated tests only
       let parent;
       try { const wc = webContents.fromFrame(d.frame); const t = wc && tabOfWc(wc); parent = t && t.win && !t.win.win.isDestroyed() ? t.win.win : undefined; } catch (e) {}
       const perms = [...new Set([...(d.manifest.permissions || []), ...(d.manifest.host_permissions || [])])].filter(x => typeof x === 'string');
@@ -1013,7 +1038,7 @@ function popupBlocked(tab, url) {
   const w = tab.win; if (!w || w.win.isDestroyed()) return;
   tab.blocked = (tab.blocked || 0) + 1;
   settings.data.adBlockedTotal = (settings.data.adBlockedTotal || 0) + 1;
-  if (process.env.ZEUS_E2E) console.log('[3zT] popup blocked', String(url).slice(0, 160));
+  if (process.env.TZT_E2E) console.log('[3zT] popup blocked', String(url).slice(0, 160));
   w.pushState();   // counted on the shield; no note (they come on every click)
 }
 
@@ -1044,7 +1069,7 @@ async function togglePip(wc, x, y) {
   const t = wc && !wc.isDestroyed() ? tabOfWc(wc) : null;
   if (!t || !/^https?:/i.test(t.url || '')) return 'none';
   const r = await pipModule().toggle(t, x, y);
-  if (process.env.ZEUS_TEST || process.env.ZEUS_E2E) console.log('[3zT] pip', r);
+  if (process.env.TZT_TEST || process.env.TZT_E2E) console.log('[3zT] pip', r);
   return r;
 }
 function handleKey(w, i) {
@@ -1154,11 +1179,11 @@ const safeDecode = u => { try { return decodeURIComponent(u); } catch (e) { retu
 function toUrl(text) {
   const t = (text || '').trim();
   if (!t) return null;
-  if (/^(3zt|zeus):\/\/history/i.test(t)) return HISTORY_URL;
-  if (/^(3zt|zeus):\/\/tasks/i.test(t)) return TASKS_URL;
-  if (/^(3zt|zeus):\/\/passwords/i.test(t)) return PASSWORDS_URL;
-  if (/^(3zt|zeus):\/\/settings/i.test(t)) return SETTINGS_URL;
-  if (/^(3zt|zeus):\/\/downloads/i.test(t)) return DOWNLOADS_URL;
+  if (/^3zt:\/\/history/i.test(t)) return HISTORY_URL;
+  if (/^3zt:\/\/tasks/i.test(t)) return TASKS_URL;
+  if (/^3zt:\/\/passwords/i.test(t)) return PASSWORDS_URL;
+  if (/^3zt:\/\/settings/i.test(t)) return SETTINGS_URL;
+  if (/^3zt:\/\/downloads/i.test(t)) return DOWNLOADS_URL;
   if (/^(https?|file|chrome-extension|about|view-source):/i.test(t)) return t;
   if (/^localhost(:\d+)?(\/|$)/i.test(t) || /^\d{1,3}(\.\d{1,3}){3}(:\d+)?(\/|$)/.test(t)) return 'http://' + t;
   if (!/\s/.test(t) && /^[\w-]+(\.[\w-]+)+(:\d+)?(\/\S*)?$/.test(t)) return 'https://' + t;
@@ -1433,7 +1458,7 @@ function taskRows() {
 const FIREFOX_UA = process.platform === 'win32'
   ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:145.0) Gecko/20100101 Firefox/145.0'
   : 'Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0';
-const pkMode = () => (process.env.ZEUS_NO_PASSKEY_FIX ? 'nofix' : settings.data.passkeys ? 'on' : 'off');
+const pkMode = () => (process.env.TZT_NO_PASSKEY_FIX ? 'nofix' : settings.data.passkeys ? 'on' : 'off');
 const SIGNIN_HOST = /^accounts\.(google|youtube)\.com$/i;
 /* Client hints on page loads. Chromium tells every secure request which browser it is (Sec-CH-UA, -Mobile,
    -Platform: the same as navigator.userAgentData). Electron leaves them off page and frame loads (it sends them
@@ -1475,7 +1500,7 @@ const setUpSessions = new WeakSet();
 function setupSession(ses) {
   if (setUpSessions.has(ses)) return;   // a private window's tabs share one session: set it up once
   setUpSessions.add(ses);
-  try { ses.protocol.handle('zeus-res', FEAT.serve); } catch (e) {}
+  try { ses.protocol.handle('tzt-res', FEAT.serve); } catch (e) {}
   // registered with the session (a page only sees the schemes handled before it was made): see previewLink
   try { ses.protocol.handle('ztpv', req => previewServe(ses, req)); } catch (e) {}
   try { ses.setSpellCheckerEnabled(false); } catch (e) {}   // no dictionary download, less memory
@@ -1499,7 +1524,7 @@ function setupSession(ses) {
     // real address of a tracking redirect
     if (d.resourceType === 'mainFrame' && d.method === 'GET' && linkCleaner && settings.data.cleanLinks !== false) {
       const c = linkCleaner.clean(d.url);
-      if (c !== d.url) { if (process.env.ZEUS_E2E) console.log('[3zT] link cleaned', d.url.slice(0, 160)); return cb({ redirectURL: c }); }
+      if (c !== d.url) { if (process.env.TZT_E2E) console.log('[3zT] link cleaned', d.url.slice(0, 160)); return cb({ redirectURL: c }); }
     }
     if (!adblock || settings.data.adblock === false || d.resourceType === 'mainFrame') return cb({});
     let page = '';
@@ -1530,11 +1555,13 @@ function setupSession(ses) {
   ses.on('will-download', (e, item, wc) => {
     const resumeId = dl.takeResume();
     const t = wc && tabOfWc(wc);
-    const hk = (wc ? wc.id : 0) + ' ' + item.getURL(); const hint = dlNames.get(hk); dlNames.delete(hk); if (process.env.ZEUS_DEBUG_DL) console.log('[3zT] will-download', item.getURL(), JSON.stringify(item.getFilename()), !!hint);
+    const hk = (wc ? wc.id : 0) + ' ' + item.getURL(); const hint = dlNames.get(hk); dlNames.delete(hk); if (process.env.TZT_DEBUG_DL) console.log('[3zT] will-download', item.getURL(), JSON.stringify(item.getFilename()), !!hint);
     const askNow = dlAskFor.delete(item.getURL());
     let referrer = ''; try { referrer = wc && !wc.isDestroyed() ? wc.getURL() : ''; } catch (e) {}
     const rec = dl.handle(item, { resumeId, ask: askNow, ses, referrer, posted: wasNonGet(item.getURLChain() || []), nameHint: hint && Date.now() - hint.t < 15000 ? hint.name : '', partition: ses !== session.defaultSession ? ((t && t.win.partition) || partitionOfSession(ses) || 'private') : null });
     rec.winId = (() => { const w = (t && t.win) || focusedWin(); return w ? w.id : null; })();
+    // the tab a download started from stays awake until the download is handed over or finished
+    if (t) { t.dlBusy = (t.dlBusy || 0) + 1; item.once('done', () => { t.dlBusy = Math.max(0, (t.dlBusy || 1) - 1); }); }
     // a tab a site opened only to start this download (nothing ever showed in it): closed once the file has a place, like Chrome
     if (t && t.openedByPage && !t.committed) { dlBlankTabs.set(rec.id, t); item.once('done', () => closeBlankTab(rec.id)); }
   });
@@ -1593,7 +1620,9 @@ const hostLabel = o => { try { return new URL(o).host; } catch (e) { return o; }
 function setupPermissions(ses) {
   const tabOf = wc => (wc && !wc.isDestroyed() ? tabOfWc(wc) : null);
   // 1. a site asks (camera, microphone, location, notifications...)
-  ses.setPermissionRequestHandler((wc, permission, cb, details) => {
+  ses.setPermissionRequestHandler((wc, permission, cb0, details) => {
+    // a page given the camera, microphone or screen is not put to sleep (a call would drop)
+    const cb = ok => { if (ok && (permission === 'media' || permission === 'display-capture')) { const ct = tabOf(wc); if (ct) ct.capture = true; } cb0(ok); };
     if (PERM.ALWAYS.has(permission)) return cb(true);
     if (wc && songRec.has(wc.id)) return cb(permission === 'media');   // the music button's own listener (sound of one tab)
     const kinds = PERM.kindsOf(permission, details);
@@ -1721,7 +1750,7 @@ ipcMain.on('dl:name', (e, d) => {
   // like Chrome: a page can only name its own files (same site address, or files it made: blob:/data:)
   if (!/^(blob|data):$/.test(href.protocol) && href.origin !== page.origin) return;
   const name = d.name.trim().slice(0, 200); if (!name) return;
-  dlNames.set(e.sender.id + ' ' + href.href, { name, t: now }); if (process.env.ZEUS_DEBUG_DL) console.log('[3zT] dl:name', href.href, name);
+  dlNames.set(e.sender.id + ' ' + href.href, { name, t: now }); if (process.env.TZT_DEBUG_DL) console.log('[3zT] dl:name', href.href, name);
   if (dlNames.size > 50) dlNames.delete(dlNames.keys().next().value);
 });
 function closeBlankTab(id) {
@@ -2122,20 +2151,27 @@ function setupPasswordIpc() {
     if (a.choice === 'never') { const l = settings.data.pwNever || (settings.data.pwNever = []); l.push(AdBlocker.site(hostOf(off.origin) || '')); settings.save(); }
   });
   // the passwords page
-  ipcMain.handle('pw:list', e => (internalPage(e) ? { entries: passwords.list().map(x => Object.assign(x, { favicon: cachedFavicon(x.origin) })), encrypted: passwords.encrypted, never: settings.data.pwNever || [] } : null));
-  ipcMain.handle('pw:reveal', (e, id) => (internalPage(e) ? passwords.reveal(id) : ''));
-  ipcMain.handle('pw:delete', (e, id) => (internalPage(e) ? passwords.remove(id) : false));
-  ipcMain.handle('pw:unnever', (e, site) => { if (!internalPage(e)) return false; settings.data.pwNever = (settings.data.pwNever || []).filter(x => x !== site); settings.save(); return true; });
+  ipcMain.handle('pw:list', e => (passwordsPage(e) ? { entries: passwords.list().map(x => Object.assign(x, { favicon: cachedFavicon(x.origin) })), encrypted: passwords.encrypted, never: settings.data.pwNever || [] } : null));
+  ipcMain.handle('pw:reveal', (e, id) => (passwordsPage(e) ? passwords.reveal(id) : ''));
+  ipcMain.handle('pw:delete', (e, id) => (passwordsPage(e) ? passwords.remove(id) : false));
+  ipcMain.handle('pw:unnever', (e, site) => { if (!passwordsPage(e)) return false; settings.data.pwNever = (settings.data.pwNever || []).filter(x => x !== site); settings.save(); return true; });
+  // the file picked for the last import: the only file the page may then move to the recycle bin (for 10 minutes)
+  let importedFile = null;
   ipcMain.handle('pw:import', async e => {
-    if (!internalPage(e) && !uiWin(e)) return null;
+    if (!passwordsPage(e) && !uiWin(e)) return null;
     const t = tabOfWc(e.sender), w = (t && t.win) || uiWin(e) || focusedWin();
     const r = await dialog.showOpenDialog(w.win, { title: T('اختر ملف كلمات السر من كروم (CSV)', 'Choose the Chrome passwords file (CSV)'), properties: ['openFile'], filters: [{ name: 'CSV', extensions: ['csv'] }] });
     if (r.canceled || !r.filePaths[0]) return null;
-    try { const res = passwords.importCSV(fs.readFileSync(r.filePaths[0], 'utf8')); res.file = r.filePaths[0]; return res; }
-    catch (err) { return { error: String(err.message || err) }; }
+    try {
+      const res = passwords.importCSV(fs.readFileSync(r.filePaths[0], 'utf8'));
+      importedFile = { path: r.filePaths[0], t: Date.now() };
+      res.file = r.filePaths[0];
+      return res;
+    } catch (err) { return { error: String(err.message || err) }; }
   });
   ipcMain.handle('pw:deleteFile', async (e, file) => {
-    if (!internalPage(e) || typeof file !== 'string' || !/\.csv$/i.test(file)) return false;
+    if (!passwordsPage(e) || !importedFile || file !== importedFile.path || Date.now() - importedFile.t > 600000) return false;
+    importedFile = null;
     try { await shell.trashItem(file); return true; } catch (err) { return false; }
   });
   // YouTube ad blocking: asked by the page preload before YouTube's own scripts run
@@ -2154,7 +2190,7 @@ function setupPasswordIpc() {
     const t = tabOfWc(e.sender);
     const ok = t && isYTAny(senderHost(e)) && settings.data.adblock !== false && settings.data.ytAds !== false && !settings.data.adAllow.includes('youtube.com');
     e.returnValue = ok ? { main: YTR.code('main', senderHost(e)) } : null;
-    if (ok && process.env.ZEUS_E2E && e.returnValue) console.log('[3zT] yt rules injected', senderHost(e));
+    if (ok && process.env.TZT_E2E && e.returnValue) console.log('[3zT] yt rules injected', senderHost(e));
   });
   // what a page reads about the browser (chromeCode in preload-newtab.js): the permissions this frame's site was
   // refused for good
@@ -2201,19 +2237,18 @@ async function ytRestricted(tab, url) {
 }
 
 /* ---------- YouTube: AdGuard's YouTube rules ----------
-   YouTube changes how it detects ad blockers every few days (late starts with "Experiencing interruptions?",
-   ads coming back in long videos). AdGuard answers each change within days in AdGuard Base filter, and its YouTube
-   rules work on the player's own data before the player reads it (no ad is ever handed to the player), instead of
-   removing the ad after it arrives. The list (AdGuard Base filter) and AdGuard's scriptlet library (both GPL-3.0,
-   not part of 3zT) are downloaded at run time, checked (the list's own checksum, enough rules, and the rules that
-   answer YouTube's current checks), turned into one page script per YouTube host (see ytrules.js), kept on disk
-   and refreshed every 12 hours. They run on YouTube pages only, in the page, before YouTube's own scripts.
-   Until they are downloaded (or if a download is not valid), the built-in YouTube blocking in
-   preload-newtab.js is used instead. */
+   Source: AdGuard Base filter (GPL-3.0) and AdGuard's scriptlet library (GPL-3.0, one pinned release). Both are
+   downloaded at run time, never shipped. A list is accepted only when its checksum matches and it carries the rules
+   for YouTube's current ad-blocker checks (see checkList). The YouTube rules are compiled into one script per host
+   (src/ytrules.js), cached on disk, refreshed every 12 hours and run in the page before YouTube's own scripts.
+   Until a valid list is available, the built-in blocking in preload-newtab.js is used. */
 const YTR = {
   // the second address is tried only when the first gives a list without the YouTube rules we need
   FILTERS: ['https://filters.adtidy.org/extension/chromium/filters/2.txt', 'https://filters.adtidy.org/extension/chromium-mv3/filters/2.txt'],
-  LIB: 'https://cdn.jsdelivr.net/npm/@adguard/scriptlets@2/dist/scriptlets.corelibs.json',
+  // one exact release of the scriptlet library (npm releases never change once published); a new one is taken
+  // only with a new version of 3zT, after it was checked
+  LIB_VERSION: '2.6.0',
+  get LIB() { return 'https://cdn.jsdelivr.net/npm/@adguard/scriptlets@' + this.LIB_VERSION + '/dist/scriptlets.corelibs.json'; },
   HOSTS: ['www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'www.youtube-nocookie.com', 'youtube.com'],
   OLD: ['scriptlets.js', 'scriptlets-isolated.js'],   // uBlock Origin Lite's files from 0.18.0
   EVERY: 12 * 3600 * 1000,
@@ -2276,7 +2311,7 @@ const YTR = {
       const lr = await get(this.LIB);
       if (!lr.ok) throw new Error('scriptlet library: HTTP ' + lr.status);
       const lib = await lr.json();
-      if (!lib || typeof lib.version !== 'string' || !Array.isArray(lib.scriptlets)) throw new Error('scriptlet library: unexpected format');
+      if (!lib || lib.version !== this.LIB_VERSION || !Array.isArray(lib.scriptlets)) throw new Error('scriptlet library: unexpected format or version');
       const out = {}, counts = {}, skipped = new Set();
       for (const h of this.HOSTS) {
         const b = YTRULES.build(YTRULES.pick(parsed, h), lib, { engine: '3zT', version: app.getVersion(), verbose: false, domainName: h });
@@ -2307,7 +2342,7 @@ const senderHost = e => { try { return new URL(e.senderFrame.url).hostname; } ca
 const isYT = h => /(^|\.)youtube\.com$/i.test(h), isYTAny = h => /(^|\.)youtube(-nocookie)?\.com$/i.test(h), isTwitch = h => /(^|\.)twitch\.tv$/i.test(h);
 let ambientStore = null;
 // TikTok or Instagram (and, in the tests only, a local stand-in for TikTok)
-const socialSite = host => (/(^|\.)tiktok\.com$/i.test(host || '') || (process.env.ZEUS_E2E && host === 'tt.localhost') ? 'tiktok'
+const socialSite = host => (/(^|\.)tiktok\.com$/i.test(host || '') || (process.env.TZT_E2E && host === 'tt.localhost') ? 'tiktok'
   : /(^|\.)instagram\.com$/i.test(host || '') ? 'instagram' : null);
 function siteCfg(host) {
   const d = settings.data, adsOn = d.adblock !== false;
@@ -2325,12 +2360,12 @@ function siteCfg(host) {
       const hq = d.hqVideo !== false, ads = adsOn && !d.adAllow.includes(site + '.com');
       return hq || ads ? { site, hq, ads } : null;
     })(),
-    // TikTok / Instagram layout: buttons and caption inside the video (src/inject/social-view.js)
+    // TikTok / Instagram layout (src/inject/social-view.js)
     view: !!socialSite(host) && d.socialView !== false,
     reader: d.reader !== false,
     // empty ad slots left behind by the blocker are folded away (see preload-newtab.js)
     collapse: adsOn && !!host && !d.adAllow.includes(AdBlocker.site(host)),
-    ytTest: !!process.env.ZEUS_E2E && host === 'yt.localhost',   // the tests' stand-in for YouTube
+    ytTest: !!process.env.TZT_E2E && host === 'yt.localhost',   // the tests' stand-in for YouTube
     fp: fpSeed(host)
   };
 }
@@ -2350,7 +2385,7 @@ function fpSeed(host) {
    hidden popup leaving the page locked). The library and only the rules that can apply to the page are sent. */
 const AC = {
   dir: path.join(SRC, 'vendor', 'autoconsent'),
-  _ok: null, _code: null, _rules: null, _lib: null, _cache: new Map(),
+  _ok: null, _code: null, _rules: null, _lib: null, _own: null, _cache: new Map(),
   ready() { if (this._ok === null) this._ok = fs.existsSync(path.join(this.dir, 'autoconsent.cjs.js')) && fs.existsSync(path.join(this.dir, 'compact-rules.json')); return this._ok; },
   load() {
     if (this._lib) return true;
@@ -2372,7 +2407,12 @@ const AC = {
       try { rules = this._lib.filterCompactRules(this._rules, { url, mainFrame: true }); } catch (e) { return null; }
       this._cache.set(host, rules); if (this._cache.size > 100) this._cache.delete(this._cache.keys().next().value);
     }
-    return { code: this._code, rules };
+    return { code: this._code, rules, own: this.ownFor(url) };
+  },
+  // 3zT's own rules (src/consent-rules.json, Autoconsent's rule format) for popups the shared list does not know yet
+  ownFor(url) {
+    if (this._own === null) { try { this._own = JSON.parse(fs.readFileSync(path.join(SRC, 'consent-rules.json'), 'utf8')); } catch (e) { this._own = []; } }
+    return this._own.filter(r => { try { return new RegExp(r.runContext.urlPattern).test(url); } catch (e) { return false; } });
   }
 };
 function ytCleanAttrs() {
@@ -2399,7 +2439,7 @@ function setupSiteIpc() {
     if (!tabOfWc(e.sender) || e.senderFrame !== e.sender.mainFrame || !/^https?:/i.test(url) || d.cookiePopups === false || d.adAllow.includes(AdBlocker.site(host))) return null;
     return AC.forPage(url);
   });
-  ipcMain.on('ac:done', (e, cmp) => { if (process.env.ZEUS_TEST) console.log('[3zT] cookie popup answered:', String(cmp).slice(0, 60)); });
+  ipcMain.on('ac:done', (e, cmp) => { if (process.env.TZT_TEST) console.log('[3zT] cookie popup answered:', String(cmp).slice(0, 60)); });
   ipcMain.handle('ryd:get', (e, id) => (isYT(senderHost(e)) && settings.data.ytDislikes !== false ? FEAT.rydVotes(id) : null));
   ipcMain.handle('sb:get', (e, id) => (isYT(senderHost(e)) && settings.data.sponsorBlock !== false ? FEAT.sbSegments(id, settings.data.sbCats) : []));
   // chrome.storage.local for ambient light
@@ -2590,6 +2630,8 @@ function setupSongIpc() {
 /* ---------- IPC ---------- */
 const uiWin = e => winOfUi(e.sender);
 const internalPage = e => { try { return isInternal(e.senderFrame.url); } catch (x) { return false; } };
+// the passwords page itself, in the main frame of its tab: the only page that may list, show or delete passwords
+const passwordsPage = e => { try { return e.senderFrame === e.sender.mainFrame && !!e.senderFrame.url && isPasswords(e.senderFrame.url); } catch (x) { return false; } };
 const settingsPage = e => { try { return isSettings(e.senderFrame.url); } catch (x) { return false; } };
 
 function setupIpc() {
@@ -2687,7 +2729,7 @@ function setupIpc() {
   /* tab dragged out of the strip: split into its own window, follow the mouse */
   ipcMain.on('tab:dragout', (e, a) => {
     const w = uiWin(e);
-    if (process.env.ZEUS_DEBUG) console.log('[drag] out', a, !!w, !!tabDrag);
+    if (process.env.TZT_DEBUG) console.log('[drag] out', a, !!w, !!tabDrag);
     if (!w || tabDrag) return;
     const t = w.tab(a.id); if (!t) return;
     const p = screen.getCursorScreenPoint();
@@ -2867,11 +2909,12 @@ function setupIpc() {
   });
   ipcMain.handle('lang:get', () => settings.data.lang);
   ipcMain.handle('tasks:get', e => (internalPage(e) ? taskRows() : null));
+  ipcMain.on('tab:typed', (e, v) => { const t = tabOfWc(e.sender); if (t && e.senderFrame === e.sender.mainFrame) t.typed = v === true; });
   ipcMain.handle('tasks:sleep', (e, id) => {
     if (!internalPage(e)) return false;
     const t = allTabs().find(x => x.id === id); if (!t) return false;
     if (t.id === t.win.activeId) return false;
-    discard(t); return true;
+    return discard(t, true);
   });
 
   ipcMain.on('misc', (e, cmd) => { const w = uiWin(e); if (w) runMisc(w, cmd); });
@@ -2942,7 +2985,7 @@ function setupSettingsIpc() {
       case 'relaunch': if (w) runMisc(w, 'relaunch'); return true;
       // "Check for updates": looks now instead of waiting; a found update is downloaded and checked right away
       case 'checkUpdate': {
-        if (!UPD.installed() && !process.env.ZEUS_UPDATE_URL) return { state: 'portable' };
+        if (!UPD.installed() && !process.env.TZT_UPDATE_URL) return { state: 'portable' };
         return UPD.check();
       }
       // install it now: the browser closes, the update goes in, and 3zT opens again by itself
@@ -3060,7 +3103,7 @@ app.on('will-quit', () => { if (gotLock) { try { UPD.installOnQuit(); } catch (e
 app.whenReady().then(async () => {
   // dark everywhere: sites, error pages, scrollbars, form controls, the PDF viewer, menus
   nativeTheme.themeSource = DARK_PAGES ? 'dark' : 'system';
-  if (process.env.ZEUS_TIMING) console.log('[timing] ready', Math.round(performance.now()), 'ms');
+  if (process.env.TZT_TIMING) console.log('[timing] ready', Math.round(performance.now()), 'ms');
   startMark('ready');
   Menu.setApplicationMenu(null);
   settings = makeStore('settings.json', {
@@ -3113,15 +3156,18 @@ app.whenReady().then(async () => {
   passwords = new PW.PasswordStore(path.join(app.getPath('userData'), 'passwords.json'), safeStorage);
   setupPasswordIpc();
   // re-patch the copies already on disk when the patcher improves (also refreshes the shim)
-  if ((settings.data.extPatchLevel || 0) < 2) {
+  // (level 3: the files the patcher adds were renamed; Chrome Web Store installs are included, they keep their update address)
+  if ((settings.data.extPatchLevel || 0) < 3) {
+    const repatch = (base, opts) => {
+      let names = []; try { names = fs.readdirSync(base); } catch (e) {}
+      for (const n of names) { const d = path.join(base, n); if (fs.existsSync(path.join(d, 'manifest.json'))) { try { EXT.patch(d, SHIM, opts); } catch (e) { logError('extension patch ' + n, e); } } }
+    };
     try {
-      for (const sub of ['', 'manual']) {
-        const base = path.join(extRoot(), sub);
-        let names = []; try { names = fs.readdirSync(base); } catch (e) {}
-        for (const n of names) { const d = path.join(base, n); if (fs.existsSync(path.join(d, 'manifest.json'))) { try { EXT.patch(d, SHIM); } catch (e) {} } }
-      }
-    } catch (e) {}
-    settings.data.extPatchLevel = 2; settings.save();
+      for (const sub of ['', 'manual']) repatch(path.join(extRoot(), sub));
+      let ids = []; try { ids = fs.readdirSync(storeRoot()); } catch (e) {}
+      for (const id of ids) repatch(path.join(storeRoot(), id), { keepUpdateUrl: true });
+    } catch (e) { logError('extension patch', e); }
+    settings.data.extPatchLevel = 3; settings.save();
   }
   if (!settings.data.extImported) {
     try { const r = importChromeExtensions(); console.log('[3zT] extensions imported:', r.imported.map(x => x.name).join(', ')); } catch (e) { console.warn('extension import failed', e.message); }

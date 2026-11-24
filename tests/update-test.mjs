@@ -65,7 +65,7 @@ async function main() {
   try { fs.rmSync(UPD, { recursive: true, force: true }); } catch (e) {}
 
   // 1-2. run, find and download the update in the background
-  const env = { ...process.env, ZEUS_UPDATE_URL: 'http://127.0.0.1:8777/latest.json', ZEUS_UPDATE_DELAY: '3000', ZEUS_UPDATE_PUBKEY: PUB };
+  const env = { ...process.env, TZT_UPDATE_URL: 'http://127.0.0.1:8777/latest.json', TZT_UPDATE_DELAY: '3000', TZT_UPDATE_PUBKEY: PUB };
   const logFd = fs.openSync(LOG, 'w');
   spawn(exe, ['--remote-debugging-port=9334', '--enable-logging=stderr'], { env, detached: true, stdio: ['ignore', logFd, logFd] }).unref();
   const up = await until(() => cdp(9334, 'ui/toolbar.html', '!!document.getElementById("addr")'), 60000);
@@ -74,7 +74,7 @@ async function main() {
   ok('update found, downloaded and verified in the background', !!pend && pend.version === nextVer && fs.existsSync(pend.file), pend ? `${pend.version} (${served} download)` : 'no pending.json');
   // Settings -> About -> "Check now" reports the waiting update
   await cdp(9334, 'ui/toolbar.html', `ui.send('tab','go',{text:'3zt://settings',newTab:true}), 1`);
-  const chk = await until(() => cdp(9334, 'newtab/settings.html', `zeus.act('checkUpdate').then(r => JSON.stringify(r))`), 30000, 1000);
+  const chk = await until(() => cdp(9334, 'newtab/settings.html', `tzt.act('checkUpdate').then(r => JSON.stringify(r))`), 30000, 1000);
   ok('"Check for updates" in Settings finds it', /"state":"ready"/.test(chk || '') && chk.includes(nextVer), chk || 'no answer');
   ok('nothing was shown while browsing', (await cdp(9334, 'ui/toolbar.html', 'document.getElementById("toast").hidden')) !== false);
 

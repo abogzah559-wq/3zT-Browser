@@ -24,7 +24,7 @@ const SECTIONS = () => [
 const sw = (on, attrs) => `<button class="sw${on ? ' on' : ''}" ${attrs} role="switch" aria-checked="${!!on}"></button>`;
 const row = (t, d, ctl, cls = '') => `<div class="row ${cls}"><div class="tx"><div class="t">${t}</div>${d ? `<div class="d">${d}</div>` : ''}</div>${ctl || ''}</div>`;
 // a group that opens with an arrow: header row (with its own switch if given) + hidden sub-options
-const open = new Set((() => { try { return JSON.parse(localStorage.getItem('zeusSetOpen') || '[]'); } catch (e) { return []; } })());
+const open = new Set((() => { try { return JSON.parse(localStorage.getItem('tztSetOpen') || '[]'); } catch (e) { return []; } })());
 const group = (id, t, d, ctl, body, count) => `<div class="grp${open.has(id) ? ' open' : ''}">
   <div class="row gh" data-grp="${id}"><span class="arr"><svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg></span>
     <div class="tx"><div class="t">${t}${count != null ? ` <span class="cnt">${count}</span>` : ''}</div>${d ? `<div class="d">${d}</div>` : ''}</div>${ctl || ''}</div>
@@ -138,7 +138,7 @@ function render() {
 
 let toastT = 0, upd = null;   // update check state
 function toast(t) { const x = $('toast'); x.textContent = t; x.classList.add('on'); clearTimeout(toastT); toastT = setTimeout(() => x.classList.remove('on'), 2600); }
-async function load() { S = await zeus.settings(); render(); }
+async function load() { S = await tzt.settings(); render(); }
 
 $('nav').addEventListener('click', e => { const a = e.target.closest('[data-nav]'); if (!a) return; cur = a.dataset.nav; history.replaceState(null, '', '#' + cur); render(); window.scrollTo(0, 0); });
 document.addEventListener('click', async e => {
@@ -146,20 +146,20 @@ document.addEventListener('click', async e => {
   if (g && !e.target.closest('button')) {
     const id = g.dataset.grp; open.has(id) ? open.delete(id) : open.add(id);
     g.parentNode.classList.toggle('open', open.has(id));
-    try { localStorage.setItem('zeusSetOpen', JSON.stringify([...open])); } catch (x) {}
+    try { localStorage.setItem('tztSetOpen', JSON.stringify([...open])); } catch (x) {}
     return;
   }
   const b = e.target.closest('button'); if (!b) return;
-  if (b.dataset.tog) { zeus.set(b.dataset.tog, !S[b.dataset.tog]); return; }
-  if (b.dataset.set) { const k = b.dataset.set; zeus.set(k, k === 'memorySaverMin' ? +b.dataset.v : b.dataset.v); return; }
-  if (b.dataset.yt) { const o = Object.assign({}, S.ytClean); o[b.dataset.yt] = !o[b.dataset.yt]; zeus.set('ytClean', o); return; }
-  if (b.dataset.sb) { const c = new Set(S.sbCats); c.has(b.dataset.sb) ? c.delete(b.dataset.sb) : c.add(b.dataset.sb); zeus.set('sbCats', [...c]); return; }
-  if (b.dataset.open) { zeus.act('open', b.dataset.open); return; }
+  if (b.dataset.tog) { tzt.set(b.dataset.tog, !S[b.dataset.tog]); return; }
+  if (b.dataset.set) { const k = b.dataset.set; tzt.set(k, k === 'memorySaverMin' ? +b.dataset.v : b.dataset.v); return; }
+  if (b.dataset.yt) { const o = Object.assign({}, S.ytClean); o[b.dataset.yt] = !o[b.dataset.yt]; tzt.set('ytClean', o); return; }
+  if (b.dataset.sb) { const c = new Set(S.sbCats); c.has(b.dataset.sb) ? c.delete(b.dataset.sb) : c.add(b.dataset.sb); tzt.set('sbCats', [...c]); return; }
+  if (b.dataset.open) { tzt.act('open', b.dataset.open); return; }
   const act = b.dataset.act; if (!act) return;
   if (act === 'extRemove' && !confirm(L('إزالة الإضافة؟', 'Remove this extension?'))) return;
   b.disabled = true;
   if (act === 'checkUpdate') { upd = { state: 'checking', text: L('أدوّر على تحديث وأنزّله إذا لقيت…', 'Looking for an update and downloading it if there is one…') }; render(); }
-  const r = await zeus.act(act, b.dataset.arg);
+  const r = await tzt.act(act, b.dataset.arg);
   if (act === 'checkUpdate') {
     const st = r && r.state;
     upd = st === 'ready' ? { state: 'ready', text: L(`نزل التحديث ${r.version} وجاهز. أعد التشغيل وتثبّت في ثواني، وتبويباتك ترجع.`, `Update ${r.version} is downloaded and checked. Restart to install it; your tabs come back.`) }
@@ -177,7 +177,7 @@ document.addEventListener('click', async e => {
   if (act === 'clearData' && r) toast(L('تم المسح', 'Cleared'));
   load();
 });
-zeus.onSettings(load);
-zeus.onLang(() => load());
+tzt.onSettings(load);
+tzt.onLang(() => load());
 addEventListener('hashchange', () => { cur = location.hash.slice(1) || 'general'; render(); });
 load();

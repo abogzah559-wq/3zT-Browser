@@ -27,8 +27,9 @@ jobs:
       - name: Electron (checksum verified)
         shell: bash
         run: |
-          base=https://github.com/electron/electron/releases/download/v45.1.0
-          f=electron-v45.1.0-win32-x64.zip
+          v=$(node -p "require('./package.json').devDependencies.electron")
+          base=https://github.com/electron/electron/releases/download/v$v
+          f=electron-v$v-win32-x64.zip
           curl -sSfL -o $f $base/$f
           curl -sSfL -o SHASUMS256.txt $base/SHASUMS256.txt
           grep " \*$f\$" SHASUMS256.txt | sed 's/ \*/  /' | sha256sum -c -

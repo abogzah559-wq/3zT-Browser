@@ -7,6 +7,7 @@
  *  - skips ones that can't work here, ones replaced by a built-in feature, and ones the user declined
  */
 const fs = require('fs');
+const LEGACY = require('./legacy');
 const path = require('path');
 
 /* known extensions: what to do with each */
@@ -81,27 +82,43 @@ function copyDir(src, dst, skip) {
 }
 function rmDir(p) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) {} }
 
+/* a copy patched by a version before 0.22.0: point its manifest back at the extension's own worker and remove the
+   old files, so the patch below redoes it under the current names. Returns true when the copy was a store install
+   (it keeps its update address). */
+function unpatchLegacy(dir, m) {
+  const bg = m.background && m.background.service_worker;
+  if (bg !== LEGACY.EXT_BG) return false;
+  let src = ''; try { src = fs.readFileSync(path.join(dir, LEGACY.EXT_BG), 'utf8'); } catch (e) {}
+  const names = [...src.matchAll(/['"]\.?\/?([^'"]+\.m?js)['"]/g)].map(x => x[1]).filter(n => n !== LEGACY.EXT_SHIM && n !== LEGACY.EXT_STORE);
+  const store = fs.existsSync(path.join(dir, LEGACY.EXT_STORE));
+  if (names.length) m.background.service_worker = names[names.length - 1];
+  else delete m.background;
+  for (const f of [LEGACY.EXT_BG, LEGACY.EXT_SHIM, LEGACY.EXT_STORE]) { try { fs.unlinkSync(path.join(dir, f)); } catch (e) {} }
+  return store;
+}
+
 /* make a copied extension run in Electron */
 function patch(dir, shimSource, opts = {}) {
-  fs.writeFileSync(path.join(dir, 'zeus_shim.js'), shimSource);
+  fs.writeFileSync(path.join(dir, 'tzt_shim.js'), shimSource);
   const m = readManifest(dir);
+  opts = Object.assign({}, opts, { keepUpdateUrl: unpatchLegacy(dir, m) || !!opts.keepUpdateUrl });
   // background: load the shim first (skip if this copy was already patched)
-  if (m.background && m.background.service_worker && m.background.service_worker !== 'zeus_bg.js') {
+  if (m.background && m.background.service_worker && m.background.service_worker !== 'tzt_bg.js') {
     const orig = m.background.service_worker.replace(/^\//, '');
     const isModule = m.background.type === 'module';
-    if (opts.keepUpdateUrl) fs.writeFileSync(path.join(dir, 'zeus_store.js'), 'self.__zeusStore = true;\n');
-    const pre = opts.keepUpdateUrl ? (isModule ? `import './zeus_store.js';\n` : `importScripts('zeus_store.js');\n`) : '';
-    fs.writeFileSync(path.join(dir, 'zeus_bg.js'), pre + (isModule
-      ? `import './zeus_shim.js';\nimport './${orig}';\n`
-      : `importScripts('zeus_shim.js', '${orig}');\n`));
-    m.background = Object.assign({}, m.background, { service_worker: 'zeus_bg.js' });
+    if (opts.keepUpdateUrl) fs.writeFileSync(path.join(dir, 'tzt_store.js'), 'self.__tztStore = true;\n');
+    const pre = opts.keepUpdateUrl ? (isModule ? `import './tzt_store.js';\n` : `importScripts('tzt_store.js');\n`) : '';
+    fs.writeFileSync(path.join(dir, 'tzt_bg.js'), pre + (isModule
+      ? `import './tzt_shim.js';\nimport './${orig}';\n`
+      : `importScripts('tzt_shim.js', '${orig}');\n`));
+    m.background = Object.assign({}, m.background, { service_worker: 'tzt_bg.js' });
     delete m.background.scripts;              // MV3 + leftover MV2 "scripts" confuses Electron
   }
   // content scripts (the part that runs inside websites): shim first too, so they read the
   // same storage the popup writes to. MAIN-world scripts have no chrome.* APIs: leave them.
   for (const cs of m.content_scripts || []) {
     if (cs.world === 'MAIN' || !Array.isArray(cs.js) || !cs.js.length) continue;
-    if (cs.js[0] !== 'zeus_shim.js') cs.js = ['zeus_shim.js', ...cs.js.filter(j => j !== 'zeus_shim.js')];
+    if (cs.js[0] !== 'tzt_shim.js') cs.js = ['tzt_shim.js', ...cs.js.filter(j => j !== 'tzt_shim.js' && j !== LEGACY.EXT_SHIM)];
   }
   // extension pages (popup, options...): shim before their own scripts
   (function walk(d) {
@@ -110,12 +127,14 @@ function patch(dir, shimSource, opts = {}) {
       if (e.isDirectory()) { walk(f); continue; }
       if (!/\.html?$/i.test(e.name)) continue;
       let s = fs.readFileSync(f, 'utf8');
-      if (s.includes('zeus_shim.js')) continue;
-      if (/<head[^>]*>/i.test(s)) s = s.replace(/(<head[^>]*>)/i, '$1<script src="/zeus_shim.js"></script>');
-      else s = '<script src="/zeus_shim.js"></script>' + s;
+      if (s.includes(LEGACY.EXT_SHIM)) { s = s.split(LEGACY.EXT_SHIM).join('tzt_shim.js'); fs.writeFileSync(f, s); continue; }
+      if (s.includes('tzt_shim.js')) continue;
+      if (/<head[^>]*>/i.test(s)) s = s.replace(/(<head[^>]*>)/i, '$1<script src="/tzt_shim.js"></script>');
+      else s = '<script src="/tzt_shim.js"></script>' + s;
       fs.writeFileSync(f, s);
     }
   })(dir);
+  try { fs.unlinkSync(path.join(dir, LEGACY.EXT_SHIM)); } catch (e) {}   // nothing refers to it any more
   if (!opts.keepUpdateUrl) delete m.update_url;  // copies from Chrome never self-update; store installs keep it (3zT updates them)
   fs.writeFileSync(path.join(dir, 'manifest.json'), JSON.stringify(m, null, 1));
   return m;

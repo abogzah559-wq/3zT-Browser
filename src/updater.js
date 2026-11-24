@@ -17,17 +17,20 @@ const { spawn } = require('child_process');
 const { app, net } = require('electron');
 
 const REPO = 'abogzah559-wq/3zT-Browser';
-const API = process.env.ZEUS_UPDATE_URL || `https://api.github.com/repos/${REPO}/releases/latest`;
+const API = process.env.TZT_UPDATE_URL || `https://api.github.com/repos/${REPO}/releases/latest`;
+// a small file each release carries, same fields as the API's answer. Served as a plain download, so it has no
+// GitHub API rate limit (60 requests an hour per address). Releases without it: the API.
+const LATEST = process.env.TZT_UPDATE_URL ? '' : `https://github.com/${REPO}/releases/latest/download/latest.json`;
 const ASSET = '3zT-Browser-Setup.exe';
 const APP_ASSET = '3zT-app.json';
 // the project's update-signing public key (Ed25519). Releases carry 3zT-Browser-Setup.exe.sig, made in CI with
 // the private key that only GitHub Actions holds (secret UPDATE_SIGNING_KEY). No valid signature, no update.
 const PUBLIC_KEY = 'MCowBQYDK2VwAyEAVz6B4sGbgoTfKFrZZ/1Yr08tgxYQc879WRlYKxCY+s4=';
-// automated tests point the browser at a fake release (ZEUS_UPDATE_URL); only then may they bring their own key
-const KEY = crypto.createPublicKey({ key: Buffer.from(process.env.ZEUS_UPDATE_URL && process.env.ZEUS_UPDATE_PUBKEY || PUBLIC_KEY, 'base64'), format: 'der', type: 'spki' });
+// automated tests point the browser at a fake release (TZT_UPDATE_URL); only then may they bring their own key
+const KEY = crypto.createPublicKey({ key: Buffer.from(process.env.TZT_UPDATE_URL && process.env.TZT_UPDATE_PUBKEY || PUBLIC_KEY, 'base64'), format: 'der', type: 'spki' });
 // what is signed: the file name, the version and the file's SHA-256
 const signedText = (ver, sha, name = ASSET) => `${name}\n${ver}\n${sha}`;
-const FIRST_CHECK_MS = +(process.env.ZEUS_UPDATE_DELAY || 60 * 1000);
+const FIRST_CHECK_MS = +(process.env.TZT_UPDATE_DELAY || 60 * 1000);
 const EVERY_MS = 4 * 3600 * 1000;
 
 const dir = () => path.join(app.getPath('userData'), 'update');
@@ -69,9 +72,15 @@ let busy = false, timer = null, log = () => {};
 async function check() {
   if (busy) return { state: 'busy' }; busy = true;
   try {
-    const r = await net.fetch(API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': '3zT-updater' } });
-    if (!r.ok) { log('update check', r.status); return { state: 'error', error: 'HTTP ' + r.status }; }
-    const rel = await r.json();
+    let rel = null;
+    if (LATEST) {
+      try { const l = await net.fetch(LATEST, { cache: 'no-store' }); if (l.ok) { const j = await l.json(); if (j && j.tag_name && Array.isArray(j.assets)) rel = j; } } catch (e) {}
+    }
+    if (!rel) {
+      const r = await net.fetch(API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': '3zT-updater' } });
+      if (!r.ok) { log('update check', r.status); return { state: 'error', error: 'HTTP ' + r.status }; }
+      rel = await r.json();
+    }
     const ver = String(rel.tag_name || '').replace(/^v/, '');
     if (!ver || !newer(ver, app.getVersion())) return { state: 'latest', version: app.getVersion() };
     const asset = (rel.assets || []).find(a => a.name === ASSET);
@@ -112,7 +121,7 @@ async function check() {
     // keep only this setup
     for (const n of fs.readdirSync(dir())) if (/^3zT-Setup-.*\.exe$/.test(n) && n !== path.basename(file)) { try { fs.unlinkSync(path.join(dir(), n)); } catch (e) {} }
     fs.renameSync(part, file);
-    fs.writeFileSync(pendingFile(), JSON.stringify({ version: ver, file, body: String(rel.body || '').slice(0, 20000), at: Date.now() }));
+    fs.writeFileSync(pendingFile(), JSON.stringify({ version: ver, file, sha: want, body: String(rel.body || '').slice(0, 20000), at: Date.now() }));
     log('update ready', ver);
     return { state: 'ready', version: ver };
   } catch (e) { log('update failed', e && e.message); return { state: 'error', error: String(e && e.message) }; }
@@ -144,7 +153,7 @@ async function checkLight(rel, ver) {
     const file = path.join(dir(), `3zT-app-${ver}.json`);
     fs.writeFileSync(file, buf);
     for (const n of fs.readdirSync(dir())) if (/^3zT-(Setup|app)-.*\.(exe|json)$/.test(n) && n !== path.basename(file)) { try { fs.unlinkSync(path.join(dir(), n)); } catch (e) {} }
-    fs.writeFileSync(pendingFile(), JSON.stringify({ version: ver, file, kind: 'app', body: String(rel.body || '').slice(0, 20000), at: Date.now() }));
+    fs.writeFileSync(pendingFile(), JSON.stringify({ version: ver, file, kind: 'app', sha, body: String(rel.body || '').slice(0, 20000), at: Date.now() }));
     log('update ready (light)', ver);
     return true;
   } catch (e) { log('update: light bundle failed', e && e.message); return false; }
@@ -177,6 +186,11 @@ function installOnQuit() {
   // the files on disk may already be newer than the running copy (replaced while it ran): never go back
   const onDisk = readJson(path.join(app.getAppPath(), 'package.json'))?.version;
   if (onDisk && !newer(pend.version, onDisk)) { try { fs.unlinkSync(pendingFile()); } catch (e) {} return false; }
+  // the file is checked again right before it is used: it waited on disk since it was verified
+  try {
+    const got = crypto.createHash('sha256').update(fs.readFileSync(pend.file)).digest('hex');
+    if (!pend.sha || got !== pend.sha) { log('update: waiting file changed, dropped'); try { fs.unlinkSync(pendingFile()); fs.unlinkSync(pend.file); } catch (e) {} return false; }
+  } catch (e) { log('update: waiting file unreadable', e && e.message); return false; }
   if (pend.kind === 'app') {
     try {
       applyLight(pend);
@@ -249,7 +263,7 @@ function takeUpdated(lang) {
 function start(opts = {}) {
   log = opts.log || log;
   cleanup();
-  if (!installed() && !process.env.ZEUS_UPDATE_URL) return false;
+  if (!installed() && !process.env.TZT_UPDATE_URL) return false;
   clearTimeout(timer);
   timer = setTimeout(function tick() { check(); timer = setTimeout(tick, EVERY_MS); }, FIRST_CHECK_MS);
   return true;
