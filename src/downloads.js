@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Built-in download manager (replaces Free Download Manager):
+ * Built-in download manager:
  *  - asks where to save every file (Windows "Save as" window, starts in the last folder used)
  *  - big files (5 MB and more) go to aria2 (src/aria2.js): up to 16 connections per file. Chromium starts every
  *    download and is only stopped once aria2 is really receiving the file, so a link aria2 can't fetch (a form

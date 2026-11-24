@@ -1,12 +1,12 @@
 'use strict';
 /*
- * Built-in media downloader (from the 3zT Download app, now part of the browser).
+ * Built-in media downloader.
  *  - videos / audio (MP3) with yt-dlp, photo posts (TikTok photos, Instagram, X...) with gallery-dl, ffmpeg for merging and trimming
- *  - nothing runs until you use it: the first time, the three tools are downloaded from their official releases
+ *  - nothing runs until it is first used: then the three tools are downloaded from their official releases
  *    and checked against the checksums those releases publish; later they update themselves with one button
  *  - no local server and no open port: the downloads page talks to this module over the browser's own IPC
  *  - every program it starts is stopped when its job is cancelled or the browser closes
- *  - your sign-in on the site is passed along (only that site's cookies, in a temporary file deleted right after)
+ *  - the user's sign-in on the site is passed along (only that site's cookies, in a temporary file deleted right after)
  */
 const fs = require('fs');
 const path = require('path');

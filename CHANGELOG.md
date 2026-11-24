@@ -2,6 +2,12 @@
 
 All notable changes to 3zT, newest first. Release notes are generated from this file.
 
+## 0.22.1
+
+### Changed
+- Source comments rewritten as concise engineering notes.
+- New `SECURITY.md` with the vulnerability reporting process.
+
 ## 0.22.0
 
 ### Security

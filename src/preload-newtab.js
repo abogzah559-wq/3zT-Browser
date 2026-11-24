@@ -187,16 +187,12 @@ const fpCode = seed => `(() => {
   wrap(AB, 'getChannelData', orig => ({ getChannelData(ch) { const d = orig.apply(this, arguments); try { nudge(this, ch, d); } catch (e) {} return d; } }).getChannelData);
 })();`;
 
-/* What a website reads about the browser, the same as in Google Chrome where Electron differs (a bot check that
-   compares a page's view of the browser with Chrome's reads these, and refuses what looks like an automated
-   browser; ordinary sites read them too):
-   - window.chrome: Chrome gives every web page chrome.app, chrome.csi() and chrome.loadTimes(); Electron gives an
-     empty object
-   - a permission nobody has answered yet: Chrome says "ask" (Notification.permission "default", permissions.query
-     "prompt"); Electron can only say yes or no, and said "denied", so sites thought you had blocked them (a video
-     call site would show "you blocked the camera" instead of asking). The real question still comes from the bar
-     when the site asks (main.js, setPermissionRequestHandler). look.blocked: what this site was refused for good.
-   Applied to the page and to frames of the same page; the functions look built in. */
+/* Browser properties a page can read, aligned with Google Chrome where Electron differs (bot checks compare them):
+   - window.chrome: chrome.app, chrome.csi() and chrome.loadTimes(), as on every page in Chrome.
+   - unanswered permissions read as "ask" (Notification.permission "default", permissions.query "prompt"), not
+     "denied"; the actual request is still handled by main.js (setPermissionRequestHandler).
+     look.blocked: the permissions this site was refused permanently.
+   Applied to the page and to same-origin frames; replaced functions keep their native appearance. */
 const chromeCode = look => `(() => {
   'use strict';
   const BLOCKED = ${JSON.stringify((look && look.blocked) || [])};
@@ -665,7 +661,7 @@ if (SUB) {
     }
   }
 
-  /* ================= built-in features (used to be extensions) ================= */
+  /* ================= built-in site features ================= */
   let cfg = {};
   try { cfg = ipcRenderer.sendSync('site:cfg') || {}; } catch (e) {}
   const mainWorld = code => {
@@ -822,13 +818,12 @@ if (SUB) {
      Many sign-in pages (Google, Microsoft, GitHub...) ask for a passkey in the background as soon as they open
      (navigator.credentials.get with mediation "conditional"), so Chrome can offer saved passkeys in the
      username box. Electron has no such list: it hands that background request straight to Windows, which opens
-     its "Windows Security" window (Windows Hello / security key / phone) before you did anything.
-     Here sites are told "no passkey autofill" (like a browser without that list) and background requests just
-     wait, the way Chrome waits when you don't pick a passkey. Some sites (Google's sign-in) instead ask at once in
-     the normal way, or with the newer "immediate" mode: those are answered "no passkey" unless you clicked
-     something or the site names your account. A passkey you ask for yourself ("Sign in with a passkey",
-     "Use a security key") still opens Windows' window as it should.
-     Passkeys are off unless you turn them on in Settings; Google's sign-in also gets the Firefox look here.
+     its "Windows Security" window (Windows Hello / security key / phone) without any user action.
+     Sites are therefore told "no passkey autofill" and background requests wait, as in Chrome when no passkey is
+     picked. Immediate requests (Google's sign-in, the "immediate" mode) are answered "no passkey" unless the user
+     just clicked or the site names the account. A passkey the user asks for ("Sign in with a passkey", "Use a
+     security key") still opens the Windows window.
+     Passkeys are off unless enabled in Settings; Google's sign-in also gets the Firefox user agent here.
      All of it reaches blank frames and windows the page makes (see pkCode). */
   {
     let ua = '';

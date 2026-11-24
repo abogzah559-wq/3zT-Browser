@@ -563,7 +563,7 @@ function makeView(tab, fromOpener) {
   const wc = view.webContents;
   if (tab.muted) wc.setAudioMuted(true);
 
-  // links for other programs (claude://, mailto:, discord://, steam://...) go to Windows, like in Chrome
+  // links for other programs (mailto:, discord://, steam://...) go to Windows, like in Chrome
   wc.on('will-frame-navigate', d => { if (isExternalUrl(d.url)) { d.preventDefault(); openExternalAsk(tab, d.url); } });
   wc.setWindowOpenHandler(d => {
     if (isExternalUrl(d.url)) { openExternalAsk(tab, d.url); return { action: 'deny' }; }
@@ -2207,13 +2207,11 @@ function setupPasswordIpc() {
   setupSiteIpc();
 }
 
-/* YouTube's "Video unavailable ... network administrator restrictions" (error 151: Restricted Mode, on a network
-   and an account that have none) on every video, reloading did not help, until the browser was closed and opened
-   again; a private window played the same video at the same time. What a restart changes for YouTube: the
-   cookies that last only until the browser closes, new connections, addresses looked up again. That is done here
-   (the sign-in cookies stay: they are kept across restarts too) and the page is loaded again, which played the
-   video every time it was tried. Written in the log with the addresses YouTube was reached at (the ones of a
-   restricted network are YouTube's restrict addresses), so it can be followed. At most once every 10 minutes. */
+/* YouTube error 151 ("Video unavailable ... network administrator restrictions", Restricted Mode) served to a
+   network and account without such restrictions. The state persists across reloads and clears on restart, so the
+   restart-relevant parts are reset here: session cookies (sign-in cookies are kept), open connections and the DNS
+   cache; then the page reloads. Logged with the addresses YouTube resolved to (Restricted Mode has its own).
+   At most once every 10 minutes. */
 let ytFixAt = 0;
 async function ytRestricted(tab, url) {
   const wc = tab.view && tab.view.webContents;
@@ -2505,9 +2503,8 @@ function mergeBuiltInExtensions() {
   settings.data.mergedExt = true; settings.save();
 }
 
-/* "3zT TikTok View" (the layout extension for TikTok and Instagram) is part of the browser now
-   (src/inject/social-view.*, and the quality part was already built in): a copy added as an extension is no longer
-   loaded, so the two never run together. The folder it was added from is left alone. */
+/* The standalone "3zT TikTok View" extension duplicates the built-in layout (src/inject/social-view.*): a copy
+   added as an extension is not loaded, so the two never run together. Its source folder is not touched. */
 function retireTikTokView() {   // (every start: a few small files read; Chrome's import could bring it back)
   const isTTV = dir => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).name === '3zT TikTok View'; } catch (e) { return false; } };
   // (and any extension copy whose folder is gone: it can't load, and it was tried again at every start)
@@ -3175,7 +3172,7 @@ app.whenReady().then(async () => {
   }
   try { mergeBuiltInExtensions(); } catch (e) { console.warn('merge failed', e.message); }
   try { retireTikTokView(); } catch (e) { console.warn('TikTok View retire failed', e.message); }
-  if (settings.data.hideRules) { delete settings.data.hideRules; settings.save(); }   // the manual "Hide this ad" of 0.16.2 (now automatic)
+  if (settings.data.hideRules) { delete settings.data.hideRules; settings.save(); }   // obsolete setting (per-site hide rules)
   // all extensions load at the same time (not one after another): the window opens sooner
   await Promise.all([
     ...settings.data.extensions.slice().map(p => loadExtensionDir(p).catch(e => console.warn('extension failed', p, e.message))),

@@ -1,6 +1,10 @@
 <!-- Arabic release notes, shown inside the browser ("Updated" note → Details) for the Arabic interface.
      Not part of the public changelog; the release workflow embeds the matching section as a hidden comment. -->
 
+## 0.22.1
+
+- تحسينات داخلية في الكود، وما فيه أي تغيير تشوفه في المتصفح.
+
 ## 0.22.0
 
 - تيك توك: الوصف واللايكات والمفضلة وزر العين صارت يمين تحت فوق شريط الفيديو، بنفس المكان في كل المقاطع (عريضة أو طولية)، والأزرار صارت أكبر. والأسهم ثابتة يسار الشاشة.

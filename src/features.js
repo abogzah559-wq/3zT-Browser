@@ -1,6 +1,6 @@
 'use strict';
 /*
- * Features that used to be extensions, now part of the browser (no extension process, no background page):
+ * Built-in site features (no extension process, no background page):
  *  - SponsorBlock: skip sponsor segments in YouTube videos (segments from the public SponsorBlock API)
  *  - Clean YouTube: hide parts of YouTube (shorts, comments...) with CSS switches
  *  - Ambient light for YouTube: the original scripts, run directly in YouTube pages

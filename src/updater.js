@@ -54,8 +54,8 @@ function sha256File(f) {
   return new Promise((res, rej) => { const h = crypto.createHash('sha256'); fs.createReadStream(f).on('data', d => h.update(d)).on('end', () => res(h.digest('hex'))).on('error', rej); });
 }
 
-/* release notes. Since 0.15.1: the English list under "## What's new in <version>", the Arabic one in a hidden
-   "<!-- 3zt-ar … -->" block of the same text. Older releases: "### English" / "### العربية" parts. */
+/* release notes: the English list under "## What's new in <version>" and the Arabic one in a hidden
+   "<!-- 3zt-ar … -->" block of the same text; releases before 0.15.1 use "### English" / "### العربية" parts. */
 function notesFor(body, lang) {
   const text = String(body || '').replace(/\r/g, '');
   const part = name => { const m = text.match(new RegExp('^###\\s*' + name + '\\s*\\n([\\s\\S]*?)(?=^###\\s|^##\\s|<!--|$(?![\\s\\S]))', 'm')); return m ? m[1].trim() : ''; };
